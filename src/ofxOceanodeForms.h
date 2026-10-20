@@ -1,24 +1,13 @@
 #pragma once
 
-#include "ofxOceanode.h"
+// Declarations only: the node headers and the bodies live in ofxOceanodeForms.cpp, so
+// including this header does not compile every node of the addon again.
 
-#include "formsScroller.h"
-#include "formsScrollerFolder.h"
-#include "probabilityDropdownList.h"
-#include "texUniForms.h"
-#ifdef OFXOCEANODE_USE_OSC
-#include "multiOscSender.h"
-#endif
+class ofxOceanode;
 
-class ofxOceanodeForms {
-public:
-    static void registerModels(ofxOceanode &oceanode) {
-        oceanode.registerModel<formsScroller>("Forms");
-        oceanode.registerModel<formsScrollerFolder>("Forms");
-        oceanode.registerModel<probabilityDropdownList>("Forms");
-        oceanode.registerModel<texUniForms>("Forms");
-#ifdef OFXOCEANODE_USE_OSC
-        oceanode.registerModel<multiOscSender>("Forms");
-#endif
-    }
-};
+namespace ofxOceanodeForms{
+
+void registerModels(ofxOceanode &o);
+void registerCollection(ofxOceanode &o);
+
+}
