@@ -8,6 +8,7 @@
 //                    changed take their new values (every other value the page drew stays); a change
 //                    of structure (stack layers, linked picks, per-bar) re-resolves its items
 //    patchForScene   the recipe with the scene's palette and scale as they are now
+//    filterItems     a page without its muted instruments (or with only the soloed ones)
 //  Headless (tests/formsGL/test_live_edit.cpp).
 //
 
@@ -101,6 +102,28 @@ inline json patchForPreset(Engine& e, const json& recipe, const Preset& before, 
     }
     req["items"] = items;
     return req;
+}
+
+// Instrument mute / solo: what a page is drawn with (its recipe stays whole). The sets hold item refs,
+// already expanded with itemRefs (a stack: its own and the presets it plays). Muted wins over soloed;
+// items without a preset (legacy methods, the test underlay) stay under mute and go under solo.
+struct ItemFilter {
+    std::set<std::string> mute, solo;
+    bool active() const { return !mute.empty() || !solo.empty(); }
+    bool keeps(const json& it) const {
+        std::string r = it.is_object() ? it.value("preset", std::string()) : std::string();
+        if(!r.empty() && mute.count(r)) return false;
+        if(!solo.empty() && (r.empty() || !solo.count(r))) return false;
+        return true;
+    }
+};
+inline json filterItems(const json& req, const ItemFilter& f){
+    if(!f.active()) return req;
+    json out = req, items = json::array();
+    for(auto& it : req.value("items", json::array())) if(f.keeps(it)) items.push_back(it);
+    out["items"] = items;
+    out["itemFilter"] = {{"mute", f.mute}, {"solo", f.solo}};   // the sidecar says what was left out
+    return out;
 }
 
 // The recipe with its scene's palette and scale as they are now (false: nothing to change)

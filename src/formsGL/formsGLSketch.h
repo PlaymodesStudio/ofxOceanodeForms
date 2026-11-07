@@ -1590,14 +1590,21 @@ private:
                 else if(srcMode == 2){ int slot = (int)random((float)p.i("repeatSourceSlots")); srcStart = pjRound(b * barSize + slot * barSize / p.i("repeatSourceSlots")); }
                 else srcStart = pjRound(xs);
                 float sw = nf > 0 ? L / nf : L / n;
+                // cut-short tail (legacy direct-copy loops, e.g. fx83 / fx46 / fx116): with a fractional count and a fixed
+                // repeatCount above int(nf), slices from int(nf) on are drawn too, clipped to the repeat length; the gate
+                // silence (sw * (1 - gate)) sits at the end of the clipped slice. Otherwise the tail stays original. No random drawn.
+                int nTot = (nf > 0 && cntR[0] == cntR[1] && pjRound(cntR[0]) > n) ? pjRound(cntR[0]) : n;
+                int xEnd = pjRound(xs + L);
                 std::vector<uint32_t> src = px;
-                for(int i = 0; i < n; i++){
-                    int dy = -pjRound(semis * (i / (float)std::max(1, n - 1)) * noteh);
+                for(int i = 0; i < nTot; i++){
+                    int dy = -pjRound(semis * (std::min(1.0f, i / (float)std::max(1, n - 1))) * noteh);
                     int dx0 = pjRound(xs + i * sw);
-                    for(int j = 0; j < pjRound(sw); j++){
+                    int wSl = i < n ? pjRound(sw) : std::min(pjRound(sw), xEnd - dx0);
+                    float openW = i < n ? sw * gate : wSl - sw * (1 - gate);
+                    for(int j = 0; j < wSl; j++){
                         int xd = dx0 + j, xsrc = srcStart + j;
                         if(xd < 0 || xd >= W || xsrc >= W) continue;
-                        bool open = j < sw * gate;
+                        bool open = j < openW;
                         for(int y = 0; y < H; y++){
                             int ys = y - dy;
                             px[(size_t)y * W + xd] = (open && ys >= 0 && ys < H && xsrc >= 0) ? src[(size_t)ys * W + xsrc] : silencePx();

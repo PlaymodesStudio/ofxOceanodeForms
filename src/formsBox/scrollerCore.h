@@ -52,6 +52,10 @@ public:
     void update(Schedule::Layer* L, float phase, float headerPos, int w, int h){
         allocate(w, h);
         if(isLoading && loaded(loadingIndex)) isLoading = false;
+        // Switch now: an old image waiting in the loading slot gives way to the switch image
+        if(L && L->replaceNext && !isLoading && entries[loadingIndex] && entries[loadingIndex] != L->replaceNext){
+            images[loadingIndex].clear(); entries[loadingIndex].reset();
+        }
         if(!isLoading && L && !L->ready.empty() && !loaded(loadingIndex)){
             entries[loadingIndex] = L->ready.front();
             L->ready.pop_front();
@@ -67,9 +71,12 @@ public:
                 isLoading = true;
             }
         }
-        if(immediate && !isLoading && loaded(loadingIndex) && entries[loadingIndex]){
+        bool once = L && L->replaceNext && entries[loadingIndex] == L->replaceNext;   // Switch now
+        if((immediate || once) && !isLoading && loaded(loadingIndex) && entries[loadingIndex]){
+            if(once) L->replaceNext.reset();
             // replace what is under the header now, keeping the beat under it where it was
             float c = phase + (w > 0 ? headerPos / w : 0);
+            swapDup = once && !immediate && c < 1;
             double hb = headerBeat;
             int ni = loadingIndex;
             leavingIndex = appearingIndex = ni;
@@ -79,6 +86,19 @@ public:
             images[other].clear(); entries[other].reset();
             origin = hb - c * beatsOf(ni);   // both slots show it: the header beat stays where it was
             if(L) L->shown++;
+        }
+        // Switch now: the copy of the switch image entering at the right gives way to the next
+        // image as soon as it is loaded (before the header reaches it), so it plays once
+        if(swapDup){
+            float c = phase + (w > 0 ? headerPos / w : 0);
+            if(c >= 1 || oldPhase - phase > 0.5) swapDup = false;
+            else if(!isLoading && loaded(loadingIndex) && entries[loadingIndex] && loadingIndex != leavingIndex && loadingIndex != appearingIndex){
+                appearingIndex = loadingIndex;
+                loadingIndex = 3 - (leavingIndex + appearingIndex);
+                images[loadingIndex].clear(); entries[loadingIndex].reset();
+                swapDup = false;
+                if(L) L->shown++;
+            }
         }
         // forward wrap
         if(oldPhase - phase > 0.5){
@@ -168,6 +188,7 @@ private:
     std::shared_ptr<Image> entries[3];
     int leavingIndex = 0, appearingIndex = 1, loadingIndex = 2;
     bool isLoading = false;
+    bool swapDup = false;                 // Switch now: the right-hand copy of the switch image is a placeholder
     float oldPhase = 0;
     double origin = 0;                    // beat of the leaving image's left edge
 

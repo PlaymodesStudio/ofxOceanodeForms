@@ -123,6 +123,45 @@ int main(int, char** argv){
         if(ok) stackOk++; else { fails++; if(fails < 12) printf("  stack %s: others %s, items %d -> %d (fresh %d)\n", ref.c_str(), othA == othB ? "same" : "CHANGED", nA, nB, nFresh); }
     }
     printf("%d stacks: %d ok (%d with a value edit)\n", stacks, stackOk, stackValue);
+    // mute / solo (filterItems): a request with two instruments, a stack playing presets, a legacy
+    // method item; mute drops exactly the muted refs, solo keeps exactly the soloed ones, muted wins
+    {
+        int fOk = 0, fAll = 0;
+        auto check = [&](bool c, const char* what){ fAll++; if(c) fOk++; else { fails++; printf("  filter: %s\n", what); } };
+        const Preset* stack = nullptr;
+        for(auto& [r, p] : e.presets) if(p.isStack() && itemRefs(e, p).size() > 1){ stack = &p; break; }
+        const Preset *a = nullptr, *b = nullptr;
+        for(auto& [r, p] : e.presets) if(!p.isStack()){ if(!a) a = &p; else if(p.gen != a->gen){ b = &p; break; } }
+        if(a && b && stack){
+            json req = readJsonFile(e.makeRequest(true));
+            json items = json::array();
+            for(auto& x : e.presetItemsSeeded(*a, 1)) items.push_back(x);
+            for(auto& x : e.presetItemsSeeded(*b, 2)) items.push_back(x);
+            for(auto& x : e.presetItemsSeeded(*stack, 3)) items.push_back(x);
+            items.push_back({{"method", "t3_clouds"}});
+            req["items"] = items;
+            auto count = [](const json& r, const std::set<std::string>& refs){ int n = 0; for(auto& it : r["items"]) if(refs.count(it.value("preset", std::string()))) n++; return n; };
+            auto methods = [](const json& r){ int n = 0; for(auto& it : r["items"]) if(it.contains("method")) n++; return n; };
+            auto sRefs = itemRefs(e, *stack);
+            int nA = count(req, {a->ref()}), nB = count(req, {b->ref()}), nS = count(req, sRefs);
+            ItemFilter none;
+            check(filterItems(req, none) == req, "inactive filter changes nothing");
+            ItemFilter m; m.mute = {a->ref()};
+            json rm = filterItems(req, m);
+            check(count(rm, {a->ref()}) == 0 && count(rm, {b->ref()}) == nB && count(rm, sRefs) == nS && methods(rm) == 1, "mute drops only the muted instrument");
+            ItemFilter ms; ms.mute = sRefs;
+            json rms = filterItems(req, ms);
+            check(count(rms, sRefs) == 0 && count(rms, {a->ref()}) == nA, "muting a stack drops the presets it plays too");
+            ItemFilter so; so.solo = {b->ref()};
+            json rso = filterItems(req, so);
+            check(count(rso, {b->ref()}) == nB && (int)rso["items"].size() == nB, "solo keeps only the soloed (no methods)");
+            ItemFilter both; both.solo = {a->ref(), b->ref()}; both.mute = {a->ref()};
+            json rb = filterItems(req, both);
+            check(count(rb, {a->ref()}) == 0 && count(rb, {b->ref()}) == nB, "muted wins over soloed");
+            check(rm.contains("itemFilter") && !filterItems(req, none).contains("itemFilter"), "the filter is recorded only when active");
+        }else{ fails++; printf("  filter: no stack / instruments to test with\n"); }
+        printf("mute / solo: %d / %d checks ok\n", fOk, fAll);
+    }
     printf("%d pages, %d with an instrument edited (%d where the edited value changed the page, %d rendered, %d structural ok), %d scene patches ok, %d failures\n",
            pages, edited, differs, renders, structural, scenesOk, fails);
     return fails ? 1 : 0;

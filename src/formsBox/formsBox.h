@@ -22,6 +22,7 @@
 #include "scrollerCore.h"
 #include "layerRing.h"
 #include "formsPost.h"
+#include "formsBackground.h"
 #include "formsSound.h"
 #include "formsControls.h"
 #include "formsEditorPost.h"
@@ -204,12 +205,27 @@ public:
         editor.kickLevel = &kickLevel;
         editor.playScene = [this](const std::string& name){
             auto it = std::find(sceneNames.begin(), sceneNames.end(), name);
+            if(it == sceneNames.end() && engine.scenes.count(name)){
+                // a scene made since the last reload (assistant, Perform): the list catches up
+                sceneNames.clear();
+                for(auto& [n, sc] : engine.scenes) sceneNames.push_back(n);
+                it = std::find(sceneNames.begin(), sceneNames.end(), name);
+            }
             if(it == sceneNames.end()) return;
             useSetlist = false;
             useSetlistLocal = false;
             sceneIndex = (int)(it - sceneNames.begin());
+            if(editor.perform.switchNow) switchPending = true;   // Switch now (Perform)
         };
-        editor.requestNext = [this](bool force){ request(force); };
+        // Render next now: a next scene other than the one playing switches now (as Switch now);
+        // the same scene: just the next image, as before
+        editor.requestNext = [this](bool force){
+            const forms::Scene* n = engine.currentScene();
+            auto& h = engine.schedule->layers[0].header;
+            if(force && (editor.perform.switchNow || (n && h && h->scene != n->name))) switchPending = true;
+            else request(force);
+        };
+        editor.switchScene = [this](){ switchPending = true; };
         editor.renderScene = [this](const std::string& name){ send(engine.makeRequest(true, name)); };
         editor.sendPreviews = [this](const std::string& scene, const std::vector<std::pair<std::string, forms::json>>& variants){
             for(auto& path : engine.makePreviews(scene, variants)) send(path);
@@ -242,11 +258,37 @@ public:
         editor.headerNormalized = [this](){ return viewW > 0 ? head.headerPos / (float)viewW : 0.0f; };
         editor.setHeaderNormalized = [this](float x){ header = ofClamp(x, 0, 1); };
         editor.drawPlayControls = [this](){ drawPlayControls(); };
+        editor.setHardCut = [this](bool b){ hardCut = b; };
+        editor.getHardCut = [this](){ return hardCut.get(); };
         editor.drawPostTab = [this](){ postCtl.draw(ctl, post); };
         editor.drawSoundTab = [this](){ drawSoundTab(); };
         editor.drawNodeTab = [this](){ ctl.drawList(); };
         editor.drawLayerLook = [this](int l){ postCtl.drawLayerFx(ctl, l, true); };
         editor.drawLayerSound = [this](int l){ soundCtl.drawLayer(ctl, soundView, l); };
+        editor.layerMS = [this](int l){ return l < 0 || l > 3 ? 0 : (layerMute[l] ? 1 : 0) | (layerSolo[l] ? 2 : 0); };
+        editor.toggleLayerMS = [this](int l, int which){ if(l < 0 || l > 3) return; bool& b = which ? layerSolo[l] : layerMute[l]; b = !b; };
+        editor.instMS = [this](const std::string& r){ return (instMute.count(r) ? 1 : 0) | (instSolo.count(r) ? 2 : 0); };
+        editor.toggleInstMS = [this](const std::string& r, int which){
+            auto& set = which ? instSolo : instMute;
+            if(!set.erase(r)) set.insert(r);
+            instrumentFilterChanged();
+        };
+        editor.muteSummary = [this](){
+            int lm = 0, ls = 0;
+            for(int i = 0; i < 4; i++){ lm += layerMute[i]; ls += layerSolo[i]; }
+            std::string s;
+            auto add = [&](int n, const char* what){ if(n) s += (s.empty() ? "" : ", ") + std::to_string(n) + " " + what; };
+            add(lm, lm == 1 ? "layer muted" : "layers muted"); add(ls, ls == 1 ? "layer soloed" : "layers soloed");
+            add((int)instMute.size(), instMute.size() == 1 ? "instrument muted" : "instruments muted");
+            add((int)instSolo.size(), instSolo.size() == 1 ? "instrument soloed" : "instruments soloed");
+            return s;
+        };
+        editor.clearMuteSolo = [this](){
+            for(int i = 0; i < 4; i++){ layerMute[i] = layerSolo[i] = false; }
+            bool inst = !instMute.empty() || !instSolo.empty();
+            instMute.clear(); instSolo.clear();
+            if(inst) instrumentFilterChanged();
+        };
         engine.laneSceneAt = [this](int bar, bool& cut){ return laneScene(bar, cut); };
         lane.onRowPlay = [this](const std::string& name){ if(editor.playScene) editor.playScene(name); };
         lane.drawPanel = [this](){ drawLanePanel(); };
@@ -258,9 +300,20 @@ public:
 
     // ---- presets: the window's settings and what is published
     void presetSave(ofJson& j) override {
+        // a queued hard cut (Perform) sets Hard Cut only until the change: the patch keeps the setting
+        bool tempCut = !editor.perform.cutFor.empty(), cutNow = hardCut.get();
+        if(tempCut) hardCut.setWithoutEventNotifications(editor.perform.cutWas);
         ctl.save(j);
+        if(tempCut) hardCut.setWithoutEventNotifications(cutNow);
         lane.save(j);
         j["formsSceneBank"] = engine.currentBank;
+        // v1 backports: the Perform tab (faders, snapshots), the look, the assistant's model
+        j["formsPerform"] = editor.perform.save();
+        j["formsTheme"] = forms::theme::enabled();
+        ofJson a = editor.aiSaved;
+        if(a.is_null()) a = ofJson::object();
+        editor.ai.save(a);
+        j["formsAssistant"] = a;
     }
     void loadBeforeConnections(ofJson& j) override {
         bool legacy = !j.contains("formsPublished");
@@ -272,6 +325,9 @@ public:
     }
     void presetRecallAfterSettingParameters(ofJson& j) override {
         ctl.loadValues(j);
+        if(j.contains("formsPerform")) editor.perform.load(j["formsPerform"]);
+        if(j.contains("formsTheme") && j["formsTheme"].is_boolean()) forms::theme::enabled() = j["formsTheme"].get<bool>();
+        if(j.contains("formsAssistant") && j["formsAssistant"].is_object()){ editor.aiSaved = j["formsAssistant"]; editor.ai.load(editor.aiSaved); }
         postCtl.migrate(j);   // one blur / trail setting for all layers (before 2026-11-06 evening)
     }
 
@@ -332,8 +388,11 @@ public:
             else useSetlistLocal = useSetlist;
         }
         lastUseSetlist = useSetlistLocal;
+        // Switch now: after the setlist setting caught up (a pad sets it this frame)
+        if(switchPending){ switchPending = false; switchNowRun(); }
         editor.imageW = imageWidth;
         editor.imageH = imageHeight;
+        editor.tick();
     }
 
     void draw(ofEventArgs&) override {
@@ -360,6 +419,7 @@ protected:   // (Forms GL Box derives from Forms Box)
                 continue;
             }
             float target = forms::perfF(perf, p.key, p.def.get<float>());
+            if(p.type == 'f') target = editor.perform.apply(p, target);   // Perform macros (1: unchanged)
             o->smoothed = o->started ? p.smooth * o->smoothed + (1 - p.smooth) * target : target;
             o->started = true;
             if(p.type == 'f'){ if(o->f.get() != o->smoothed) o->f = o->smoothed; }
@@ -475,6 +535,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         int stageLayers = nLayers;
         std::shared_ptr<forms::Image> keepHeader;
         bool audition = auditionStage();
+        gateBypass = audition;       // audition is heard alone, whatever is muted
         if(audition){ stageLayers = 1; keepHeader = engine.schedule->layers[0].header; engine.schedule->layers[0].header = auditionImage(); }
         layerEffects(stageLayers);   // before the composite and the sound: both use the processed layers
         composite(stageLayers);
@@ -490,10 +551,22 @@ protected:   // (Forms GL Box derives from Forms Box)
         // the final image: post-processing (formsPost.h)
         postCtl.apply(post);
         output = compositeFbo.isAllocated() ? const_cast<ofTexture*>(post.process(compositeFbo.getTexture(), head.headerPos, head.opacity, ofGetLastFrameTime())) : nullptr;
+        // the background colour, last (black: skipped, Output exactly as before)
+        if(output && (postCtl.paper || !forms::backgroundIsBlack(postCtl.bgR, postCtl.bgG, postCtl.bgB)))
+            output = const_cast<ofTexture*>(applyBackground(*output, stageLayers));
+        // edge feathers, the very last (all 0: skipped), toward the background colour
+        if(output && post.edges.active()){
+            bool black = forms::backgroundIsBlack(postCtl.bgR, postCtl.bgG, postCtl.bgB);
+            ofFloatColor target = postCtl.paper && black ? ofFloatColor(1, 1, 1) : ofFloatColor(postCtl.bgR, postCtl.bgG, postCtl.bgB);
+            output = const_cast<ofTexture*>(post.feather(*output, target));
+        }
         if(saveOutputPending && output){   // and the final image as it is seen (Output)
             saveOutputPending = false;
             ofPixels px;
-            if(output == &compositeFbo.getTexture()) compositeFbo.readToPixels(px); else post.fbo.readToPixels(px);
+            if(output == &compositeFbo.getTexture()) compositeFbo.readToPixels(px);
+            else if(output == &bgFbo.getTexture()) bgFbo.readToPixels(px);
+            else if(output == &post.featherFbo.getTexture()) post.featherFbo.readToPixels(px);
+            else post.fbo.readToPixels(px);
             px.setNumChannels(3);
             ofSaveImage(px, ofToDataPath("FormsBox_frame_output.png", true));
         }
@@ -751,6 +824,21 @@ protected:   // (Forms GL Box derives from Forms Box)
     forms::SoundFrame frame;
 #endif
     forms::SoundView soundView;
+    // ---- mute / solo (performance state: not in the scene, not saved with the patch)
+    // Layers: a muted layer (or one not soloed while another is) is neither drawn in the composite /
+    // background nor heard, nor does it fire the kick; it keeps scrolling and receiving its pages, so
+    // unmuting is instant. Muted wins over soloed. Audition is heard alone regardless (gateBypass).
+    bool layerMute[4] = {}, layerSolo[4] = {};
+    bool gateBypass = false;
+    bool anyLayerSolo() const { for(bool b : layerSolo) if(b) return true; return false; }
+    bool layerAudible(int i) const {
+        if(gateBypass || i < 0 || i > 3) return true;
+        if(layerMute[i]) return false;
+        return !anyLayerSolo() || layerSolo[i];
+    }
+    // Instruments (by preset ref): the pages are drawn again without them (Forms GL Box)
+    std::set<std::string> instMute, instSolo;
+    virtual void instrumentFilterChanged(){}
     int previewKick = -1;
 
     float perfOutValue(const std::string& key, float def) const {
@@ -812,14 +900,14 @@ protected:   // (Forms GL Box derives from Forms Box)
         bool haveCol[4] = {};
         if(playing){
             for(int l = 0; l < 4; l++)
-                if(fbos[l] && imgs[l] && snd.layers[l].on && fbos[l]->isAllocated())
+                if(fbos[l] && imgs[l] && snd.layers[l].on && layerAudible(l) && fbos[l]->isAllocated())
                     haveCol[l] = readColumn(*fbos[l], x, 0, (int)fbos[l]->getHeight(), cols[l]);
         }
 
         // ---- kick detection
         ofFbo* kf = fbos[kl];
         std::shared_ptr<forms::Image> kimg = imgs[kl];
-        if(!kf || !kf->isAllocated() || !kimg){ kickLevel = 0; if(kickOut.get() != 0) kickOut = 0; }
+        if(!kf || !kf->isAllocated() || !kimg || !layerAudible(kl)){ kickLevel = 0; if(kickOut.get() != 0) kickOut = 0; }
         else{
             int h = (int)kf->getHeight();
             int strip = std::max(1, std::min(h, (int)std::lround(h * snd.kickStrip)));
@@ -1134,12 +1222,106 @@ protected:   // (Forms GL Box derives from Forms Box)
         if(hs) for(int i : forms::stackOrder(hs->layers)) if(i < nLayers && i < 4) order.push_back(i);
         for(int i = 0; i < nLayers && i < 4; i++) if(std::find(order.begin(), order.end(), i) == order.end()) order.push_back(i);
         for(int i : order){
+            if(!layerAudible(i)) continue;   // muted / not soloed: neither seen nor heard
             if(i == 0) drawLayer(scroller.fbo, engine.schedule->layers[0].header, 0);
             else drawLayer(rings[i - 1].fbo, rings[i - 1].current, i);
         }
         glBlendEquation(GL_FUNC_ADD);
         ofPopStyle();
         compositeFbo.end();
+    }
+
+    // ---------------------------------------------------------------- background (Output only)
+
+    // The layers' coverage (alpha stacked "over", whatever their blend), then
+    // out = image + background x (1 - coverage). The coverage gets the image's stretch and header
+    // opacity, so the image fades into the background. Reads the layer FBOs, never writes them.
+    ofFbo coverageFbo, bgFbo;
+    ofShader bgShader;
+    bool bgTried = false, bgOk = false;
+    const ofTexture* applyBackground(const ofTexture& img, int nLayers){
+        int w = (int)img.getWidth(), h = (int)img.getHeight();
+        if(w < 1 || h < 1) return &img;
+        if(!bgTried){
+            bgTried = true;
+            std::string vert = "#version 410\nuniform mat4 modelViewProjectionMatrix;\nlayout(location = 0) in vec4 position;\nvoid main(){ gl_Position = modelViewProjectionMatrix * position; }\n";
+            std::string frag = R"(
+#version 410
+uniform sampler2D tImage;
+uniform sampler2D tCover;
+uniform vec2 size;
+uniform float stretchX;   // < 0: no stretch
+uniform float opacity;
+uniform vec3 bg;
+uniform int paper;
+out vec4 out_color;
+void main(){
+    vec3 c = texelFetch(tImage, ivec2(gl_FragCoord.xy), 0).rgb;
+    float a;
+    if(stretchX >= 0.0 && gl_FragCoord.x <= stretchX){
+        // the header column, interpolated as the post's stretch does
+        vec2 q = vec2(stretchX, gl_FragCoord.y) - 0.5;
+        ivec2 i = ivec2(floor(q)); vec2 f = q - floor(q);
+        ivec2 m = ivec2(size) - 1;
+        float a0 = mix(texelFetch(tCover, clamp(i, ivec2(0), m), 0).a, texelFetch(tCover, clamp(i + ivec2(1, 0), ivec2(0), m), 0).a, f.x);
+        float a1 = mix(texelFetch(tCover, clamp(i + ivec2(0, 1), ivec2(0), m), 0).a, texelFetch(tCover, clamp(i + ivec2(1, 1), ivec2(0), m), 0).a, f.x);
+        a = mix(a0, a1, f.y);
+    } else a = texelFetch(tCover, ivec2(gl_FragCoord.xy), 0).a;
+    a = clamp(a * opacity, 0.0, 1.0);
+    if(paper == 1){
+        // paper view: lightness inverted (hue, saturation kept), as ink over the background
+        vec3 ink = clamp(c + (1.0 - max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))), 0.0, 1.0);
+        out_color = vec4(ink * a + bg * (1.0 - a), 1.0);
+    } else out_color = vec4(min(c + bg * (1.0 - a), vec3(1.0)), 1.0);
+}
+)";
+            bgOk = bgShader.setupShaderFromSource(GL_VERTEX_SHADER, vert) && bgShader.setupShaderFromSource(GL_FRAGMENT_SHADER, frag);
+            if(bgOk){ bgShader.bindDefaults(); bgOk = bgShader.linkProgram(); }
+            if(!bgOk) ofLogError("Forms Box") << "background shader failed: no background";
+        }
+        if(!bgOk) return &img;
+        ofFboSettings st; st.width = w; st.height = h; st.internalformat = GL_RGBA;
+        if(!coverageFbo.isAllocated() || (int)coverageFbo.getWidth() != w || (int)coverageFbo.getHeight() != h) coverageFbo.allocate(st);
+        if(!bgFbo.isAllocated() || (int)bgFbo.getWidth() != w || (int)bgFbo.getHeight() != h) bgFbo.allocate(st);
+        // coverage: alpha only, a + d x (1 - a), order does not matter
+        coverageFbo.begin();
+        ofClear(0, 0, 0, 0);
+        ofPushStyle();
+        ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+        glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+        ofSetColor(255);
+        for(int i = 0; i < nLayers && i < 4; i++){
+            ofFbo& f = i == 0 ? scroller.fbo : rings[i - 1].fbo;
+            if(f.isAllocated() && layerAudible(i)) f.draw(0, 0, w, h);
+        }
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        ofPopStyle();
+        coverageFbo.end();
+        // what the post did to the image, done to the coverage (post off: the plain composite)
+        bool postOn = post.enabled && post.ok;
+        float stretchX = postOn && post.stretch ? std::max(0.0f, (float)head.headerPos) : -1.0f;
+        float op = postOn && post.useOpacity ? std::max((float)head.opacity, 0.001f) : 1.0f;
+        bgFbo.begin();
+        ofClear(0, 0, 0, 255);
+        ofPushStyle();
+        ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+        bgShader.begin();
+        bgShader.setUniformTexture("tImage", img, 0);
+        bgShader.setUniformTexture("tCover", coverageFbo.getTexture(), 1);
+        bgShader.setUniform2f("size", (float)w, (float)h);
+        bgShader.setUniform1f("stretchX", stretchX);
+        bgShader.setUniform1f("opacity", op);
+        bool black = forms::backgroundIsBlack(postCtl.bgR, postCtl.bgG, postCtl.bgB);
+        if(postCtl.paper && black) bgShader.setUniform3f("bg", 1, 1, 1);   // paper: white unless a colour is set
+        else bgShader.setUniform3f("bg", postCtl.bgR, postCtl.bgG, postCtl.bgB);
+        bgShader.setUniform1i("paper", postCtl.paper ? 1 : 0);
+        ofSetColor(255);
+        ofDrawRectangle(0, 0, w, h);
+        bgShader.end();
+        ofPopStyle();
+        bgFbo.end();
+        return &bgFbo.getTexture();
     }
 
     // The composite, plus what every layer drew and where (to check alignment and alpha offline)
@@ -1299,6 +1481,21 @@ protected:   // (Forms GL Box derives from Forms Box)
         request(false);
     }
 
+    // Switch now: the next scene replaces what plays, on every layer (Engine::switchNow)
+    bool switchPending = false;
+    void switchNowRun(){
+        auto& h = engine.schedule->layers[0].header;
+        int bar = builtInPlayer ? (int)std::lround(scroller.headerStart / 4.0)
+                                : (h && h->startBar >= 0) ? h->startBar : (int)std::floor(engine.schedule->headerBeat / 4.0);
+        // the header left of the wrap: the switch image plays once, one more image is needed ahead
+        float c = clock.phase + (viewW > 0 ? head.headerPos / viewW : 0);
+        int debt = 0;
+        auto paths = engine.switchNow(bar, debt, builtInPlayer && c < 1 ? 3 : 2);
+        if(paths.empty()) return;
+        goDebt = debt;
+        for(auto& p : paths) send(p);
+    }
+
     // Forms GL Box: audition (an edited instrument's page alone on the stage, heard)
     virtual bool auditionStage(){ return false; }
     virtual std::shared_ptr<forms::Image> auditionImage(){ return nullptr; }
@@ -1312,13 +1509,17 @@ protected:   // (Forms GL Box derives from Forms Box)
         float z = ofxOceanodeShared::getZoomLevel();
         ImGui::SetNextWindowSize(ImVec2(1180 * z, 820 * z), ImGuiCond_FirstUseEver);
         bool open = showWindow.get();
+        forms::theme::Scope look;
+        look.push(z);
         if(!ImGui::Begin(getWindowId().c_str(), &open)){
             ImGui::End();
+            look.pop();
             if(!open) showWindow = false;
             return;
         }
-        if(!open){ showWindow = false; ImGui::End(); return; }
+        if(!open){ showWindow = false; ImGui::End(); look.pop(); return; }
         editor.drawWindowContent();
         ImGui::End();
+        look.pop();
     }
 };

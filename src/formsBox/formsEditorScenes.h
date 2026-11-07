@@ -14,6 +14,17 @@ inline void Editor::drawScenesTab(){
     float zz = z();
     // list
     ImGui::BeginChild("##sceneList", ImVec2(210 * zz, 0), ImGuiChildFlags_Borders);
+    {
+        // the scene under the header, one click away
+        std::string playing = engine->schedule && engine->schedule->layers[0].header ? engine->schedule->layers[0].header->scene : std::string();
+        bool can = !playing.empty() && engine->scenes.count(playing);
+        ImGui::BeginDisabled(!can || selected == playing);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.30f, 0.08f, 1));
+        if(ImGui::Button(("Edit playing: " + (can ? playing : std::string("-"))).c_str(), ImVec2(-FLT_MIN, 0))) selected = playing;
+        ImGui::PopStyleColor();
+        ImGui::EndDisabled();
+        if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(can ? (selected == playing ? "Already editing the scene under the header" : "Select the scene under the header") : "Nothing playing yet");
+    }
     if(ImGui::Button("New")) newScene();
     ImGui::SameLine();
     if(ImGui::Button("Duplicate") && !selected.empty()){
@@ -156,6 +167,7 @@ inline void Editor::drawScenesTab(){
             changed |= weightBars("Transpose", s.transposeWeights, 12, false, nullptr);
             bool half = s.compat.value("harmonyFirstHalfOnly", false);
             if(ImGui::Checkbox("Harmony only in the first half (1920 behaviour)", &half)){ s.compat["harmonyFirstHalfOnly"] = half; changed = true; }
+            changed |= drawHarmonyText(s);
             ImGui::TreePop();
         }
         ImGui::EndTable();
@@ -250,7 +262,7 @@ inline void Editor::drawLiveTab(){
     if(ImGui::Button("Revert")){ engine->reloadScene(s.name); dirty.erase(s.name); }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if(ImGui::Button("Edit in Scenes tab")) selected = s.name;
+    if(ImGui::Button("Edit in Scenes tab")){ selected = s.name; showTab = "Scenes"; }
     ImGui::SameLine();
     ImGui::TextDisabled("(Render next now, at the top, shows palette / scale / harmony edits sooner)");
     ImGui::Separator();
@@ -267,6 +279,26 @@ inline void Editor::drawLiveTab(){
         ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1), "LAYERS");
         ImGui::SameLine(); ImGui::TextDisabled("(act at once)");
         changed |= drawLayerStack(s);
+        // the selected layer's instruments: mute / solo at once
+        if(instMS){
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1), "INSTRUMENTS, LAYER %d", sceneLayer + 1);
+            ImGui::SameLine(); ImGui::TextDisabled("(mute / solo: pages drawn again)");
+            int n = 0;
+            for(auto& u : sceneUses(s.name)){
+                if(u.layer != sceneLayer) continue;
+                auto pi = engine->presets.find(u.ref);
+                if(pi == engine->presets.end()) continue;
+                ImGui::PushID(n++);
+                instMSButtons(u.ref);
+                ImGui::SameLine();
+                std::string lab = (u.depth ? std::string((size_t)u.depth * 2, ' ') + "- " : std::string()) + pi->second.name + (u.depth ? std::string() : "   " + std::to_string((int)std::lround(u.prob)) + "%");
+                ImGui::TextColored(genColour(pi->second.gen), "%s", lab.c_str());
+                if(ImGui::IsItemHovered()) methodTooltip(u.ref);
+                ImGui::PopID();
+            }
+            if(!n) ImGui::TextDisabled("no instruments on this layer");
+        }
         // look and harmony (next images)
         ImGui::TableNextColumn();
         ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.5f, 1), "COLOUR AND HARMONY");
@@ -340,6 +372,14 @@ inline bool Editor::drawLayerStack(Scene& s){
         if(ImGui::ArrowButton("##down", ImGuiDir_Down)) moveDown = r;
         ImGui::EndDisabled();
         if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Move down in the stack");
+        if(layerMS && toggleLayerMS){
+            // mute / solo: performance state (not the scene's, not saved), seen and heard at once
+            int st = layerMS(i);
+            ImGui::SameLine(0, 10 * zz);
+            if(msButton("M", st & 1, false, "Mute this layer: hidden and silent (it keeps scrolling); not saved")) toggleLayerMS(i, 0);
+            ImGui::SameLine(0, 2);
+            if(msButton("S", st & 2, true, "Solo: only the soloed layers are seen and heard; not saved")) toggleLayerMS(i, 1);
+        }
         ImGui::EndGroup();
         ImGui::PopID();
     }
@@ -538,6 +578,13 @@ inline bool Editor::drawCellCards(Scene& s, LayerDef& l){
         std::string fam = familyOf(c.item);
         ImVec4 fc = familyColor(fam);
         dl->AddRectFilled(p, ImVec2(p.x + 4 * zz, p.y + imgH), ImGui::GetColorU32(fc));
+        if(theme::enabled()){   // the family's shape too (colour is never the only cue)
+            std::string g = fam.rfind("gen/", 0) == 0 ? fam.substr(4) : fam;
+            auto f = theme::familyOfGen(g);
+            float r = 5 * zz;
+            dl->AddCircleFilled(ImVec2(p.x + cardW - 2 * r - 2 * zz, p.y + 2 * r + 2 * zz), r + 2 * zz, IM_COL32(0, 0, 0, 160));
+            theme::drawShape(dl, ImVec2(p.x + cardW - 2 * r - 2 * zz, p.y + 2 * r + 2 * zz), r * 0.8f, f, theme::u32(theme::familyHex(f)));
+        }
         if(beyond) dl->AddText(ImVec2(p.x + 8 * zz, p.y + 4 * zz), IM_COL32(255, 180, 80, 255), "beyond Rows");
         ImGui::TextColored(fc, "%s", shortName(c.item).c_str());
         ImGui::SetNextItemWidth(cardW - 64 * zz);

@@ -10,6 +10,8 @@
 //    4. levels: (c - min) / (max - min), gamma, then low..high
 //    5. the header line: a vertical line at the header, with its own thickness, colour,
 //       softness and easing (it can glide behind a jumping header)
+//    6. edge feathers (a separate, last pass: Post::feather, see formsFeather.h), called by the
+//       node after its background so the edges fade toward the background colour
 //  The settings are plain members (the node registers them as controls). If the shader fails to
 //  compile the composite passes through unchanged.
 //
@@ -19,6 +21,7 @@
 #include "ofMain.h"
 #include <cmath>
 #include <string>
+#include "formsFeather.h"
 
 namespace forms {
 
@@ -40,7 +43,9 @@ struct Post {
     int lineEaseCurve = 0;         // 0 exponential, 1 linear glide (constant speed), 2 smooth (critically damped)
     float lineOffset = 0;          // px added to the header position
 
-    ofFbo fbo;
+    Feather edges;                 // edge feathers (all widths 0: off)
+
+    ofFbo fbo, featherFbo;
     float lineX = -1, lineV = 0;   // eased line position (px) and speed (smooth curve)
     bool ok = false, tried = false;
 
@@ -103,6 +108,36 @@ struct Post {
         return &fbo.getTexture();
     }
 
+    // Edge feathers, last: `img` fades toward `target` (the background; black when none) near
+    // each edge. Widths all 0 or no shader: returns &img untouched. Any node can call it after
+    // process() (and after its own background pass).
+    const ofTexture* feather(const ofTexture& img, ofFloatColor target = ofFloatColor(0, 0, 0)){
+        int w = (int)img.getWidth(), h = (int)img.getHeight();
+        if(!edges.active() || w < 1 || h < 1) return &img;
+        setupFeather();
+        if(!fOk) return &img;
+        if(!featherFbo.isAllocated() || (int)featherFbo.getWidth() != w || (int)featherFbo.getHeight() != h){
+            ofFboSettings st; st.width = w; st.height = h; st.internalformat = GL_RGBA;
+            featherFbo.allocate(st);
+        }
+        featherFbo.begin();
+        ofClear(0, 0, 0, 255);
+        ofPushStyle();
+        ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+        fShader.begin();
+        fShader.setUniformTexture("tImage", img, 0);
+        fShader.setUniform2f("size", (float)w, (float)h);
+        fShader.setUniform4f("width", edges.width[0], edges.width[1], edges.width[2], edges.width[3]);
+        fShader.setUniform4f("curve", edges.curve[0], edges.curve[1], edges.curve[2], edges.curve[3]);
+        fShader.setUniform3f("target", target.r, target.g, target.b);
+        ofSetColor(255);
+        ofDrawRectangle(0, 0, w, h);
+        fShader.end();
+        ofPopStyle();
+        featherFbo.end();
+        return &featherFbo.getTexture();
+    }
+
     // The CPU version of one pixel (the same maths as the shader), for the tests and for the
     // sound (which reads the column before levels, like the patch did)
     static void hsvAdjust(float& r, float& g, float& b, float hue, float sat, float val){
@@ -122,7 +157,39 @@ struct Post {
     }
 
 private:
-    ofShader shader;
+    ofShader shader, fShader;
+    bool fOk = false, fTried = false;
+    void setupFeather(){
+        if(fTried) return;
+        fTried = true;
+        std::string vert = "#version 410\nuniform mat4 modelViewProjectionMatrix;\nlayout(location = 0) in vec4 position;\nvoid main(){ gl_Position = modelViewProjectionMatrix * position; }\n";
+        std::string frag = R"(
+#version 410
+uniform sampler2D tImage;
+uniform vec2 size;
+uniform vec4 width;   // left, right, top, bottom (fractions)
+uniform vec4 curve;
+uniform vec3 target;
+out vec4 out_color;
+float edge(float d, float w, float k){
+    if(w <= 0.0) return 1.0;
+    float t = clamp(d / w, 0.0, 1.0);
+    t = t * t * (3.0 - 2.0 * t);
+    return pow(t, max(0.05, k));
+}
+void main(){
+    vec3 c = texelFetch(tImage, ivec2(gl_FragCoord.xy), 0).rgb;
+    float u = gl_FragCoord.x / size.x;
+X
+    float f = edge(u, width.x, curve.x) * edge(1.0 - u, width.y, curve.y) *
+              edge(v, width.z, curve.z) * edge(1.0 - v, width.w, curve.w);
+    out_color = vec4(mix(target, c, f), 1.0);
+}
+)";
+        fOk = fShader.setupShaderFromSource(GL_VERTEX_SHADER, vert) && fShader.setupShaderFromSource(GL_FRAGMENT_SHADER, frag);
+        if(fOk){ fShader.bindDefaults(); fOk = fShader.linkProgram(); }
+        if(!fOk) ofLogError("Forms Box") << "edge feather shader failed: no feathers";
+    }
     void setupShader(){
         if(tried) return;
         tried = true;

@@ -86,6 +86,9 @@ struct Schedule {
         float phase = 0;                            // where the header is inside its image (0..1)
         int dropped = 0;                            // images that arrived after their time had passed
         int retimed = 0;                            // late images moved to the next free place (not popped in mid-view)
+        // Switch now: this image replaces the one under the header when it arrives (once), even with
+        // Replace at Playhead off; the scroller / ring clears it when it has done so
+        std::shared_ptr<Image> replaceNext;
     };
     std::vector<Layer> layers = std::vector<Layer>(4);   // layer 1 + up to 3 extra (fixed: no reallocation)
     double headerBeat = 0;                          // absolute beat under the header (from layer 1)
@@ -295,7 +298,7 @@ public:
         pending.clear();
         pendingSince.clear();
         skipped = lost = errors = 0;
-        for(auto& l : schedule->layers){ l.ready.clear(); l.shown = 0; l.repeats = 0; l.slots.clear(); l.scheduledEnd = -1; l.dropped = 0; }
+        for(auto& l : schedule->layers){ l.ready.clear(); l.shown = 0; l.repeats = 0; l.slots.clear(); l.scheduledEnd = -1; l.dropped = 0; l.replaceNext.reset(); }
         schedule->headerBeat = 0;
         harmonyBars.clear();
         layer1NextBar = 0;
@@ -812,6 +815,7 @@ public:
         for(auto it = pendingSince.begin(); it != pendingSince.end();){
             if(std::chrono::duration<double>(now - it->second).count() > pendingTimeout){
                 note("no answer for " + it->first + ", given up");
+                forgetReplace(it->first);
                 pending.erase(it->first);
                 it = pendingSince.erase(it);
                 lost++;
@@ -954,6 +958,7 @@ public:
         pending[img->id] = img;
         pendingSince[img->id] = std::chrono::steady_clock::now();
         if(sceneOverride.empty() && !previewItem && layerIndex == 0 && !laneChose) advanceSetlist();   // the lane's images don't count
+        lastImage = img;
         note((previewItem ? "preview " + previewItem->ref() + " " : "request ") + img->id + " " + s->name + " (" + std::to_string(jitems.size()) + " items)");
         return p.string();
     }
@@ -1167,7 +1172,7 @@ public:
         bool anyLayers = currentScene() && currentScene()->layers.size() > 1;
         for(auto& pe : layer1Plan){ auto it = scenes.find(pe.scene); if(it != scenes.end() && it->second.layers.size() > 1){ anyLayers = true; break; } }
         if(!anyLayers) return "";
-        for(auto& [id, img] : pending) if(img->layer == 1 && !img->preview) return "";
+        for(auto& [id, img] : pending) if(img->layer == 1 && !img->preview && !img->cancelled) return "";
         // keep one place in the renderer queue for layer 1's next GO (a skipped GO repeats on stage)
         if((int)pending.size() >= maxPending - 1) return "";
         double B = schedule->headerBeat;
@@ -1228,6 +1233,76 @@ public:
         }
         if(best > 0) return makeRequest(false, "", nullptr, best, bestBar, bestScene, bestCut);
         return "";
+    }
+
+    // ---- Switch now (Perform): the scene the next image uses (manual scene or setlist entry, set
+    // by the caller) replaces what plays, now. Old images waiting (ready) go, pending ones are
+    // cancelled; layer 1's plan and harmony restart at `bar` (where its image under the header
+    // started); the new scene's image is asked for on every layer, forced, and each one replaces
+    // the image under the header when it arrives (Schedule::Layer::replaceNext). Layer 1 also asks
+    // for the following images (ahead - 1: 2 when the header is in the left image of the scroller,
+    // whose right-hand copy gives way to the next one, else 1), so it scrolls on normally after. Returns the requests'
+    // paths; goDebt: GOs to skip for layer 1's repeated pages (as Forms Box's request()).
+    std::shared_ptr<Image> lastImage;  // the last image makeRequest asked for
+    std::vector<std::string> switchNow(int bar, int& goDebt, int ahead = 2){
+        std::vector<std::string> out;
+        goDebt = 0;
+        if(replaying) return out;
+        if(session.empty()) newSession();
+        const Scene* s = currentScene();
+        if(!s || s->layers.empty()) return out;
+        for(auto& [id, im] : pending) if(!im->preview) im->cancelled = true;
+        for(auto& L : schedule->layers){ L.ready.clear(); L.replaceNext.reset(); }
+        // layer 1's plan from `bar` on (the image under the header may stand for more copies)
+        while(!layer1Plan.empty() && layer1Plan.back().startBar >= bar) layer1Plan.pop_back();
+        if(!layer1Plan.empty() && layer1Plan.back().startBar + layer1Plan.back().bars > bar) layer1Plan.back().bars = bar - layer1Plan.back().startBar;
+        harmonyBars.erase(harmonyBars.lower_bound(bar), harmonyBars.end());   // the new scene's own chords
+        layer1NextBar = bar;
+        std::string p = makeRequest(true);
+        if(p.empty() || !lastImage) return out;
+        out.push_back(p);
+        auto first = lastImage;
+        int firstRepeat = lastRequestRepeat;
+        schedule->layers[0].replaceNext = first;
+        auto si = scenes.find(first->scene);   // the scene it got (a lane block may choose it)
+        if(si == scenes.end()) return out;
+        const Scene& to = si->second;
+        // the extra layers: what is ahead of the header goes (unseen slots); a layer the scene
+        // doesn't have goes entirely
+        double B = schedule->headerBeat;
+        for(int i = 1; i < (int)schedule->layers.size(); i++){
+            auto& L = schedule->layers[i];
+            for(auto it = L.slots.begin(); it != L.slots.end();){
+                if(i >= (int)to.layers.size() || it->start > B) it = L.slots.erase(it); else ++it;
+            }
+            if(i >= (int)to.layers.size()) L.header.reset();
+            L.scheduledEnd = L.slots.empty() ? -1 : L.slots.back().end();
+            layerNextBar.erase(i);
+        }
+        for(int i = 1; i < (int)to.layers.size() && i < (int)schedule->layers.size(); i++){
+            // it takes the place of the layer's image under the header (LayerRing): its bars from there
+            auto& L = schedule->layers[i];
+            int lb = (int)std::ceil(B / 4.0 - 1e-9) - to.layers[i].bars;
+            for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ lb = (int)std::floor(sl.start / 4.0 + 1e-9); break; }
+            std::string q = makeRequest(true, "", nullptr, i, lb, &to, -1);
+            if(q.empty()) continue;
+            out.push_back(q);
+            schedule->layers[i].replaceNext = lastImage;
+        }
+        goDebt = std::max(0, firstRepeat - 1);
+        for(int k = 1; k < ahead; k++){
+            std::string n = makeRequest(true);
+            if(n.empty()) break;
+            out.push_back(n);
+            goDebt += std::max(0, lastRequestRepeat - 1);
+        }
+        note("switch now to " + to.name + " at bar " + std::to_string(bar));
+        syncLog.push_back("switch now to " + to.name + " at bar " + std::to_string(bar));
+        return out;
+    }
+    // a switch image that will never arrive (error, lost): nothing waits for it
+    void forgetReplace(const std::string& id){
+        for(auto& L : schedule->layers) if(L.replaceNext && L.replaceNext->id == id) L.replaceNext.reset();
     }
 
     // Layer 1 planned a scene change at `bar`. The extra layers may already have images asked for
@@ -1565,6 +1640,7 @@ public:
 
     void onError(const std::string& id, const std::string& msg){
         if(!pending.count(id)){ note("late answer for " + id + " (sent twice): " + msg); return; }
+        forgetReplace(id);
         pending.erase(id);
         pendingSince.erase(id);
         errors++;

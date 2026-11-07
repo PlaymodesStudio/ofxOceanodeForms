@@ -308,6 +308,11 @@ inline void Editor::drawSystemTab(){
             ImGui::EndChild();
         }
     }
+    drawFrameStats();
+    ImGui::SeparatorText("Look");
+    bool classic = !theme::enabled();
+    if(ImGui::Checkbox("Classic look", &classic)) theme::enabled() = !classic;
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The window as it was before the design system (colours, spacing, family colours).\nOnly the window's look; saved with the patch.");
     ImGui::SeparatorText("Log");
     ImGui::BeginChild("##log", ImVec2(0, 0), ImGuiChildFlags_Borders);
     for(auto it = engine->log.rbegin(); it != engine->log.rend(); ++it) ImGui::TextUnformatted(it->c_str());

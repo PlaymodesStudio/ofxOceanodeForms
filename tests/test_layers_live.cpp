@@ -105,6 +105,7 @@ int main(int argc, char** argv){
     auto note = [&](const std::string& s){ if(notes.size() < 25) notes.push_back(s); };
 
     double t = 0, lastB = 0, maxLoad = 0;
+    FILE* idTrace = getenv("IDTRACE") ? fopen(getenv("IDTRACE"), "w") : nullptr;
     for(; t < minutes * 60; t += dt, frames++){
         e.now = t;
         auto* L = &e.schedule->layers[0];
@@ -230,6 +231,11 @@ int main(int argc, char** argv){
                     pops++; note("pop-in L" + std::to_string(li + 1) + " " + d.png + " at x " + std::to_string(d.x));
                 }
             }
+        }
+        if(idTrace){   // IDTRACE=<file>: what each layer shows, every frame (to compare runs)
+            fprintf(idTrace, "%ld %.4f", frames, B);
+            for(int li = 0; li < 4; li++){ std::shared_ptr<Image> c = li == 0 ? L->header : (li < nLayers ? rings[li - 1].current : nullptr); fprintf(idTrace, " %s", c ? (c->id + "." + std::to_string(c->repeatIndex)).c_str() : "-"); }
+            fprintf(idTrace, "\n");
         }
         maxB = std::max(maxB, B);
         if(t > 30) maxLoad = std::max(maxLoad, e.renderLoad());

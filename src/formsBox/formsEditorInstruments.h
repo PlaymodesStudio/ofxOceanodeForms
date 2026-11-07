@@ -77,6 +77,34 @@ inline void Editor::drawBrowser(const std::function<void(const std::string&)>& p
     ImGui::EndChild();
 }
 
+// A scene's instruments per layer (cells with a chance, once each), and under a stack the presets it
+// plays (depth 1, 2...)
+inline std::vector<Editor::SceneUse> Editor::sceneUses(const std::string& sceneName) const {
+    std::vector<SceneUse> uses;
+    auto sit = engine->scenes.find(sceneName);
+    if(sit == engine->scenes.end()) return uses;
+    std::function<void(const std::string&, int, float, int)> add = [&](const std::string& r, int l, float pb, int d){
+        auto pi = engine->presets.find(r);
+        if(pi == engine->presets.end() || d > 4) return;
+        uses.push_back({r, l, pb, d});
+        if(pi->second.isStack())
+            for(auto& ly : pi->second.layers){
+                std::string inner = ly.is_object() ? ly.value("preset", std::string()) : std::string();
+                if(!inner.empty()) add(inner, l, pb, d + 1);
+            }
+    };
+    auto& L = sit->second.layers;
+    for(int l = 0; l < (int)L.size(); l++){
+        std::set<std::string> seen;
+        for(int c = 0; c < (int)L[l].cells.size() && c < L[l].rows; c++){
+            auto& cell = L[l].cells[c];
+            if(cell.item.empty() || cell.prob <= 0 || !seen.insert(cell.item).second) continue;
+            add(cell.item, l, cell.prob, 0);
+        }
+    }
+    return uses;
+}
+
 inline void Editor::drawInstrumentsTab(){
     float zz = z();
     pollPreview();
@@ -95,31 +123,9 @@ inline void Editor::drawInstrumentsTab(){
         playing = engine->schedule->layers[0].header->scene;
     bool isPlaying = !playing.empty() && engine->scenes.count(playing);
     std::string sceneHere = isPlaying ? playing : selected;
-    struct Use { std::string ref; int layer; float prob; int depth; };
-    std::vector<Use> uses;
+    std::vector<SceneUse> uses = sceneUses(sceneHere);
     std::set<std::string> inScene;
-    if(auto sit = engine->scenes.find(sceneHere); sit != engine->scenes.end()){
-        std::function<void(const std::string&, int, float, int)> add = [&](const std::string& r, int l, float pb, int d){
-            auto pi = engine->presets.find(r);
-            if(pi == engine->presets.end() || d > 4) return;
-            uses.push_back({r, l, pb, d});
-            inScene.insert(r);
-            if(pi->second.isStack())
-                for(auto& ly : pi->second.layers){
-                    std::string inner = ly.is_object() ? ly.value("preset", std::string()) : std::string();
-                    if(!inner.empty()) add(inner, l, pb, d + 1);
-                }
-        };
-        auto& L = sit->second.layers;
-        for(int l = 0; l < (int)L.size(); l++){
-            std::set<std::string> seen;
-            for(int c = 0; c < (int)L[l].cells.size() && c < L[l].rows; c++){
-                auto& cell = L[l].cells[c];
-                if(cell.item.empty() || cell.prob <= 0 || !seen.insert(cell.item).second) continue;
-                add(cell.item, l, cell.prob, 0);
-            }
-        }
-    }
+    for(auto& u : uses) inScene.insert(u.ref);
     // opening the tab, or the playing scene changing: select one of its instruments (unless the
     // selection is already one of them)
     bool opened = ImGui::GetFrameCount() - instrumentsFrame > 1;
@@ -147,11 +153,14 @@ inline void Editor::drawInstrumentsTab(){
                 if(!q.empty() && ofToLower(u.ref).find(q) == std::string::npos) continue;
                 if(multi && u.layer != lastLayer){ ImGui::TextDisabled("Layer %d", u.layer + 1); lastLayer = u.layer; }
                 auto& p = engine->presets[u.ref];
+                ImGui::PushID((int)i);
+                instMSButtons(u.ref);
+                ImGui::PopID();
+                ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Text, genColour(p.gen));
-                ImGui::Indent((float)u.depth * 12 * zz);
-                std::string label = p.name + (dirtyPresets.count(u.ref) ? "  *" : "") + (u.depth ? "" : "   " + std::to_string((int)std::lround(u.prob)) + "%") + "##use" + std::to_string(i);
+                std::string label = (u.depth ? std::string((size_t)u.depth * 2, ' ') + "- " : std::string()) + p.name + (dirtyPresets.count(u.ref) ? "  *" : "") + (u.depth ? "" : "   " + std::to_string((int)std::lround(u.prob)) + "%") + "##use" + std::to_string(i);
+                theme::badge(p.gen);
                 if(ImGui::Selectable(label.c_str(), selPreset == u.ref)) selPreset = u.ref;
-                ImGui::Unindent((float)u.depth * 12 * zz);
                 ImGui::PopStyleColor();
                 if(ImGui::IsItemHovered()) methodTooltip(u.ref);
             }
@@ -171,6 +180,7 @@ inline void Editor::drawInstrumentsTab(){
         bool selHere = engine->presets.count(selPreset) && engine->presets[selPreset].gen == gname;
         if(!q.empty()) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
         else if(selHere && justSelected) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        theme::badge(gname);
         bool open = ImGui::TreeNodeEx("##sec", ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding, "%s  (%d)", glabel.c_str(), count);
         ImGui::PopStyleColor();
         if(ImGui::IsItemHovered()){

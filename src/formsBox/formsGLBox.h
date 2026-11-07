@@ -124,7 +124,7 @@ public:
         }
         for(auto& d : ready){
             if(d.kind == KIND_AUDITION){ auditionDelivered(d); continue; }
-            if(d.kind == KIND_IMMEDIATE){ immediateDelivered(d); continue; }
+            if(d.kind == KIND_IMMEDIATE || d.kind == KIND_FILTER){ immediateDelivered(d); continue; }
             if(d.recipe && d.error.empty()) keepRecipe(d.id, d.recipe);
             if(!d.thumbRef.empty()){
                 thumbsDone++;
@@ -137,6 +137,8 @@ public:
                 if(d.queueMs >= 0){ forms::pipelineStats().queue.add(d.queueMs); forms::pipelineStats().render.add(d.renderMs); }
                 if(d.rgba) engine.onReady(d.id, d.png, d.json, d.rgba, d.w, d.h);
                 else engine.onReady(d.id, d.png, d.json);
+                // drawn with an older mute / solo: drawn again (in place) with the current one
+                if(d.filterGen != filterGen && d.recipe){ formsgl::json q = *d.recipe; q.erase("result"); submitImmediate(q, KIND_FILTER); }
             }else engine.onError(d.id, "Forms GL Box: " + d.error);
         }
         watchEdits();
@@ -197,16 +199,18 @@ protected:
         j.req = req;
         j.font = font;
         j.outDir = outputDir(req.value("session", std::string()));
-        submit(std::move(j));
+        submitFiltered(std::move(j));
     }
 
 private:
-    enum { KIND_PAGE = 0, KIND_AUDITION = 2, KIND_IMMEDIATE = 3 };
+    enum { KIND_PAGE = 0, KIND_AUDITION = 2, KIND_IMMEDIATE = 3, KIND_FILTER = 4 };
     struct Job { formsgl::json req; std::string outDir; std::shared_ptr<const formsgl::Sketch::GlyphFont> font; std::string thumbRef, thumbPath;
-                 uint64_t seq = 0; std::chrono::steady_clock::time_point asked; int kind = KIND_PAGE; };
+                 uint64_t seq = 0; std::chrono::steady_clock::time_point asked; int kind = KIND_PAGE;
+                 std::shared_ptr<formsgl::json> original;   // the whole recipe when `req` is drawn without muted instruments
+                 uint64_t filterGen = 0; };
     struct Done { std::string id, png, json, error, thumbRef;
                   std::shared_ptr<const std::vector<uint8_t>> rgba; int w = 0, h = 0; double queueMs = -1, renderMs = 0;
-                  int kind = 0; std::shared_ptr<formsgl::json> recipe; };
+                  int kind = 0; std::shared_ptr<formsgl::json> recipe; uint64_t filterGen = 0; };
 
     // ---- the recipes of recent pages (in memory: the files may not be written), for immediate mode
     std::map<std::string, std::shared_ptr<formsgl::json>> recipes;
@@ -327,11 +331,58 @@ private:
     int immediateInFlight = 0;
     bool immediateDirty = false;
     std::set<std::string> immediateScenesDirty;
-    void submitImmediate(const formsgl::json& req){
-        Job j; j.req = req; j.font = font; j.kind = KIND_IMMEDIATE;
+    void submitImmediate(const formsgl::json& req, int kind = KIND_IMMEDIATE){
+        Job j; j.req = req; j.font = font; j.kind = kind;
         j.outDir = outputDir(req.value("session", std::string()));
         immediateInFlight++;
+        submitFiltered(std::move(j));
+    }
+
+    // ---- instrument mute / solo: pages are drawn without the muted instruments (or with only the
+    // soloed ones); their recipe stays whole, so unmuting draws them again complete. A change redraws
+    // every page on the stage and waiting (KIND_FILTER: in place, never written to the archive, which
+    // keeps each page as it was first drawn); a page already queued with an older filter is redrawn
+    // when it arrives.
+    uint64_t filterGen = 1;
+    bool filterDirty = false;
+    forms::ItemFilter currentFilter() const {
+        forms::ItemFilter f;
+        auto expand = [&](const std::set<std::string>& refs, std::set<std::string>& out){
+            for(auto& r : refs){
+                auto it = engine.presets.find(r);
+                if(it == engine.presets.end()){ out.insert(r); continue; }
+                for(auto& x : forms::itemRefs(engine, it->second)) out.insert(x);
+            }
+        };
+        expand(instMute, f.mute);
+        expand(instSolo, f.solo);
+        return f;
+    }
+    void submitFiltered(Job j){
+        j.original = std::make_shared<formsgl::json>(j.req);
+        auto f = currentFilter();
+        if(f.active() && !j.req.contains("preview")) j.req = forms::filterItems(j.req, f);   // editor previews: always whole
+        j.filterGen = filterGen;
         submit(std::move(j));
+    }
+    void instrumentFilterChanged() override {
+        filterGen++;
+        redrawForFilter();
+    }
+    void redrawForFilter(){
+        if(immediateInFlight > 0){ filterDirty = true; return; }   // after this batch, with the latest sets
+        std::set<std::string> done;
+        int n = 0;
+        for(auto& im : stagePages()){
+            if(!done.insert(im->id).second) continue;
+            auto rc = recipes.find(im->id);
+            if(rc == recipes.end()) continue;
+            formsgl::json req = *rc->second;
+            req.erase("result");
+            submitImmediate(req, KIND_FILTER);
+            n++;
+        }
+        if(n) engine.note("mute / solo: " + std::to_string(n) + " pages drawn again");
     }
     void immediateFor(const std::string& ref){
         if(immediateInFlight > 0){ immediateDirty = true; return; }   // the next batch takes the latest edit
@@ -390,6 +441,7 @@ private:
             }
         }else if(!d.error.empty()) engine.note("immediate " + d.id + ": " + d.error);
         if(immediateInFlight == 0){
+            if(filterDirty){ filterDirty = false; redrawForFilter(); }
             if(immediateDirty){ immediateDirty = false; immediateFor(watchRef); }
             auto sc = immediateScenesDirty; immediateScenesDirty.clear();
             for(auto& nm : sc) immediateScene(nm);
@@ -640,6 +692,7 @@ private:
         }
         formsgl::RenderResult r = sk.render(req);
         d.kind = j.kind;
+        d.filterGen = j.filterGen;
         if(j.kind == KIND_AUDITION){
             if(!r.error.empty()){ d.error = r.error; return d; }
             d.recipe = std::make_shared<formsgl::json>(req);
@@ -657,7 +710,7 @@ private:
         std::string base = "L" + std::to_string(layer) + "_" + d.id + "_s" + std::to_string(seed);
         std::filesystem::path png = std::filesystem::path(j.outDir) / (base + ".png"), json = std::filesystem::path(j.outDir) / (base + ".json");
         // a page drawn again (immediate mode) overwrites its files; a new page never does
-        if(j.kind != KIND_IMMEDIATE && (std::filesystem::exists(png) || std::filesystem::exists(json))){ d.error = png.string() + " already exists"; errorsHere++; return d; }
+        if(j.kind != KIND_IMMEDIATE && j.kind != KIND_FILTER && (std::filesystem::exists(png) || std::filesystem::exists(json))){ d.error = png.string() + " already exists"; errorsHere++; return d; }
         // the sidecar: the request, its real size and a result block (as Render.pde writes it)
         req["size"] = {r.w, r.h};
         double waited = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - j.asked).count() - r.renderMs;
@@ -666,7 +719,7 @@ private:
                              {"queueMs", (int)std::lround(std::max(0.0, waited))}, {"items", r.itemResults}};
         if(j.kind == KIND_IMMEDIATE) res["redrawn"] = true;   // drawn again after an edit (immediate mode)
         req["result"] = res;
-        d.recipe = std::make_shared<formsgl::json>(req);
+        d.recipe = j.original ? j.original : std::make_shared<formsgl::json>(req);   // the whole recipe (mute / solo)
         auto pixels = std::make_shared<const std::vector<uint8_t>>(std::move(r.rgba));
         ArchiveJob a;
         a.rgba = pixels; a.w = r.w; a.h = r.h; a.sidecar = req; a.png = png.string(); a.json = json.string(); a.dir = j.outDir; a.base = base;
@@ -675,7 +728,7 @@ private:
             // editor previews: the editor reads the file, so it is written now
             double ms = 0; std::string err;
             if(!writeArchive(a, ms, err)){ d.error = err; errorsHere++; return d; }
-        }else if(archive){   // a redrawn page overwrites the old files (queued after them)
+        }else if(archive && j.kind != KIND_FILTER){   // an edit's redraw overwrites the old files (queued after them); mute / solo never does
             // (immediate: only a page already archived is rewritten; one still queued is written with
             //  its new pixels when its turn comes, as the archive queue keeps the newest job last)
             std::lock_guard<std::mutex> lk(am);
@@ -686,7 +739,7 @@ private:
         d.json = json.string();
         d.rgba = pixels; d.w = r.w; d.h = r.h;
         d.renderMs = r.renderMs;
-        if(j.kind != KIND_IMMEDIATE) drawnHere++;
+        if(j.kind != KIND_IMMEDIATE && j.kind != KIND_FILTER) drawnHere++;
         lastMs = r.renderMs;
         return d;
     }

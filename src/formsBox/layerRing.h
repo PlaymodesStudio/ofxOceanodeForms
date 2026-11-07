@@ -71,15 +71,19 @@ public:
             auto img = L.ready.front();
             L.ready.pop_front();
             double len = 4.0 * std::max(1, img->bars);
-            if(immediate){
+            bool once = L.replaceNext && img == L.replaceNext;   // Switch now: this one replaces, once
+            if(once) L.replaceNext.reset();
+            if(immediate || once){
                 // it takes the place of the image under the header (same start), and what it overlaps goes
                 double st = std::ceil(B / 4.0) * 4.0 - len;
                 for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ st = sl.start; break; }
                 if(st > B) st = B;
                 for(auto it = L.slots.begin(); it != L.slots.end();){
-                    if(it->start < st + len - 1e-6 && it->end() > st + 1e-6) it = L.slots.erase(it); else ++it;
+                    // (Switch now: also everything after it, e.g. repeats of the old image)
+                    if((it->start < st + len - 1e-6 && it->end() > st + 1e-6) || (once && it->start >= st - 1e-6)) it = L.slots.erase(it); else ++it;
                 }
                 img->startBeat = st; img->cutBeat = -1;
+                if(once){ onceId = img->id; onceStart = st; }
                 Schedule::Layer::Slot sl; sl.img = img; sl.start = st; sl.len = len;
                 auto pos = std::find_if(L.slots.begin(), L.slots.end(), [&](const Schedule::Layer::Slot& x){ return x.start > st; });
                 L.slots.insert(pos, sl);
@@ -88,8 +92,11 @@ public:
             double start = img->startBeat >= 0 ? img->startBeat : (L.scheduledEnd >= 0 ? L.scheduledEnd : std::ceil(B / 4.0) * 4.0);
             // a place that is already on screen (or past) is taken: an image never pops in
             // mid-view. It goes to the next free place after what has been shown instead.
-            bool taken = screenX(L, B, start, headerPos, w, len) < w;   // its left edge would be inside the view
-            for(auto& sl : L.slots) if(sl.seen && sl.start < start + len - 1e-6 && sl.end() > start + 1e-6) taken = true;
+            // Switch now: the switch image's next copies follow it (they arrive with it: no pop-in)
+            bool follows = !onceId.empty() && img->id == onceId && img->repeatIndex > 0;
+            if(follows){ start = onceStart + img->repeatIndex * len; img->startBeat = start; img->cutBeat = -1; }
+            bool taken = !follows && screenX(L, B, start, headerPos, w, len) < w;   // its left edge would be inside the view
+            if(!follows) for(auto& sl : L.slots) if(sl.seen && sl.start < start + len - 1e-6 && sl.end() > start + 1e-6) taken = true;
             if(taken){
                 double end = std::ceil(B / 4.0) * 4.0;
                 for(auto& sl : L.slots) if(sl.seen || !sl.repeat) end = std::max(end, sl.end());
@@ -254,6 +261,8 @@ private:
     ofxThreadedImageLoader loader;
     std::map<std::string, std::shared_ptr<ofImage>> images;   // by PNG path
     std::string loadingPng;
+    std::string onceId;                       // the last Switch now image, and where it was placed
+    double onceStart = 0;
 };
 
 } // namespace forms

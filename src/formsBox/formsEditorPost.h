@@ -18,7 +18,10 @@ struct PostControls {
     ofParameter<bool> enabled, stretch, useOpacity, line;
     ofParameter<float> hue, sat, val, levelMin, levelMax, gamma, low, high;
     ofParameter<float> lineWidth, lineSoft, lineSoftV, lineAlpha, lineEase, lineOffset, lineR, lineG, lineB;
+    ofParameter<float> bgR, bgG, bgB;
+    ofParameter<bool> paper;   // paper view (Output only)   // background of the final image (Output only)
     ofParameter<int> lineCurve;
+    ofParameter<float> featherW[4], featherK[4];   // edge feathers: left, right, top, bottom
     // before the sound: each layer's buffer, each layer its own settings
     static constexpr int FX_LAYERS = 4;
     ofParameter<bool> fxOn;
@@ -48,6 +51,16 @@ struct PostControls {
         lineR.set("Line R", 1, 0, 1);
         lineG.set("Line G", 1, 0, 1);
         lineB.set("Line B", 1, 0, 1);
+        bgR.set("Background R", 0, 0, 1);
+        bgG.set("Background G", 0, 0, 1);
+        bgB.set("Background B", 0, 0, 1);
+        paper.set("Paper View", false);
+        static const char* edgeName[4] = {"Left", "Right", "Top", "Bottom"};
+        for(int e = 0; e < 4; e++){
+            featherW[e].set(std::string("Feather ") + edgeName[e], 0, 0, 0.5f);
+            featherK[e].set(std::string("Feather ") + edgeName[e] + " Curve", 1, 0.1f, 5);
+            reg.reg(featherW[e]); reg.reg(featherK[e]);
+        }
         fxOn.set("Layer FX", true);
         reg.reg(fxOn);
         for(int l = 0; l < FX_LAYERS; l++){
@@ -58,9 +71,9 @@ struct PostControls {
             trailLevel[l].set(n + "Trail Level", 0.8f, 0, 1);
             for(auto* p : {&hBlur[l], &vBlur[l], &trailBeats[l], &trailLevel[l]}) reg.reg(*p);
         }
-        for(auto* p : {&enabled, &stretch, &useOpacity, &line}) reg.reg(*p);
+        for(auto* p : {&enabled, &stretch, &useOpacity, &line, &paper}) reg.reg(*p);
         for(auto* p : {&hue, &sat, &val, &levelMin, &levelMax, &gamma, &low, &high, &lineWidth, &lineSoft, &lineSoftV, &lineAlpha,
-                       &lineEase, &lineOffset, &lineR, &lineG, &lineB}) reg.reg(*p);
+                       &lineEase, &lineOffset, &lineR, &lineG, &lineB, &bgR, &bgG, &bgB}) reg.reg(*p);
         reg.reg(lineCurve);
     }
 
@@ -84,6 +97,7 @@ struct PostControls {
         p.line = line; p.lineWidth = lineWidth; p.lineSoft = lineSoft; p.lineSoftV = lineSoftV; p.lineAlpha = lineAlpha;
         p.lineEase = lineEase; p.lineEaseCurve = lineCurve; p.lineOffset = lineOffset;
         p.lineColor = ofFloatColor(lineR, lineG, lineB);
+        for(int e = 0; e < 4; e++){ p.edges.width[e] = featherW[e]; p.edges.curve[e] = featherK[e]; }
     }
 
     // one layer's effects before the sound (also drawn in Scenes / Live, under the layer stack)
@@ -179,6 +193,25 @@ struct PostControls {
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Also scales the sound (the brightness the partials read)");
         reg.check(useOpacity, "Header opacity");
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("The header's beat-repeat fade and strobe gate darken the image");
+        float bg[3] = {bgR, bgG, bgB};
+        if(ImGui::ColorEdit3("Background", bg)){ bgR = bg[0]; bgG = bg[1]; bgB = bg[2]; }
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Shows where no layer draws (Output only: not heard). Black: as before.\nTo publish it: R / G / B below, right-click.");
+        reg.check(paper, "Paper view");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Dark ink on paper: hue and saturation kept, lightness inverted, over the background\n(white while the background is black). Display only: not heard.");
+        if(ImGui::TreeNode("Background R G B")){
+            reg.slider(bgR, "%.3f", "R##bg"); reg.slider(bgG, "%.3f", "G##bg"); reg.slider(bgB, "%.3f", "B##bg");
+            ImGui::TreePop();
+        }
+        ImGui::SeparatorText("Edge feathers");
+        static const char* edgeLabel[4] = {"Left", "Right", "Top", "Bottom"};
+        for(int e = 0; e < 4; e++){
+            reg.slider(featherW[e], "%.3f", (std::string(edgeLabel[e]) + "##fw").c_str());
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Fades this edge toward the background (black when none) over this fraction of the screen. 0: off");
+            if(featherW[e] > 0){
+                reg.slider(featherK[e], "%.2f", (std::string(edgeLabel[e]) + " curve##fk").c_str());
+                if(ImGui::IsItemHovered()) ImGui::SetTooltip("Shape of the fade: 1 smooth, above 1 the edge stays dark longer, below 1 softer");
+            }
+        }
         ImGui::PopItemWidth();
 
         ImGui::TableNextColumn();

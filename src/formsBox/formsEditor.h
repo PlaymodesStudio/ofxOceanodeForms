@@ -18,6 +18,13 @@
 #include "formsSoundModel.h"
 #include "formsGallery.h"
 #include "formsPanels.h"
+#include "formsTheme.h"
+#include "formsUndo.h"
+#include "formsPerform.h"
+#include "formsHarmonyText.h"
+#include "formsAssistantV1.h"
+#include "ofxOceanodeAIAssistant.h"
+#include <future>
 #include <array>
 #include <functional>
 #include <set>
@@ -72,6 +79,7 @@ inline std::string familyLabel(const std::string& f){
     return f;
 }
 inline ImVec4 familyColor(const std::string& f){
+    if(theme::enabled()) return theme::rgb(theme::familyHex(theme::familyOfGen(f.rfind("gen/", 0) == 0 ? f.substr(4) : f)));
     if(f == "legacy/h") return ImVec4(0.95f, 0.75f, 0.25f, 1);
     if(f == "legacy/r") return ImVec4(0.95f, 0.40f, 0.35f, 1);
     if(f == "legacy/t") return ImVec4(0.45f, 0.75f, 0.95f, 1);
@@ -117,6 +125,34 @@ public:
     std::function<void()> drawRendererPanel;              // set by the node: the renderer's state (System tab)
     std::function<void(int)> drawLayerLook, drawLayerSound; // set by the node: a layer's effects / sound (every scene)
     bool auditioning() const { return auditionSwitch && *auditionSwitch; }
+    // mute / solo (set by the node; performance state, not in the scene): bit 1 muted, bit 2 soloed
+    std::function<int(int)> layerMS;
+    std::function<void(int, int)> toggleLayerMS;              // layer, 0 mute / 1 solo
+    std::function<int(const std::string&)> instMS;
+    std::function<void(const std::string&, int)> toggleInstMS; // preset ref, 0 mute / 1 solo
+    std::function<std::string()> muteSummary;                 // "" when nothing is muted / soloed
+    std::function<void()> clearMuteSolo;
+    // a small M / S toggle (lit when on); true when clicked
+    bool msButton(const char* label, bool on, bool solo, const char* tip){
+        ImVec4 c = solo ? ImVec4(0.85f, 0.70f, 0.15f, 1) : ImVec4(0.85f, 0.30f, 0.25f, 1);
+        ImGui::PushStyleColor(ImGuiCol_Button, on ? c : ImVec4(0.18f, 0.20f, 0.24f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? c : ImVec4(0.26f, 0.28f, 0.34f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, on ? ImVec4(0.05f, 0.05f, 0.05f, 1) : ImVec4(0.8f, 0.8f, 0.8f, 1));
+        bool r = ImGui::SmallButton(label);
+        ImGui::PopStyleColor(3);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        return r;
+    }
+    // M and S for an instrument (preset ref), on one line
+    void instMSButtons(const std::string& ref){
+        if(!instMS || !toggleInstMS) return;
+        int st = instMS(ref);
+        ImGui::PushID(ref.c_str());
+        if(msButton("M", st & 1, false, "Mute this instrument: the pages on stage are drawn again without it (not saved)")) toggleInstMS(ref, 0);
+        ImGui::SameLine(0, 2);
+        if(msButton("S", st & 2, true, "Solo: only the soloed instruments are drawn (not saved)")) toggleInstMS(ref, 1);
+        ImGui::PopID();
+    }
     // The grid overlay of the Play tab's view (filled by the node)
     struct GridInfo {
         bool valid = false;
@@ -204,23 +240,46 @@ public:
         if(ImGui::BeginTabBar("##formsTabs")){
             // playing | composing | the output; Gallery and System on the right edge
             if(ImGui::BeginTabItem("Play")){ drawPlayTab(); ImGui::EndTabItem(); }
+            if(ImGui::BeginTabItem("Perform")){ drawPerformTab(); ImGui::EndTabItem(); }
             if(ImGui::BeginTabItem("Live")){ drawLiveTab(); ImGui::EndTabItem(); }
-            if(ImGui::BeginTabItem("Scenes")){ drawScenesTab(); ImGui::EndTabItem(); }
+            if(ImGui::BeginTabItem("Scenes", nullptr, showTab == "Scenes" ? ImGuiTabItemFlags_SetSelected : 0)){ drawScenesTab(); ImGui::EndTabItem(); }
             std::string ins = std::string("Instruments") + (dirtyPresets.empty() ? "" : " *") + (auditioning() ? "  (audition)" : "") + "###instruments";
             if(ImGui::BeginTabItem(ins.c_str())){ drawInstrumentsTab(); ImGui::EndTabItem(); }
             std::string sl = std::string("Setlist") + (setlistDirty ? " *" : "") + "###setlist";
             if(ImGui::BeginTabItem(sl.c_str())){ drawSetlistTab(); ImGui::EndTabItem(); }
             std::string lib = std::string("Library") + (libraryDirty ? " *" : "") + "###library";
             if(ImGui::BeginTabItem(lib.c_str())){ drawLibraryTab(); ImGui::EndTabItem(); }
+            std::string as = std::string("Assistant") + (aiAuditioning ? "  (Keep / Discard)" : "") + "###assistant";
+            if(ImGui::BeginTabItem(as.c_str())){ drawAssistantTab(); ImGui::EndTabItem(); }
             if(drawPostTab && ImGui::BeginTabItem("Post-processing")){ drawPostTab(); ImGui::EndTabItem(); }
             if(drawSoundTab && ImGui::BeginTabItem("Sonification")){ drawSoundTab(); ImGui::EndTabItem(); }
             std::string gal = std::string("Gallery") + (engine->replaying ? "  (replaying)" : "") + "###gallery";
             if(ImGui::BeginTabItem(gal.c_str(), nullptr, ImGuiTabItemFlags_Trailing)){ drawGalleryTab(); ImGui::EndTabItem(); }
             if(ImGui::BeginTabItem("System", nullptr, ImGuiTabItemFlags_Trailing)){ drawSystemTab(); ImGui::EndTabItem(); }
+            showTab.clear();   // a requested tab is selected once
             ImGui::EndTabBar();
         }
         drawPickerPopup();
+        drawCompareWindow();
+        // undo / redo keys while the window has focus (not while typing)
+        if(ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput){
+            if(ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) doUndo(true);
+            else if(ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) doUndo(false);
+        }
+        trackUndo();
     }
+
+    // ------------------------------------------------ v1 backports (formsEditorBackports.h)
+    UndoStack undo;
+    PerformState perform;
+    std::function<void(bool)> setHardCut;   // set by the node: its Hard Cut setting
+    std::function<void()> switchScene;      // set by the node: Switch now (the next scene replaces what plays)
+    std::function<bool()> getHardCut;
+    ofxOceanodeAIAssistant ai;
+    json aiSaved;                            // the assistant's settings from the patch (model)
+    void tick();                             // every frame, from the node's update
+    void drawFrameStats();
+    bool drawHarmonyText(Scene& s);
 
 private:
     ofxThreadedImageLoader headerLoader;
@@ -244,6 +303,7 @@ private:
     std::string selPreset, renameFor, previewScene, previewShownRef, listActive;
     char presetFilter[64] = "";
     bool justSelected = false;
+    std::string showTab;             // a tab to bring to the front on the next frame ("Scenes")
     int instrumentsFrame = -10;      // the last frame the tab was drawn (opening it: frame gap)
     std::string playingFor;          // the playing scene the tab last followed
     bool useUnderlay = false;
@@ -261,6 +321,40 @@ private:
 
     float z() const { return ofxOceanodeShared::getZoomLevel(); }
 
+    // v1 backports (formsEditorBackports.h)
+    bool undoWasActive = false, compareOpen = false;
+    int undoIdle = 0;
+    char harmonyBuf[256] = "";
+    std::string harmonyFor;
+    std::array<float, 240> frameMs {};
+    size_t frameAt = 0;
+    bool aiSetup = false, aiKey = false, aiBusy = false, aiRetried = false, aiAuditioning = false, aiIsPreset = true, aiAuditionWas = false;
+    int aiMode = 0;
+    char aiPrompt[2048] = "";
+    std::future<ofxOceanodeAIAssistant::TextResult> aiFuture;
+    std::string aiStatus, aiAnswer, aiUser, aiTempRef, aiTargetRef, aiSelBefore;
+    std::vector<std::string> aiProblems;
+    json aiProposal, aiBefore;
+    void trackUndo();
+    void doUndo(bool redo);
+    void drawUndoButtons();
+    void drawCompareWindow();
+    void drawPerformTab();
+    void queueScene(const std::string& name);
+    void queueSetlistEntry(int i);
+    void storeSnapshot(int k);
+    void recallSnapshot(int k);
+    bool pad(const std::string& label, const std::string& sub, int state, ImVec2 size, ImU32 accent);
+    static bool aiKeyPresent();
+    void setupAssistant();
+    std::string assistCurrent() const;
+    void sendAssist(const std::string& user, bool retry);
+    void pollAssistant();
+    void handleAssistAnswer(const std::string& text);
+    void startAssistAudition(const json& j);
+    void endAssistAudition(bool keep);
+    void drawAssistantTab();
+
     // ------------------------------------------------ top bar: now playing
 
     void drawTopBar(){
@@ -277,12 +371,22 @@ private:
         ImGui::BeginGroup();
         auto& L = engine->schedule->layers[0];
         ImGui::TextDisabled("UNDER THE HEADER");
+        if(muteSummary){
+            std::string ms = muteSummary();
+            if(!ms.empty()){
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1), "  %s", ms.c_str());
+                ImGui::SameLine();
+                if(clearMuteSolo && ImGui::SmallButton("clear")) clearMuteSolo();
+                if(ImGui::IsItemHovered()) ImGui::SetTooltip("Unmute and unsolo every layer and instrument");
+            }
+        }
         if(auditioning()){
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(1, 0.55f, 0.2f, 1), "  AUDITION: the edited instrument alone on stage");
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("Instruments tab: Audition is on. The other layers are silent until it is off.");
         }
-        ImGui::SetWindowFontScale(1.35f);
+        ImGui::SetWindowFontScale(theme::enabled() ? theme::fsXL() : 1.35f);
         ImGui::Text("%s", L.header ? L.header->scene.c_str() : "-");
         ImGui::SetWindowFontScale(1.0f);
         if(L.header) ImGui::TextDisabled("image %s  |  %d bars  |  %d BPM  |  %s  |  %s", L.header->id.c_str(), L.header->bars, L.header->bpm,
@@ -306,6 +410,8 @@ private:
         ImGui::SameLine();
         if(ImGui::Button("Render next now")) requestNext(true);
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Ask for the next image at once: palette, scale and harmony edits show sooner");
+        ImGui::SameLine(0, 16 * zz);
+        drawUndoButtons();
         ImGui::Spacing();
         ImGui::TextDisabled("%d x %d  |  %d rendering  %d ready  shown %d  repeats %d  skipped %d",
                             imageW, imageH, (int)engine->pending.size(), (int)L.ready.size(), L.shown, L.repeats, engine->skipped);
@@ -452,6 +558,7 @@ private:
 
     // Colour of a generator family in the Instruments list
     static ImVec4 genColour(const std::string& gen){
+        if(theme::enabled()) return theme::rgb(theme::familyHex(theme::familyOfGen(gen)));   // the design system's family colours
         if(gen == "pulse") return ImVec4(0.95f, 0.75f, 0.25f, 1);
         if(gen == "hits") return ImVec4(0.95f, 0.45f, 0.38f, 1);
         if(gen == "masses") return ImVec4(0.55f, 0.75f, 1.00f, 1);
@@ -463,6 +570,8 @@ private:
     }
 
     void drawInstrumentsTab();
+    struct SceneUse { std::string ref; int layer; float prob; int depth; };
+    std::vector<SceneUse> sceneUses(const std::string& sceneName) const;
 
     // The parameters in tabs, one per group ("pattern", "pitch", "cell"...). The process groups share
     // one "processes" tab with a list of the processes on the left. A dot marks the tabs (and
@@ -829,3 +938,4 @@ inline std::string Editor::previewSceneName() const { return !previewScene.empty
 #include "formsEditorInstruments.h"
 #include "formsEditorGallery.h"
 #include "formsEditorTabs.h"
+#include "formsEditorBackports.h"

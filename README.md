@@ -50,6 +50,26 @@ Sonification. They are not the scene's: they apply to that layer in every scene 
 the patch, like everything marked "saved with the patch" (Play controls, Post-processing,
 Sonification, the renderer switches, published settings).
 
+## Mute and solo (2026-11-07)
+
+Performance state: not part of a scene and not saved with the patch (a reload starts with
+everything playing). The top bar shows what is muted / soloed, with **clear**.
+- **Layers** (M / S on each row of the layer stack, Scenes and Live): a muted layer, or one not soloed
+  while another is, is neither drawn (composite and background) nor heard, and does not fire the
+  kick; it keeps scrolling and receiving its pages, so unmuting is instant. Muted wins over soloed.
+  Not the Sonification tab's "Layer N" switch, which only silences the sound. Audition is heard alone
+  whatever is muted.
+- **Instruments** (M / S in the Instruments tab's playing-scene list, and for the selected layer in
+  Live): the pages on stage and waiting are drawn again without the muted instruments (or with only
+  the soloed ones), and so are new pages; muting a stack mutes the presets it plays. Items with no
+  instrument (legacy methods) stay under mute and go under solo. The recipes stay whole, so unmuting
+  draws them complete again. These redraws are never written to the archive (it keeps each page as
+  first drawn; a page first drawn while something was muted is archived that way, its sidecar's
+  `itemFilter` says what was left out). Editor previews are always whole. Pages without a kept
+  recipe (older than the last 400) are not redrawn.
+- **Edit playing** (top of the Scenes tab's list) selects the scene under the header; Live's
+  **Edit in Scenes tab** now also switches to the Scenes tab.
+
 ## Usage
 
 ```cpp
@@ -514,3 +534,71 @@ are bit-identical before and after, also drawn in parallel.
   the header as soon as it is ready, instead of scrolling in from the right edge. The beat under
   the header stays continuous; the image shows (wrapped) until the next one arrives.
 
+
+## v1 backports from v2 (2026-11-07, GUI only)
+
+Forms Box / Forms GL Box got v2's GUI and usability work. Output is unchanged: no request,
+render or file format changed; anything that could change what plays is off by default.
+- **Design system** (`formsTheme.h`): the approved mockups' colours, type scale, 4 px spacing,
+  one control look, family colours with shapes (pitched square, percussive circle, texture
+  diamond, effects triangle, stacks a bar). Pushed around the window only. System tab: **Classic
+  look** brings back the old look (saved with the patch).
+- **Undo / redo** (`formsUndo.h`; top bar, Cmd-Z / Cmd-Shift-Z): scenes, presets, setlist, library.
+  A step is taken when an edit ends (a slider drag is one step). Undone edits come back unsaved;
+  scenes / presets that appear or disappear are written / removed on disk at once.
+  **Compare with saved**: per unsaved item, what differs from its file, and Revert.
+- **Perform tab** (`formsPerform.h`, `formsEditorBackports.h`): scene pads (setlist entries and
+  scenes) that queue the scene for the next image (dashed until it reaches the header), with an
+  optional hard cut (Hard Cut set just for that change); 8 macro faders, each scaling one
+  performance output (x1 = as the scene says, the default; right-click picks the output); 8
+  snapshots (scene or setlist position, faders, the scene's performance settings), saved in the
+  patch.
+- **Switch now** (Perform tab, next to Hard cut; off by default, saved with the patch in
+  "formsPerform"): a chosen scene (pad, setlist entry, snapshot, the Next menu, Play this scene,
+  a lane row) replaces what plays at once, on every layer. Images of the old scene waiting to
+  play are dropped and pending ones cancelled; the new scene's image is asked for on every layer
+  (forced) and replaces the one under the playhead as soon as it is ready (Replace at Playhead for
+  that image only, `Schedule::Layer::replaceNext`), then scrolling goes on as usual. The beat
+  count stays continuous; a layer the new scene lacks empties. `Engine::switchNow`,
+  `formsBox::switchNowRun`. **Render next now** (Play tab) also switches like this when the Next
+  scene differs from the one playing (else it asks for the next image, as before).
+  Off: nothing changes. Test: `clang++ -std=c++17 -O1 -I tests/stub -I src/formsBox -I <OF>/libs/json/include tests/test_switch_now.cpp && [SWITCH=1] [REPEAT=1] ./a.out <renderer copy> [render s]`.
+- **Assistant tab** (`formsAssistantV1.h`): new / modified instrument presets and scenes from text
+  (ofxOceanodeAIAssistant, Requesty). The system prompt is written from v1's schema
+  (generators.json, library, presets); answers are validated (one retry with the problems,
+  rejected answers shown). A proposal is auditioned before anything changes: presets with
+  Audition (Forms GL Box) or the preview, scenes with a preview render; Keep is one undo step,
+  Discard leaves everything as it was. Inactive without a Requesty key.
+- **Typed harmony** (Scenes tab, Harmony): `I vi IV V`, `I:2 V:2`. A frozen layer takes it as
+  its roots per bar (transpose 0); other layers can take its degree chances (v1 draws degrees per
+  bar by chance, there is no per-bar harmony for them). Nothing changes until a button is pressed.
+- **Frame time** (System tab): frame time, render queue, the pipeline's queue / render / upload /
+  archive times; drawn only when open.
+- **Background colour** (Post-processing, After the sound > Image; `formsBackground.h`, `applyBackground`
+  in `formsBox.h`): Output = post(composite) + background x (1 - coverage), coverage = the layers'
+  alpha stacked "over", given the same stretch and header opacity as the image (the image fades
+  into the background). Levels and the header line act on the image only; the background is added
+  last. Default black: the pass is skipped, Output exactly as before. Output only: the sound reads
+  the layer buffers, unchanged. Background R / G / B are publishable, saved with the patch.
+- **Paper view** (same place, off by default): each Output pixel keeps its hue and saturation and
+  its HSL lightness is inverted (L' = 1 - L: a bright blue line becomes deep blue, not orange),
+  drawn by its coverage over the background (white while the background is black). Display
+  only, after post; the sound is untouched. Off: Output as before.
+  Test: `clang++ -std=c++17 -I src/formsBox tests/test_background.cpp && ./a.out`.
+- **Edge feathers** (Post tab, under the background; off by default): Left / Right / Top /
+  Bottom each have a width (fraction of the screen, 0 = off) and a curve (exponent after a
+  smoothstep: 1 smooth, >1 harder, <1 softer); publishable as "Feather Left", "Feather Left
+  Curve", ... and saved with the patch. The very last pass, after stretch, colour, levels, the
+  header line and the background: the whole picture fades toward the background colour (white
+  in paper view with a black background, black when none). All widths 0: the pass is skipped,
+  Output bit-identical; the sound reads the layer buffers and never sees it.
+  Maths in `src/formsBox/formsFeather.h`, shader in `forms::Post::feather` (`formsPost.h`).
+  Another node reuses it with: `post.edges.width[e] / curve[e]` (e: 0 left, 1 right, 2 top,
+  3 bottom; or `PostControls::apply`), then
+  `tex = post.process(src, headerX, opacity, dt); /* own background */ tex = post.feather(*tex, bgColour);`
+  (`feather` returns its input untouched when all widths are 0).
+  Test: `clang++ -std=c++17 -I src/formsBox tests/test_feather.cpp && ./a.out`.
+
+Test: `clang++ -std=c++17 -I src/formsBox -I <OF>/libs/json/include tests/test_v1_backports.cpp && ./a.out <renderer copy>`
+(undo / redo incl. created scenes, compare, faders' identity, snapshots save / load, the
+harmony parser, the assistant's validation).
