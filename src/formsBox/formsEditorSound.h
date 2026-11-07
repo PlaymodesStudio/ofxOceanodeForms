@@ -11,6 +11,7 @@
 
 #include "formsSoundModel.h"
 #include "formsControls.h"
+#include "formsUiNotes.h"
 #include <functional>
 
 namespace forms {
@@ -121,6 +122,24 @@ struct SoundControls {
         s.volume = volume; s.limit = limiter ? 1 : 0; s.lrBalance = lrBalance;
     }
 
+    // one layer's sound (also drawn in Scenes / Live, under the layer stack)
+    void drawLayer(ControlRegistry& reg, const SoundView& v, int l){
+        float z = ofxOceanodeShared::getZoomLevel();
+        l = std::max(0, std::min(SOUND_LAYERS - 1, l));
+        std::string t = "Layer " + ofToString(l + 1);
+        reg.check(layerOn[l], t.c_str());
+        ImGui::SameLine();
+        char buf[32]; snprintf(buf, sizeof(buf), v.layerActive[l] ? "%.2f" : "no image", v.layerLevel[l]);
+        ImGui::ProgressBar(v.layerActive[l] ? std::min(1.0f, v.layerLevel[l] * 4) : 0, ImVec2(-1, 0), buf);
+        ImGui::PushItemWidth(-80 * z);
+        reg.slider(layerLevel[l], "%.2f", "Level");
+        reg.slider(layerPan[l], "%.2f", "Pan");
+        reg.slider(layerSpread[l], "%.2f", "Spread");
+        reg.slider(layerReverb[l], "x%.2f", "Reverb");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("How much of this layer goes to the reverb: x the scene's reverb (and Reverb x scene).\n0: dry, 1: as the scene says, 2: double (the send tops out at all-wet).");
+        ImGui::PopItemWidth();
+    }
+
     void draw(ControlRegistry& reg, const SoundView& v){
         float z = ofxOceanodeShared::getZoomLevel();
         if(!v.hasSC) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "This build has no SuperCollider: no sound.");
@@ -129,6 +148,8 @@ struct SoundControls {
         else ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1), "Playing: 512 partials per layer, kick, FX, master.");
         ImGui::SameLine();
         ImGui::TextDisabled("  Right-click a control to publish it to the node.");
+        ImGui::SameLine();
+        savedWithPatchNote();
         reg.check(on, "Sound on");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220 * z);
@@ -141,18 +162,7 @@ struct SoundControls {
         ImGui::TextDisabled("Each layer's header column plays its own bank.");
         for(int l = 0; l < SOUND_LAYERS; l++){
             ImGui::PushID(l);
-            std::string t = "Layer " + ofToString(l + 1);
-            reg.check(layerOn[l], t.c_str());
-            ImGui::SameLine();
-            char buf[32]; snprintf(buf, sizeof(buf), v.layerActive[l] ? "%.2f" : "no image", v.layerLevel[l]);
-            ImGui::ProgressBar(v.layerActive[l] ? std::min(1.0f, v.layerLevel[l] * 4) : 0, ImVec2(-1, 0), buf);
-            ImGui::PushItemWidth(-80 * z);
-            reg.slider(layerLevel[l], "%.2f", "Level");
-            reg.slider(layerPan[l], "%.2f", "Pan");
-            reg.slider(layerSpread[l], "%.2f", "Spread");
-            reg.slider(layerReverb[l], "x%.2f", "Reverb");
-            if(ImGui::IsItemHovered()) ImGui::SetTooltip("How much of this layer goes to the reverb: x the scene's reverb (and Reverb x scene).\n0: dry, 1: as the scene says, 2: double (the send tops out at all-wet).");
-            ImGui::PopItemWidth();
+            drawLayer(reg, v, l);
             ImGui::PopID();
             ImGui::Spacing();
         }

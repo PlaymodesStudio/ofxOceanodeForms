@@ -41,7 +41,7 @@ inline void Editor::drawBrowser(const std::function<void(const std::string&)>& p
     ImGui::SetNextItemWidth(110 * zz);
     ImGui::SliderFloat("##size", &thumbSize, 90, 300, "size %.0f");
     if(!thumbs.any() && !engine->methods.empty() && !fs::exists(thumbs.dir))
-        ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "No thumbnails yet: Engine → Make thumbnails (the renderer draws them, a few minutes).");
+        ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "No thumbnails yet: System → Make thumbnails (a few seconds).");
 
     ImGui::BeginChild("##grid", ImVec2(0, 0));
     float w = thumbSize * zz, h = w * 9 / 16;
@@ -81,7 +81,7 @@ inline void Editor::drawInstrumentsTab(){
     float zz = z();
     pollPreview();
     if(engine->gens.empty()){
-        ImGui::TextDisabled("No parameterised generators: generators.json is missing or unreadable in the data folder (Engine → Reload).");
+        ImGui::TextDisabled("No parameterised generators: generators.json is missing or unreadable in the data folder (System → Reload scenes and library).");
         return;
     }
     if(!selPreset.empty() && !engine->presets.count(selPreset)) selPreset.clear();
@@ -267,6 +267,33 @@ inline void Editor::drawInstrumentsTab(){
         ImGui::TextDisabled("|  from %s", pr.legacy.c_str());
     }
 
+    // --- live edit: this instrument heard on stage, or edited into the playback
+    if(auditionSwitch || immediateSwitch){
+        bool any = (auditionSwitch && *auditionSwitch) || (immediateSwitch && *immediateSwitch);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, any ? ImVec4(0.30f, 0.17f, 0.06f, 1) : ImVec4(0.16f, 0.13f, 0.10f, 1));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8 * zz, 4 * zz));
+        ImGui::BeginChild("##liveEdit", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::TextColored(ImVec4(1, 0.7f, 0.35f, 1), "LIVE EDIT");
+        if(auditionSwitch){
+            ImGui::SameLine();
+            ImGui::Checkbox("Audition", auditionSwitch);
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("This instrument's page alone on the stage, under the header, heard: every change\n"
+                                                         "is drawn again at once (same seed). The other layers are silent while it is on.\n"
+                                                         "Off: the playback is back where it is.");
+        }
+        if(immediateSwitch){
+            ImGui::SameLine();
+            ImGui::Checkbox("Immediate", immediateSwitch);
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Edits go into the playback: the pages on screen and waiting that use this instrument\n"
+                                                         "(or a scene whose palette / scale you change) are drawn again in place, overwriting them.");
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(any ? "  edits are seen and heard at once" : "  off: edits show in the preview below only");
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+
     // --- preview and use
     bool canPreview = (g || pr.isStack()) && engine->scenes.count(previewScene);
     ImGui::BeginDisabled(!canPreview);
@@ -283,22 +310,10 @@ inline void Editor::drawInstrumentsTab(){
     if(ImGui::Button("Reroll")) preview(true);
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Preview a new image (another seed)");
     ImGui::EndDisabled();
-    if(auditionSwitch){
-        ImGui::SameLine();
-        ImGui::Checkbox("Audition", auditionSwitch);
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("This instrument's page alone on the stage, under the header, heard: every change\n"
-                                                     "is drawn again at once (same seed). Off: the playback is back where it is.");
-    }
-    if(immediateSwitch){
-        ImGui::SameLine();
-        ImGui::Checkbox("Immediate", immediateSwitch);
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Edits go into the playback: the pages on screen and waiting that use this instrument\n"
-                                                     "(or a scene whose palette / scale you change) are drawn again in place, overwriting them.");
-    }
     ImGui::SameLine();
     ImGui::Checkbox("Same seed", &engine->previewLock);
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Preview re-renders the last preview's image (same seed, harmony and range draws),\nso a parameter change shows on the same image. Reroll for a new one.");
-    if(!canPreview && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The renderer is not answering");
+    if(!canPreview && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Pick a scene to preview with (\"with\", to the right)");
     ImGui::SameLine();
     ImGui::TextDisabled("with");
     ImGui::SameLine();

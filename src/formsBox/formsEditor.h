@@ -13,6 +13,7 @@
 #include "ofxOceanodeShared.h"
 #include "ofxThreadedImageLoader.h"
 #include "imgui.h"
+#include "formsUiNotes.h"
 #include "formsEngine.h"
 #include "formsSoundModel.h"
 #include "formsGallery.h"
@@ -109,10 +110,13 @@ public:
     std::function<void(const std::string&)> sendRequest; // set by the node: sends a request path to a renderer
     std::function<std::string()> exportPanorama;          // set by the node: writes the panorama, returns its path or why not
     std::function<std::string(const std::string&)> lookPng; // set by the node: a saved PNG with the window's effects (path, or "")
-    const float* kickLevel = nullptr;                     // the kick probe's level (Engine tab)
+    const float* kickLevel = nullptr;                     // the kick probe's level (System tab)
     std::vector<std::string> kickNames;                   // the kick folder's files (set by the node)
     std::function<void()> drawPostTab, drawSoundTab;      // set by the node: Post-processing and Sonification tabs
-    std::function<void()> drawNodeTab;                    // set by the node: what is published
+    std::function<void()> drawNodeTab;                    // set by the node: what is published (System tab)
+    std::function<void()> drawRendererPanel;              // set by the node: the renderer's state (System tab)
+    std::function<void(int)> drawLayerLook, drawLayerSound; // set by the node: a layer's effects / sound (every scene)
+    bool auditioning() const { return auditionSwitch && *auditionSwitch; }
     // The grid overlay of the Play tab's view (filled by the node)
     struct GridInfo {
         bool valid = false;
@@ -198,21 +202,21 @@ public:
         drawTopBar();
         ImGui::Spacing();
         if(ImGui::BeginTabBar("##formsTabs")){
+            // playing | composing | the output; Gallery and System on the right edge
             if(ImGui::BeginTabItem("Play")){ drawPlayTab(); ImGui::EndTabItem(); }
             if(ImGui::BeginTabItem("Live")){ drawLiveTab(); ImGui::EndTabItem(); }
-            if(drawPostTab && ImGui::BeginTabItem("Post-processing")){ drawPostTab(); ImGui::EndTabItem(); }
-            if(drawSoundTab && ImGui::BeginTabItem("Sonification")){ drawSoundTab(); ImGui::EndTabItem(); }
             if(ImGui::BeginTabItem("Scenes")){ drawScenesTab(); ImGui::EndTabItem(); }
-            std::string ins = std::string("Instruments") + (dirtyPresets.empty() ? "" : " *") + "###instruments";
+            std::string ins = std::string("Instruments") + (dirtyPresets.empty() ? "" : " *") + (auditioning() ? "  (audition)" : "") + "###instruments";
             if(ImGui::BeginTabItem(ins.c_str())){ drawInstrumentsTab(); ImGui::EndTabItem(); }
             std::string sl = std::string("Setlist") + (setlistDirty ? " *" : "") + "###setlist";
             if(ImGui::BeginTabItem(sl.c_str())){ drawSetlistTab(); ImGui::EndTabItem(); }
             std::string lib = std::string("Library") + (libraryDirty ? " *" : "") + "###library";
             if(ImGui::BeginTabItem(lib.c_str())){ drawLibraryTab(); ImGui::EndTabItem(); }
+            if(drawPostTab && ImGui::BeginTabItem("Post-processing")){ drawPostTab(); ImGui::EndTabItem(); }
+            if(drawSoundTab && ImGui::BeginTabItem("Sonification")){ drawSoundTab(); ImGui::EndTabItem(); }
             std::string gal = std::string("Gallery") + (engine->replaying ? "  (replaying)" : "") + "###gallery";
-            if(ImGui::BeginTabItem(gal.c_str())){ drawGalleryTab(); ImGui::EndTabItem(); }
-            if(ImGui::BeginTabItem("Engine")){ drawEngineTab(); ImGui::EndTabItem(); }
-            if(drawNodeTab && ImGui::BeginTabItem("Node")){ drawNodeTab(); ImGui::EndTabItem(); }
+            if(ImGui::BeginTabItem(gal.c_str(), nullptr, ImGuiTabItemFlags_Trailing)){ drawGalleryTab(); ImGui::EndTabItem(); }
+            if(ImGui::BeginTabItem("System", nullptr, ImGuiTabItemFlags_Trailing)){ drawSystemTab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         drawPickerPopup();
@@ -273,6 +277,11 @@ private:
         ImGui::BeginGroup();
         auto& L = engine->schedule->layers[0];
         ImGui::TextDisabled("UNDER THE HEADER");
+        if(auditioning()){
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1, 0.55f, 0.2f, 1), "  AUDITION: the edited instrument alone on stage");
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Instruments tab: Audition is on. The other layers are silent until it is off.");
+        }
         ImGui::SetWindowFontScale(1.35f);
         ImGui::Text("%s", L.header ? L.header->scene.c_str() : "-");
         ImGui::SetWindowFontScale(1.0f);
@@ -296,6 +305,7 @@ private:
         if(ImGui::Checkbox("Use setlist", &sl) && useSetlist) *useSetlist = sl;
         ImGui::SameLine();
         if(ImGui::Button("Render next now")) requestNext(true);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Ask for the next image at once: palette, scale and harmony edits show sooner");
         ImGui::Spacing();
         ImGui::TextDisabled("%d x %d  |  %d rendering  %d ready  shown %d  repeats %d  skipped %d",
                             imageW, imageH, (int)engine->pending.size(), (int)L.ready.size(), L.shown, L.repeats, engine->skipped);
@@ -805,7 +815,7 @@ private:
 
     // ------------------------------------------------ engine
 
-    void drawEngineTab();
+    void drawSystemTab();
 
     void drawSizeControl();
 };

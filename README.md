@@ -31,6 +31,25 @@ relative too (`Supercollider/Pitchclass`). Moving the app moves everything; noth
 read. (Until 2026-11-07 this was the Processing sketch's folder in Dropbox; its older sessions stay
 there.)
 
+## The window (2026-11-07)
+
+Top bar: the image under the header, the next scene (a menu with the setlist off), Use setlist,
+Render next now, and an AUDITION marker while Audition is on. Tabs, in groups:
+- **Play · Live** — playing: the view and the transport / header / scroller; the scene under the
+  header, its layers, colour and harmony, performance.
+- **Scenes · Instruments · Setlist · Library** — composing, each with its own Save. Instruments
+  starts with the playing scene's instruments and has a LIVE EDIT row (Audition, Immediate).
+- **Post-processing · Sonification** — the output.
+- **Gallery · System** (right edge) — sessions; data folder, image size, session, the renderer
+  (timings, Archive images, GPU, Make thumbnails), the node's published settings, the 1920 import,
+  layer timing, the log.
+
+Under the layer stack (Scenes and Live) a second, green box holds the selected layer's effects
+(blur, trail) and sound (level, pan, spread, reverb): the same controls as in Post-processing and
+Sonification. They are not the scene's: they apply to that layer in every scene and are saved with
+the patch, like everything marked "saved with the patch" (Play controls, Post-processing,
+Sonification, the renderer switches, published settings).
+
 ## Usage
 
 ```cpp

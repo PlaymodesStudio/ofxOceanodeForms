@@ -81,7 +81,7 @@ inline void Editor::drawScenesTab(){
     ImGui::BeginChild("##sceneEdit", ImVec2(0, 0), ImGuiChildFlags_Borders);
     auto it = engine->scenes.find(selected);
     if(it == engine->scenes.end()){
-        ImGui::TextDisabled("No scene. Press New, or import the 1920 scenes in the Engine tab.");
+        ImGui::TextDisabled("No scene. Press New, or import the 1920 scenes in the System tab.");
         ImGui::EndChild();
         return;
     }
@@ -234,14 +234,12 @@ inline void Editor::drawLiveTab(){
     Scene& s = it->second;
     bool changed = false;
     // ---- what is playing
-    auto& L1 = engine->schedule->layers[0];
     int bar = (int)std::floor(engine->schedule->headerBeat / 4.0);
     ImGui::SetWindowFontScale(1.3f);
     ImGui::TextColored(ImVec4(1, 0.85f, 0.5f, 1), "%s", s.name.c_str());
     ImGui::SetWindowFontScale(1.0f);
     ImGui::SameLine();
-    ImGui::TextDisabled("  bank %s  |  bar %d  |  image %s  |  %d BPM  |  next %s", Engine::bankLabel(s.bank).c_str(), bar,
-                        L1.header ? L1.header->id.c_str() : "-", s.bpm, engine->currentScene() ? engine->currentScene()->name.c_str() : "-");
+    ImGui::TextDisabled("  the scene under the header  |  bank %s  |  bar %d  |  %d BPM", Engine::bankLabel(s.bank).c_str(), bar, s.bpm);
     bool isDirty = dirty.count(s.name) > 0;
     if(isDirty) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.45f, 0.1f, 1));
     if(ImGui::Button(isDirty ? "Save *" : "Save")){ engine->saveScene(s); dirty.erase(s.name); }
@@ -252,10 +250,9 @@ inline void Editor::drawLiveTab(){
     if(ImGui::Button("Revert")){ engine->reloadScene(s.name); dirty.erase(s.name); }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if(ImGui::Button("Render next now") && requestNext) requestNext(true);
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Ask the renderer for the next image at once: palette, scale and harmony edits show sooner");
-    ImGui::SameLine();
     if(ImGui::Button("Edit in Scenes tab")) selected = s.name;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Render next now, at the top, shows palette / scale / harmony edits sooner)");
     ImGui::Separator();
 
     if(s.layers.empty()) return;
@@ -404,6 +401,33 @@ inline bool Editor::drawLayerStack(Scene& s){
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(2);
+    // the same layer's effects and sound: not the scene's (every scene, saved with the patch), so in
+    // a box of their own, and never marking the scene changed
+    if(drawLayerLook || drawLayerSound){
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.16f, 0.12f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.50f, 0.35f, 1));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10 * zz, 8 * zz));
+        ImGui::BeginChild("##layerEveryScene", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::TextColored(ImVec4(0.65f, 0.85f, 0.6f, 1), "Layer %d on every scene", sceneLayer + 1);
+        ImGui::SameLine();
+        savedWithPatchNote();
+        ImGui::PushID(sceneLayer);
+        if(ImGui::BeginTable("##everyScene", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV)){
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("effects (before the sound)");
+            ImGui::PushItemWidth(-90 * zz);
+            if(drawLayerLook) drawLayerLook(sceneLayer);
+            ImGui::PopItemWidth();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("sound");
+            if(drawLayerSound) drawLayerSound(sceneLayer);
+            ImGui::EndTable();
+        }
+        ImGui::PopID();
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+    }
     return changed;
 }
 

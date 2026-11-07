@@ -171,7 +171,7 @@ public:
         // app's data folder unless absolute
         addInspectorParameter(rendererFolder.set("Renderer", "Forms"));
         addInspectorParameter(maxPending.set("Max Pending", 2, 1, 16));
-        // Size of the rendered images (any size; also in the Engine tab)
+        // Size of the rendered images (any size; also in the System tab)
         addInspectorParameter(imageWidth.set("Image Width", 1920, 16, 16384));
         addInspectorParameter(imageHeight.set("Image Height", 1080, 16, 16384));
         addInspectorParameter(prime.set("Prime", 2, 0, 8));
@@ -245,6 +245,8 @@ public:
         editor.drawPostTab = [this](){ postCtl.draw(ctl, post); };
         editor.drawSoundTab = [this](){ drawSoundTab(); };
         editor.drawNodeTab = [this](){ ctl.drawList(); };
+        editor.drawLayerLook = [this](int l){ postCtl.drawLayerFx(ctl, l, true); };
+        editor.drawLayerSound = [this](int l){ soundCtl.drawLayer(ctl, soundView, l); };
         engine.laneSceneAt = [this](int bar, bool& cut){ return laneScene(bar, cut); };
         lane.onRowPlay = [this](const std::string& name){ if(editor.playScene) editor.playScene(name); };
         lane.drawPanel = [this](){ drawLanePanel(); };
@@ -619,9 +621,10 @@ protected:   // (Forms GL Box derives from Forms Box)
     void drawPlayControls(){
         float z = ofxOceanodeShared::getZoomLevel();
         if(!builtInPlayer){
-            ImGui::TextDisabled("Built-in Player is off (inspector): the separate Forms Transport, Forms Header and Layer Scroller nodes play.");
+            ImGui::TextDisabled("Built-in Player is off (inspector): nothing plays here; the Schedule output carries the images.");
             return;
         }
+        forms::savedWithPatchNote();
         if(!ImGui::BeginTable("##play", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) return;
         ImGui::TableNextColumn();
         ImGui::SeparatorText("Transport");

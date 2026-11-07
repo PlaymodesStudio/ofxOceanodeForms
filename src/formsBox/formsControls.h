@@ -266,7 +266,7 @@ public:
         return ch;
     }
 
-    // The Node tab: every setting and output, a checkbox each (published or not)
+    // System tab, "Node: published settings and outputs": every setting and output, a checkbox each (published or not)
     void drawList(){
         float z = ofxOceanodeShared::getZoomLevel();
         ImGui::TextDisabled("What is on the node. A connected one cannot be unpublished (disconnect it first).\n"

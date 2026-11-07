@@ -59,9 +59,7 @@ public:
         editor.immediateSwitch = &immediateOn;
         editor.thumbnailsTip = "Draws a preview of every instrument here (a few seconds) and keeps it as its thumbnail.\n"
                                "Effects-only instruments are drawn over a test image.";
-        auto published = editor.drawNodeTab;
-        editor.drawNodeTab = [this, published](){
-            ImGui::SeparatorText("Renderer (Forms GL Box)");
+        editor.drawRendererPanel = [this](){
             ImGui::Text("drawn %d   with items left out %d   errors %d   waiting %d   workers %d",
                         drawnHere.load(), sentOn, errorsHere.load(), (int)queued.load(), (int)workersPool.size());
             if(drawnHere > 0) ImGui::Text("last here: %d ms", lastMs.load());
@@ -71,6 +69,9 @@ public:
                                     st.queue.last, st.queue.mean, st.render.last, st.render.mean, st.upload.last, st.upload.mean,
                                     st.archive.last, st.archive.mean, st.archiveBacklog, st.total.last, st.total.mean);
             }
+            forms::savedWithPatchNote();
+            ImGui::SameLine();
+            ImGui::TextDisabled("(the two switches below)");
             bool ar = archive.load();
             if(ImGui::Checkbox("Archive images (PNG + sidecar)", &ar)) archive = ar;
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("Writes every image and its recipe to the session folder, after it is shown\n"
@@ -86,8 +87,6 @@ public:
             ImGui::TextDisabled("Generators: %s, every process.%s", portedList().c_str(), font ? "" : " Font not found: letters are left out.");
             if(!lastWhyNot.empty()) ImGui::TextDisabled("last: %s", lastWhyNot.c_str());
             if(!schemaError.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "%s", schemaError.c_str());
-            ImGui::Spacing();
-            if(published) published();
         };
     }
 

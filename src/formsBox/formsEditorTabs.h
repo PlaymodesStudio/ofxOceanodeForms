@@ -2,7 +2,7 @@
 //  formsEditorTabs.h
 //  ofxOceanodeForms — ESPECTRES 2027
 //
-//  The Play, Setlist, Library and Engine tabs.
+//  The Play, Setlist, Library and System tabs.
 //  Methods of forms::Editor (declared in formsEditor.h, which includes this file).
 //
 
@@ -99,11 +99,6 @@ inline void Editor::drawPlayTab(){
     ImGui::SameLine();
     ImGui::Checkbox("Beat grid", &showBeatGrid);
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Layer 1's bars and beats as they scroll; the other layers' bar lines dashed, in their colour");
-    auto& L = s->layers[0];
-    ImGui::PushTextWrapPos(0);   // wrap at the column's edge
-    ImGui::TextDisabled("%d rendering, %d ready, shown %d, repeats %d", (int)engine->pending.size(), (int)L.ready.size(), L.shown, L.repeats);
-    ImGui::TextDisabled("next: %s", engine->currentScene() ? engine->currentScene()->name.c_str() : "-");
-    ImGui::PopTextWrapPos();
     if(row) ImGui::TableNextColumn();
     if(drawPlayControls) drawPlayControls();
     if(row) ImGui::EndTable();
@@ -252,7 +247,7 @@ inline void Editor::drawLibraryTab(){
     }
 }
 
-inline void Editor::drawEngineTab(){
+inline void Editor::drawSystemTab(){
     float zz = z();
     auto& L = engine->schedule->layers[0];
     ImGui::SeparatorText("Data folder");
@@ -268,23 +263,32 @@ inline void Editor::drawEngineTab(){
     if(ImGui::Button("New session")) newSession();
     ImGui::SameLine();
     if(ImGui::Button("Reload scenes and library")) reload();
-    ImGui::SameLine();
+    // the renderer (the node's panel: counts, timings, archive, GPU) and the thumbnails it draws
+    ImGui::SeparatorText("Renderer");
+    if(drawRendererPanel) drawRendererPanel();
     if(ImGui::Button("Make thumbnails")){ makeThumbnails(); thumbs.clear(); }
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("%s", thumbnailsTip.c_str());
-    ImGui::SeparatorText("Import from 1920");
-    char buf[1024];
-    strncpy(buf, importPath.c_str(), sizeof(buf)); buf[sizeof(buf) - 1] = 0;
-    ImGui::SetNextItemWidth(-120 * zz);
-    if(ImGui::InputText("##importPath", buf, sizeof(buf))) importPath = buf;
     ImGui::SameLine();
-    if(ImGui::Button("Import 1920")){
-        try { engine->importPreset(importPath); reload(); }
-        catch(std::exception& e){ engine->note(std::string("import failed: ") + e.what()); }
+    ImGui::TextDisabled("(the instrument pictures in Scenes and the picker)");
+    // what the node publishes (inputs / outputs)
+    if(drawNodeTab && ImGui::CollapsingHeader("Node: published settings and outputs")){
+        savedWithPatchNote();
+        drawNodeTab();
     }
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Overwrites scenes with the same names, and the setlist.");
+    if(ImGui::CollapsingHeader("Import from 1920")){
+        char buf[1024];
+        strncpy(buf, importPath.c_str(), sizeof(buf)); buf[sizeof(buf) - 1] = 0;
+        ImGui::SetNextItemWidth(-120 * zz);
+        if(ImGui::InputText("##importPath", buf, sizeof(buf))) importPath = buf;
+        ImGui::SameLine();
+        if(ImGui::Button("Import 1920")){
+            try { engine->importPreset(importPath); reload(); }
+            catch(std::exception& e){ engine->note(std::string("import failed: ") + e.what()); }
+        }
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Overwrites scenes with the same names, and the setlist.");
+    }
     const Scene* curS = engine->currentScene();
-    if(curS && curS->layers.size() > 1){
-        ImGui::SeparatorText("Layers");
+    if(curS && curS->layers.size() > 1 && ImGui::CollapsingHeader("Layers: timing and panorama")){
         ImGui::SetNextItemWidth(100 * zz);
         ImGui::InputInt("start bars ahead", &engine->renderAheadBars);
         engine->renderAheadBars = ofClamp(engine->renderAheadBars, 1, 16);

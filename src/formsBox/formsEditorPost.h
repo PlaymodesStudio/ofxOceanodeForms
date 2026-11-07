@@ -10,6 +10,7 @@
 
 #include "formsPost.h"
 #include "formsControls.h"
+#include "formsUiNotes.h"
 
 namespace forms {
 
@@ -85,8 +86,28 @@ struct PostControls {
         p.lineColor = ofFloatColor(lineR, lineG, lineB);
     }
 
+    // one layer's effects before the sound (also drawn in Scenes / Live, under the layer stack)
+    void drawLayerFx(ControlRegistry& reg, int L, bool showMaster){
+        L = std::max(0, std::min(FX_LAYERS - 1, L));
+        if(showMaster){
+            reg.check(fxOn, "Layer effects on");
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("For every layer (also in Post-processing)");
+        }
+        reg.slider(hBlur[L], "%.1f px", "H blur");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blurs this layer horizontally (Gaussian sigma, px); the edges repeat, nothing comes from outside");
+        reg.slider(vBlur[L], "%.1f px", "V blur");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blurs this layer vertically (Gaussian sigma, px): the sound's partials smear into their neighbours.\nNothing comes from or goes past the image's top and bottom.");
+        reg.slider(trailBeats[L], "%.2f beats", "Trail");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("A tail behind what moves (to the right of it), fading like a reverb: its length in beats\n(whatever the layer's speed). At the header it sounds like a reverb.");
+        reg.slider(trailLevel[L], "%.2f", "Trail level");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("How bright the tail starts (1: as bright as what leaves it)");
+    }
+
     void draw(ControlRegistry& reg, const Post& post){
         float z = ofxOceanodeShared::getZoomLevel();
+        savedWithPatchNote();
+        ImGui::SameLine();
+        ImGui::TextDisabled("(each layer's effects are also under the layer stack in Scenes and Live)");
         ImGui::TextDisabled("Left of the line: effects on each layer before the sound reads it (heard and seen). Right: the final image only.\n"
                             "Right-click a control to set its value, publish it to the node or add it to a timeline.");
         if(!post.ok && post.tried) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "The shader did not compile: Output is the plain composite.");
@@ -112,14 +133,7 @@ struct PostControls {
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("Layer %d's effects (* = it has one on)", l + 1);
         }
         int L = ofClamp(fxLayer, 0, FX_LAYERS - 1);
-        reg.slider(hBlur[L], "%.1f px", "H blur");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blurs this layer horizontally (Gaussian sigma, px); the edges repeat, nothing comes from outside");
-        reg.slider(vBlur[L], "%.1f px", "V blur");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blurs this layer vertically (Gaussian sigma, px): the sound's partials smear into their neighbours.\nNothing comes from or goes past the image's top and bottom.");
-        reg.slider(trailBeats[L], "%.2f beats", "Trail");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("A tail behind what moves (to the right of it), fading like a reverb: its length in beats\n(whatever the layer's speed). At the header it sounds like a reverb.");
-        reg.slider(trailLevel[L], "%.2f", "Trail level");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("How bright the tail starts (1: as bright as what leaves it)");
+        drawLayerFx(reg, L, false);
         if(ImGui::SmallButton("Same for every layer")){
             for(int l = 0; l < FX_LAYERS; l++) if(l != L){ hBlur[l] = hBlur[L].get(); vBlur[l] = vBlur[L].get(); trailBeats[l] = trailBeats[L].get(); trailLevel[l] = trailLevel[L].get(); }
         }

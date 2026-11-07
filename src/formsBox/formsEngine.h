@@ -56,7 +56,7 @@ struct Image {
     int pw = 0, ph = 0;
 };
 
-// Timings of the image pipeline (ms), for the Engine / Node tabs: last value and a running mean
+// Timings of the image pipeline (ms), for the System tab: last value and a running mean
 struct StageTime {
     double last = 0, mean = 0; int n = 0;
     void add(double ms){ last = ms; n++; mean = n == 1 ? ms : mean + (ms - mean) * (n < 50 ? 1.0 / n : 0.02); }
@@ -229,7 +229,7 @@ public:
     std::map<int, int> layerNextBar;   // layers 2..4: start bar of the next request
     int renderAheadBars = 2;           // a new layer starts this many bars after the header
     std::deque<std::string> log;
-    std::deque<std::string> syncLog;   // Phase 3: each layer's position at every bar line (Engine tab)
+    std::deque<std::string> syncLog;   // Phase 3: each layer's position at every bar line (System tab)
     int errors = 0;
     int skipped = 0;                   // GOs skipped because the renderer was busy
     int lost = 0;                      // requests that got no answer before pendingTimeout
