@@ -3,8 +3,8 @@
 //  ofxOceanodeForms — ESPECTRES 2027
 //
 //  What FormsBox does, without OF or GUI: scenes and setlist on disk, stepping through the
-//  setlist, building render requests for the ESPECTRES_2027 renderer, and the queue of rendered
-//  images shared with LayerScroller (FormsSchedule). The node only adds parameters, OSC and UI.
+//  setlist, building render requests (drawn by Forms GL Box, src/formsGL), and the queue of
+//  rendered images (FormsSchedule). The node only adds parameters, rendering and UI.
 //
 
 #pragma once
@@ -117,7 +117,7 @@ inline std::string safeFileName(std::string s){
 class Engine {
 public:
     // --- configuration
-    fs::path rendererFolder;           // the ESPECTRES_2027 sketch folder
+    fs::path rendererFolder;           // the data folder (bin/data/Forms by default)
     fs::path pitchclassFolder;         // shared scale / chord catalog (scales.txt, chords.txt), read-only
     int width = 1920, height = 1080;   // size of the images to request (any size: the renderer
                                        // draws other sizes than its canvas offscreen)
@@ -234,8 +234,6 @@ public:
     int skipped = 0;                   // GOs skipped because the renderer was busy
     int lost = 0;                      // requests that got no answer before pendingTimeout
     int rendererCanvasW = 0, rendererCanvasH = 0;   // its default canvas (generators.json)
-    std::string rendererCodeHash;                    // what the main renderer was compiled from (generators.json)
-    int workerCapacity = 0;            // extra renderers: requests they can take now (set by the node)
 
     fs::path scenesDir() const { return rendererFolder / "scenes"; }
     // --- scene banks: a bank is a folder under scenes/ ("" = scenes/ itself, the legacy scenes).
@@ -364,7 +362,6 @@ public:
             }
         }
         loadPresets();
-        rendererCodeHash = gen.value("codeHash", std::string());
         if(gen.contains("canvas") && gen["canvas"].size() == 2){
             rendererCanvasW = gen["canvas"][0].get<int>();
             rendererCanvasH = gen["canvas"][1].get<int>();
@@ -836,11 +833,7 @@ public:
         if(replaying && !previewItem && sceneOverride.empty() && layerIndex == 0){ replayNext(); return ""; }
         expirePending();
         if(!force){
-            // the limit is the main renderer's queue: with workers, the extra layers' requests are
-            // on them and must not hold layer 1 back (it would repeat its last image forever)
-            int onMain = 0;
-            for(auto& [id, im] : pending) if(workerCapacity <= 0 || im->layer <= 1) onMain++;
-            if(onMain >= maxPending){
+            if((int)pending.size() >= maxPending){
                 skipped++;
                 return "";
             }
@@ -1152,16 +1145,16 @@ public:
     double now = 0;                    // seconds (set by the node every frame)
     double renderSeconds = 3;          // measured render time (smoothed)
     // How busy the renderers are with the scene at the header: the new images its layers need per
-    // second (bpm / 60 / (4 x bars x repeat) each) over what the renderers make ((1 + workers) /
+    // second (bpm / 60 / (4 x bars x repeat) each) over what the renderer makes (1 /
     // render time). Above about 1 they cannot keep up: after a hard cut an extra layer's new image
-    // comes late and the layer is empty until it does (more workers, or Repeat, fix it). 0: unknown.
+    // comes late and the layer is empty until it does (Repeat fixes it). 0: unknown.
     double renderLoad() const {
         const Scene* s = sceneAtHeader();
         if(!s) s = currentScene();
         if(!s || s->layers.empty() || renderSeconds <= 0) return 0;
         double perSec = 0;
         for(auto& l : s->layers) perSec += std::max(1, s->bpm) / 60.0 / (4.0 * std::max(1, l.bars) * std::max(1, l.repeat));
-        return perSec * renderSeconds / (1.0 + std::max(0, workerCapacity));
+        return perSec * renderSeconds;
     }
     double leadBeats() const {
         double bpm = 120;
@@ -1174,16 +1167,9 @@ public:
         bool anyLayers = currentScene() && currentScene()->layers.size() > 1;
         for(auto& pe : layer1Plan){ auto it = scenes.find(pe.scene); if(it != scenes.end() && it->second.layers.size() > 1){ anyLayers = true; break; } }
         if(!anyLayers) return "";
-        if(workerCapacity > 0){
-            // extra renderers take the extra layers: layer 1 keeps the main renderer to itself
-            int extra = 0;
-            for(auto& [id, img] : pending) if(img->layer > 1 && !img->preview) extra++;
-            if(extra >= workerCapacity) return "";
-        }else{
-            for(auto& [id, img] : pending) if(img->layer == 1 && !img->preview) return "";
-            // keep one place in the renderer queue for layer 1's next GO (a skipped GO repeats on stage)
-            if((int)pending.size() >= maxPending - 1) return "";
-        }
+        for(auto& [id, img] : pending) if(img->layer == 1 && !img->preview) return "";
+        // keep one place in the renderer queue for layer 1's next GO (a skipped GO repeats on stage)
+        if((int)pending.size() >= maxPending - 1) return "";
         double B = schedule->headerBeat;
         // layer 1's plan, then what it will play next (predicted from the setlist)
         auto predicted = predictedPlan((int)std::ceil(B / 4.0) + renderAheadBars + 96);

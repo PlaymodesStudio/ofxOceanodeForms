@@ -9,13 +9,10 @@
 #include "formsScrollerFolder.h"
 #include "probabilityDropdownList.h"
 #include "texUniForms.h"
-#ifdef OFXOCEANODE_USE_OSC
-#include "formsBox/formsBox.h"
 #include "formsBox/formsGLBox.h"
 #if defined(FORMS_HAS_SC) && __has_include("ofxOceanodeSuperColliderController.h")
 #include "ofxOceanodeSuperColliderController.h"
 #define FORMS_SC_CONTROLLER 1
-#endif
 #endif
 #ifdef OFXOCEANODE_USE_OSC
 #include "multiOscSender.h"
@@ -32,25 +29,21 @@ void registerModels(ofxOceanode &o){
     o.registerModel<texUniForms>("Forms");
 #ifdef OFXOCEANODE_USE_OSC
     o.registerModel<multiOscSender>("Forms");
+#endif
+    // ESPECTRES 2027 (Forms Box, the node with the Processing renderer, was removed on 2026-11-07;
+    // patches 6-- and 7-- are archived)
 #ifdef FORMS_SC_CONTROLLER
     // the sonification needs the SuperCollider servers: register this collection after
-    // ofxOceanodeSuperCollider's (without them Forms Box has no sound)
-    if(auto sc = o.getController<ofxOceanodeSuperColliderController>()){
-        o.registerModel<formsBox>("Forms", sc->getServers());
-        o.registerModel<formsGLBox>("Forms", sc->getServers());   // Phase 7: the renderer in the app
-    }else{
-        o.registerModel<formsBox>("Forms");
-        o.registerModel<formsGLBox>("Forms");
-    }
+    // ofxOceanodeSuperCollider's (without them it has no sound)
+    if(auto sc = o.getController<ofxOceanodeSuperColliderController>()) o.registerModel<formsGLBox>("Forms", sc->getServers());
+    else o.registerModel<formsGLBox>("Forms");
 #else
-    o.registerModel<formsBox>("Forms");
     o.registerModel<formsGLBox>("Forms");
-#endif
 #endif
 }
 
 void registerType(ofxOceanode &o){
-    // ESPECTRES 2027: Forms Box -> Layer Scroller
+    // ESPECTRES 2027: the schedule of rendered images
     o.registerType<forms::Schedule*>("FormsSchedule", nullptr);
 }
 

@@ -1,28 +1,21 @@
 #!/bin/bash
-# Phase 5's "done" test, end to end: a scene built from scratch in Forms Box (test_new_scene.cpp,
-# on a copy of the renderer's data) is rendered by the real ESPECTRES_2027 sketch (offline mode),
-# and the images are checked (written, the right size, drawn on).
-# Usage: tests/test_new_scene.sh <work dir> [generator 1] [generator 2]
+# Phase 5's "done" test, end to end: a scene built from scratch with Forms Box's own calls
+# (test_new_scene.cpp, on a copy of the app's data folder) is drawn by the renderer (src/formsGL,
+# render_requests.cpp), and the images are checked (written, the right size, drawn on).
+# Usage: tests/test_new_scene.sh <work dir> [generator 1] [generator 2] [data folder]
 set -e
 WORK="$1"; G1="${2:-pulse}"; G2="${3:-sweep}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OF="$(cd "$HERE/../../.." && pwd)"
-SKETCH="/Users/santiagovilanova/PM Dropbox/PLAYMODES_STUDIO/ESPECTRES/ESPECTRES_2027"
-PROCESSING=/Applications/Processing.app/Contents/MacOS/Processing
+DATA="${4:-$OF/apps/Playmodes/OceanodeScroller/bin/data/Forms}"
 rm -rf "$WORK"; mkdir -p "$WORK/renderer" "$WORK/out"
-for d in scenes presets library setlists; do cp -R "$SKETCH/$d" "$WORK/renderer/"; done
-cp "$SKETCH/generators.json" "$WORK/renderer/"
+for d in scenes presets library setlists; do cp -R "$DATA/$d" "$WORK/renderer/"; done
+cp "$DATA/generators.json" "$WORK/renderer/"
 clang++ -std=c++17 -O1 -I "$HERE/../src/formsBox" -I "$OF/libs/json/include" "$HERE/test_new_scene.cpp" -o "$WORK/newscene"
 "$WORK/newscene" "$WORK/renderer" "$G1" "$G2" | tee "$WORK/engine.log"
-python3 -I - "$WORK" <<'PY'
-import json, sys
-w = sys.argv[1]
-reqs = [l.split()[1] for l in open(w + "/engine.log") if l.startswith("REQUEST ")]
-json.dump({"width": 1920, "height": 1080, "outputRoot": w + "/out",
-           "offline": {"enabled": True, "ignoreRequestSize": False, "requests": reqs}}, open(w + "/config.json", "w"), indent=1)
-PY
-echo "rendering with the sketch..."
-ESPECTRES_CONFIG="$WORK/config.json" perl -e 'alarm shift; exec @ARGV' 600 "$PROCESSING" cli --sketch="$SKETCH" --output="$WORK/build" --force --run > "$WORK/render.log" 2>&1 || true
+clang++ -std=c++17 -O2 -I "$HERE/../src/formsGL" -I "$OF/libs/json/include" "$HERE/formsGL/render_requests.cpp" -lz -o "$WORK/render"
+echo "drawing..."
+"$WORK/render" "$WORK/renderer/generators.json" "$WORK/out" $(grep '^REQUEST ' "$WORK/engine.log" | cut -d' ' -f2) > "$WORK/render.log" 2>&1 || true
 python3 -I - "$WORK" <<'PY'
 import glob, os, subprocess, sys, struct
 w = sys.argv[1]

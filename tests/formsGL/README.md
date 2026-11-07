@@ -1,23 +1,29 @@
-# Forms GL Box tests (Phase 7: the renderer in C++)
+# Forms GL Box tests (the renderer in C++)
 
-All headless; no audio, no app. `S` = a scratch folder, `G` = the sketch's `generators.json`.
+All headless; no audio, no app. `S` = a scratch folder, `D` = the app's data folder
+(`apps/Playmodes/OceanodeScroller/bin/data/Forms`), `G` = `$D/generators.json`.
 
-1. Random streams, bit for bit against Processing:
-   - `rngcheck/rngcheck.pde` (a separate Processing sketch) writes `rng_java.txt`:
-     `Processing cli --sketch=$PWD/tests/formsGL/rngcheck --output=$S/b --force --run`
-   - `clang++ -std=c++17 -O2 -I src/formsGL tests/formsGL/test_random.cpp && ./a.out rng_java.txt`
-     → `ALL EXACT` (java.util.Random, random / randomGaussian / noise / noiseDetail, PRNG.pde).
-2. Renders against Processing (same requests):
-   - `render_requests.cpp` renders request files with the C++ port to PNG:
-     `clang++ -std=c++17 -O2 -I src/formsGL -I <OF>/libs/json/include tests/formsGL/render_requests.cpp -lz`
-     `./a.out $G out_cpp req/*.json`
-   - the same requests with the sketch, offline mode (a config with `"offline": {"enabled": true,
-     "requests": [...], "ignoreRequestSize": false}` and `outputRoot` in the scratch folder):
-     `ESPECTRES_CONFIG=config.json Processing cli --sketch=<ESPECTRES_2027> --output=$S/b --force --run`
-   - `python3 compare_renders.py out_java out_cpp [--strict]`: max / mean difference, column and
-     row profile correlation (what the sound reads), lit-pixel overlap, energy.
-3. `coverage.cpp <G> <requests...>`: how many real requests Forms GL Box draws itself, and why the
-   others go to Processing.
+Tests to run:
+- `render_requests.cpp`: draws request files to PNG with the renderer:
+  `clang++ -std=c++17 -O2 -I src/formsGL -I <OF>/libs/json/include tests/formsGL/render_requests.cpp -lz`
+  `./a.out $G out req/*.json` (add `-DWITH_FONT -I <freetype2> -lfreetype` and `FORMSGL_FONT` for letters).
+- `compare_renders.py a b [--strict]`: two folders of renders: max / mean difference, column and
+  row profile correlation (what the sound reads), lit-pixel overlap, energy (a regression check
+  between two versions of the renderer).
+- `test_live_edit.cpp $D`: audition / immediate mode patching (formsLiveEdit.h).
+- `test_thumbnails.cpp $D <sheet.ppm>`: Make thumbnails headless, every instrument.
+- `test_gpu.cpp <scale> <requests>`: the GPU noise mask against the CPU.
+- `make_schemas.py $G`: regenerates `src/formsGL/formsGLSchemas.h` after a generator's parameters change.
+
+How the port was verified against the Processing sketch (2026-11-06/07; Processing is no longer
+used, the tools for this are in git history before the commit that removed it):
+1. Random streams, bit for bit: a small Processing sketch (`rngcheck.pde`) wrote its streams and
+   `test_random.cpp rng_java.txt` compared them: `ALL EXACT` (java.util.Random, random /
+   randomGaussian / noise / noiseDetail, PRNG.pde).
+2. Renders: the same requests drawn by the sketch (offline mode) and by `render_requests.cpp`,
+   compared with `compare_renders.py`.
+3. Coverage (`coverage.cpp`): every one of 800 recent real requests and all 60 scenes is drawn by
+   the renderer.
 
 Results (2026-11-06; `--strict` passes at a max difference of 2 levels): sweep 10/10 pixel-identical
 (max 0); hits 23/25 within 2 levels (most exactly 0), 2 off on a few pixels; real pulse requests
@@ -32,6 +38,6 @@ More checks (2026-11-07):
   (FreeType): advances within 0.0001 px; the TOMITA_BAUHAUS letter scenes close to Processing
   (render_requests built with -DWITH_FONT and FORMSGL_FONT set).
 - `test_thumbnails.cpp <renderer copy> <sheet.ppm>`: Make thumbnails headless, all 482 instruments:
-  no errors, 37 ms each; the 11 empty ones are empty in Processing too (instruments for one bar).
+  no errors, 37 ms each; the 11 empty ones were empty in Processing too (instruments for one bar).
 - `test_gpu.cpp <scale> <requests>`: the GPU noise mask against the CPU: 0.002% of pixels differ
   (mostly by 1 level); no faster than the CPU cores on an M4 Max.

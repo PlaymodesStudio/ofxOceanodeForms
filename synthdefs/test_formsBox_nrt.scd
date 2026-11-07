@@ -1,5 +1,5 @@
 // Offline (NRT) tests of the Forms synthdefs. Never plays audio: only Score.recordNRT renders.
-// Run:  perl -e 'alarm shift; exec @ARGV' 600 sclang -D test_formsBox_nrt.scd [outdir]
+// Run:  perl -e 'alarm shift; exec @ARGV' 600 sclang -D test_formsBox_nrt.scd [outdir] [kick folder]
 // Loads the compiled defs from CompiledSynthdefs/Forms (so the shipped files are tested),
 // renders float WAVs to outdir, then runs test_formsBox_levels.py on them.
 (
@@ -9,11 +9,11 @@ var tapDuck, testTone, nan = 0/0;
 here = PathName(thisProcess.nowExecutingPath).pathOnly.standardizePath;
 if(here.isEmpty) { here = File.getcwd };
 defDir = here +/+ "CompiledSynthdefs/Forms";
-outDir = thisProcess.argv[0] ?? {
-	"/private/tmp/claude-501/-Users-santiagovilanova-PM-Dropbox-PLAYMODES-STUDIO-ESPECTRES-ESPECTRES-1920/05fa11cb-efea-4762-aac1-9bcc82c6e488/scratchpad/sc_tests"
-};
+outDir = thisProcess.argv[0] ?? { Platform.defaultTempDir +/+ "forms_sc_tests" };
 File.mkdir(outDir);
-kickDir = "/Users/santiagovilanova/Documents/OF/of_playmodes/openFrameworks/apps/Playmodes/OceanodeScroller/bin/data/Presets/ESPECTRES/6--ESPECTRES_2027_4/samples/KICKS/";
+// the kicks in the app's data folder (openFrameworks layout: addons/ and apps/ side by side)
+kickDir = thisProcess.argv[1] ?? { (here +/+ "../../../apps/Playmodes/OceanodeScroller/bin/data/Forms/samples/KICKS").standardizePath };
+kickDir = kickDir.withTrailingSlash;
 kickFile = kickDir ++ "KOAN_SOUND_kick_boom.wav";
 
 opts = ServerOptions.new

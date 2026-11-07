@@ -15,7 +15,6 @@
 #include "imgui.h"
 #include "formsEngine.h"
 #include "formsSoundModel.h"
-#include "formsRenderers.h"
 #include "formsGallery.h"
 #include "formsPanels.h"
 #include <array>
@@ -99,7 +98,6 @@ public:
     std::function<void()> reload;
     std::function<void()> newSession;
     std::function<void(int, int)> setImageSize;
-    std::function<bool()> rendererAnswering;
     // built-in player (Play tab)
     std::function<bool()> playerOn;
     std::function<const ofTexture*()> playTexture;
@@ -111,10 +109,6 @@ public:
     std::function<void(const std::string&)> sendRequest; // set by the node: sends a request path to a renderer
     std::function<std::string()> exportPanorama;          // set by the node: writes the panorama, returns its path or why not
     std::function<std::string(const std::string&)> lookPng; // set by the node: a saved PNG with the window's effects (path, or "")
-    std::function<void()> startWorkers, stopWorkers;      // set by the node
-    std::function<int()> getWorkers;                      // the node's Workers setting
-    std::function<void(int)> setWorkers;
-    const RendererPool* pool = nullptr;
     const float* kickLevel = nullptr;                     // the kick probe's level (Engine tab)
     std::vector<std::string> kickNames;                   // the kick folder's files (set by the node)
     std::function<void()> drawPostTab, drawSoundTab;      // set by the node: Post-processing and Sonification tabs
@@ -138,7 +132,7 @@ public:
     std::set<std::string> dirty;           // scenes with unsaved edits
     std::set<std::string> dirtyPresets;    // instrument presets with unsaved edits
     bool setlistDirty = false, libraryDirty = false;
-    std::string importPath = "/Users/santiagovilanova/Documents/OF/of_playmodes/openFrameworks/apps/Playmodes/OceanodeScroller/bin/data/Presets/ESPECTRES/2--ESPECTRES_1920";
+    std::string importPath;   // Import from 1920 (the node sets it: the 1920 patch in the data folder)
 
     // the image under the header, for the previews
     void setHeaderImage(const std::string& png){
@@ -179,8 +173,6 @@ public:
         auto& L = engine->schedule->layers[0];
         std::string now = L.header ? L.header->scene : "-";
         const Scene* next = engine->currentScene();
-        bool ok = rendererAnswering && rendererAnswering();
-        dl->AddCircleFilled(ImVec2(p.x + w - 9 * z, p.y + 9 * z), 4 * z, ok ? IM_COL32(80, 220, 120, 255) : IM_COL32(230, 80, 70, 255));
         // wrapped to the preview's width, so the node does not grow with long scene names
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
         ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", now.c_str());
@@ -190,7 +182,7 @@ public:
         if(double load = engine->renderLoad(); load > 1.0){
             ImGui::TextColored(load > 1.25 ? ImVec4(1, 0.4f, 0.3f, 1) : ImVec4(1, 0.75f, 0.3f, 1), "renderer %.0f%% busy", load * 100);
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("The scene's layers need new images faster than the renderer makes them (%.1f s each).\n"
-                                                         "Above 100%% an extra layer can stay empty after a hard cut until its image comes.\nAdd Workers, or Repeat on some layers.", engine->renderSeconds);
+                                                         "Above 100%% an extra layer can stay empty after a hard cut until its image comes.\nRepeat on some layers helps.", engine->renderSeconds);
         }
         ImGui::PopTextWrapPos();
     }
@@ -303,10 +295,7 @@ private:
         ImGui::SameLine();
         if(ImGui::Button("Render next now")) requestNext(true);
         ImGui::Spacing();
-        bool ok = rendererAnswering && rendererAnswering();
-        ImGui::TextColored(ok ? ImVec4(0.4f, 0.9f, 0.5f, 1) : ImVec4(0.95f, 0.4f, 0.35f, 1), ok ? "renderer answering" : "renderer silent");
-        ImGui::SameLine();
-        ImGui::TextDisabled("|  %d x %d  |  %d rendering  %d ready  shown %d  repeats %d  skipped %d",
+        ImGui::TextDisabled("%d x %d  |  %d rendering  %d ready  shown %d  repeats %d  skipped %d",
                             imageW, imageH, (int)engine->pending.size(), (int)L.ready.size(), L.shown, L.repeats, engine->skipped);
         ImGui::EndGroup();
     }

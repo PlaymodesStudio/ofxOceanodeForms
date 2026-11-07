@@ -2,20 +2,19 @@
 //  formsGLBox.h
 //  ofxOceanodeForms — ESPECTRES 2027, Phase 7
 //
-//  Forms GL Box: Forms Box with the renderer inside the app, and no Processing. Everything else is
-//  Forms Box's (the engine, scenes, player, sound, post, window). Every request is drawn here, on a
-//  background thread, by the C++ port of the ESPECTRES_2027 sketch (src/formsGL: every generator,
-//  every process), into the same files the sketch writes (<sessions>/<session>/L<layer>_<id>_s<seed>
-//  .png + the .json sidecar, renderer "FormsGL"), then handed to the engine as if the sketch had
-//  answered. An item it cannot draw (a legacy method) is left out of that image and counted.
-//  Its parameter schemas are its own (formsGLSchemas.h); from the renderer folder it reads only the
-//  font FuturaStd-Bold.otf (letters) and the scenes / presets / library like Forms Box. Forms Box and
-//  the sketch are not changed by any of this.
+//  Forms GL Box: the ESPECTRES 2027 node. Forms Box (formsBox.h: the engine, scenes, player, sound,
+//  post, window) with its renderer: every request is drawn here, on background threads, by
+//  src/formsGL (every generator and process of the ESPECTRES_2027 sketch, ported to C++ and
+//  verified against it), into <data>/sessions/<session>/L<layer>_<id>_s<seed>.png + the .json
+//  sidecar. An item it cannot draw (a legacy method) is left out of that image and counted. Its
+//  parameter schemas are its own (formsGLSchemas.h); from the data folder it reads the font
+//  FuturaStd-Bold.otf (letters) and the scenes / presets / library.
 //
-//  Speed (2026-11-07): requests are drawn by a pool of worker threads (results are delivered in
-//  the order they were asked for, so the schedule is the same); the pixels go to the scrollers in
-//  memory, and the PNG + sidecar are written afterwards by an archive thread (optional: "Archive
-//  images"). Editor previews and thumbnails are written first, as before (the editor reads them).
+//  Speed: requests are drawn by a pool of worker threads (results are delivered in the order they
+//  were asked for, so the schedule is the same); the pixels go to the scrollers in memory, and the
+//  PNG + sidecar are written afterwards by an archive thread (optional: "Archive images"). Editor
+//  previews and thumbnails are written first (the editor reads them).
+//  Audition and immediate modes (Instruments tab): formsLiveEdit.h.
 //
 
 #pragma once
@@ -58,8 +57,6 @@ public:
         editor.makeThumbnails = [this](){ makeThumbnailsGL(); };
         editor.auditionSwitch = &auditionOn;
         editor.immediateSwitch = &immediateOn;
-        editor.startWorkers = nullptr;   // no Processing workers: the Engine tab's worker section hides
-        editor.setWorkers = nullptr;
         editor.thumbnailsTip = "Draws a preview of every instrument here (a few seconds) and keeps it as its thumbnail.\n"
                                "Effects-only instruments are drawn over a test image.";
         auto published = editor.drawNodeTab;
@@ -86,7 +83,7 @@ public:
                                                          "Measured on this Mac: no faster than all the CPU cores, and a few pixels differ by a level,\n"
                                                          "so it is off; live images always stay on the CPU, exact.");
             if(!gpuError.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "GPU: %s", gpuError.c_str());
-            ImGui::TextDisabled("No Processing: every image is drawn here (%s, every process).%s", portedList().c_str(), font ? "" : " Font not found: letters are left out.");
+            ImGui::TextDisabled("Generators: %s, every process.%s", portedList().c_str(), font ? "" : " Font not found: letters are left out.");
             if(!lastWhyNot.empty()) ImGui::TextDisabled("last: %s", lastWhyNot.c_str());
             if(!schemaError.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "%s", schemaError.c_str());
             ImGui::Spacing();
@@ -106,8 +103,6 @@ public:
     }
 
     void update(ofEventArgs& a) override {
-        if(workers.get() != 0) workers = 0;   // no Processing workers
-        rendererSeen = true;                  // the renderer is here
         loadFont();
         formsBox::update(a);
         // finished renders: to the engine, on the main thread, in the order they were asked for
@@ -143,7 +138,6 @@ public:
                 if(d.queueMs >= 0){ forms::pipelineStats().queue.add(d.queueMs); forms::pipelineStats().render.add(d.renderMs); }
                 if(d.rgba) engine.onReady(d.id, d.png, d.json, d.rgba, d.w, d.h);
                 else engine.onReady(d.id, d.png, d.json);
-                rendererSeen = true;
             }else engine.onError(d.id, "Forms GL Box: " + d.error);
         }
         watchEdits();
@@ -185,7 +179,7 @@ protected:
         try { why = !parsed ? "request unreadable" : schemas ? formsgl::Sketch(*schemas).whyNot(req) : "no parameter schemas"; }
         catch(std::exception& e){ why = std::string("request not understood here: ") + e.what(); }
         if(!parsed || !schemas){
-            // nothing to draw with: an error for that image (Processing is not asked)
+            // nothing to draw with: an error for that image
             std::string rid = ofFilePath::getBaseName(path);
             try { if(parsed) rid = req.value("id", rid); } catch(...) {}
             lastWhyNot = rid + ": " + why;
@@ -523,9 +517,11 @@ private:
     std::string schemasFrom;
 
     void describe(){
-        description = "Forms Box with the renderer inside the app (ESPECTRES 2027 Phase 7): every image is "
-                      "drawn here by the C++ port of the ESPECTRES_2027 sketch, no Processing needed (same "
-                      "files as the sketch writes). Otherwise exactly Forms Box.";
+        description = "ESPECTRES 2027. Picks the scene of each image (setlist or manual), its instruments and "
+                      "harmony, and draws it (the ESPECTRES_2027 renderer in C++, on background threads). Its "
+                      "built-in player scrolls the images (Output) at the BPM of the image under the header and "
+                      "moves the header; the actual* outputs are the values of the image under the header; it "
+                      "post-processes and sonifies. Show opens the window. Data: bin/data/Forms (inspector: Renderer).";
     }
     static std::string portedList(){
         std::string s;
@@ -551,20 +547,9 @@ private:
         schemasFrom = f;
     }
 
-    // where the sketch writes a session (config.json "outputRoot", default "sessions")
+    // where a session's images go
     std::string outputDir(const std::string& session){
-        std::filesystem::path root = engine.rendererFolder / "sessions";
-        try {
-            std::ifstream in(engine.rendererFolder / "config.json");
-            if(in){
-                formsgl::json c; in >> c;
-                if(c.contains("outputRoot") && c["outputRoot"].is_string()){
-                    std::filesystem::path r = c["outputRoot"].get<std::string>();
-                    root = r.is_absolute() ? r : engine.rendererFolder / r;
-                }
-            }
-        } catch(...) {}
-        return (root / session).string();
+        return (engine.rendererFolder / "sessions" / session).string();
     }
 
     void run(int wi){

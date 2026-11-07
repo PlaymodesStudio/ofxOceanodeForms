@@ -7,16 +7,29 @@ FORMS / Scroller nodes for ofxOceanode, registered under the `Forms` category:
 - **FORMS P5 PNG Director** – probabilistic element sequencer
 - **Texture Unifier Forms**
 - **FORMS->P5 OSC Sender** – requires `OFXOCEANODE_USE_OSC`
-- **Forms Box** (ESPECTRES 2027) – orchestrates the ESPECTRES_2027 Processing renderer: scenes and setlist as JSON files in the renderer folder, render requests (`/render` → `/ready`), and the musical values of the image under the header; plays the images (built-in player), post-processes them and sonifies them (SuperCollider). Requires `OFXOCEANODE_USE_OSC`; the sound needs ofxOceanodeSuperCollider.
-- **Layer Scroller** (ESPECTRES 2027) – Forms Scroller fed by a Forms Box `Schedule` (port type `FormsSchedule`) instead of a file name.
-- **Forms Transport**, **Forms Header** (ESPECTRES 2027) – the clock and play-head as separate nodes.
-- *Deprecated:* Layer Scroller, Forms Transport and Forms Header are only used by the ESPECTRES
-  patches 3-- to 5--; Forms Box contains all three (built-in player, patches 6-- and 7--). They
-  stay registered until patch 7-- has been played live, then can be removed. The other nodes
-  (Forms Scroller, Scroller Folder, P5 PNG Director, Texture Unifier, P5 OSC Sender) are used by
-  other Playmodes shows (FORMS, GRANDPALAIS, ...) and stay.
+- **Forms GL Box** (ESPECTRES 2027) – the ESPECTRES 2027 player: scenes and setlist as JSON files in
+  the data folder, the requests for each image drawn in the app by its renderer (`src/formsGL`, the
+  ESPECTRES_2027 Processing sketch ported to C++), the musical values of the image under the header;
+  plays the images (built-in player), post-processes them and sonifies them (SuperCollider; the
+  sound needs ofxOceanodeSuperCollider). Patch `8--ESPECTRES_2027_GL`.
+- *Removed (2026-11-07):* Forms Box (the same node asking the Processing sketch for its images over
+  OSC; patches 6-- and 7--, now in `bin/data/Presets_archive_ESPECTRES_Processing`), and before it
+  Layer Scroller, Forms Transport and Forms Header (patches 3-- to 5--). They are in git history.
+  The other nodes (Forms Scroller, Scroller Folder, P5 PNG Director, Texture Unifier, P5 OSC Sender)
+  are used by other Playmodes shows (FORMS, GRANDPALAIS, ...) and stay.
 
-The ESPECTRES 2027 logic is plain C++ in `src/formsBox/formsCore.h` and `formsEngine.h` (no OF, testable on its own); the nodes are thin wrappers. See the roadmap in the ESPECTRES_2027 renderer folder.
+The ESPECTRES 2027 logic is plain C++ in `src/formsBox/formsCore.h` and `formsEngine.h` (no OF, testable on its own); the nodes are thin wrappers. See the roadmap, `ESPECTRES_2027/ROADMAP.md` in the ESPECTRES project folder.
+
+## Data folder
+
+Forms GL Box keeps its data in the app's data folder, `bin/data/Forms` (inspector **Renderer**:
+a path relative to the data folder, or absolute): `generators.json` (the parameter schemas; written
+from the embedded ones if missing), `scenes/`, `presets/`, `library/` (scales, palettes),
+`setlists/`, `thumbnails/`, `FuturaStd-Bold.otf` (letters), `samples/KICKS/` (the kick samples)
+and `sessions/` (each session's images, sidecars, requests and timeline). **Pitchclass** is
+relative too (`Supercollider/Pitchclass`). Moving the app moves everything; nothing outside it is
+read. (Until 2026-11-07 this was the Processing sketch's folder in Dropbox; its older sessions stay
+there.)
 
 ## Usage
 
@@ -35,7 +48,7 @@ Parameters meant to be bound to an Oceanode custom-GUI **MultiToggle** must be `
 ## Instruments tab (Forms Box)
 
 This tab edits the presets of the renderer's parameterised generators (`presets/<gen>/<name>.json`
-in the renderer folder; their schema comes from `generators.json`).
+in the data folder; their schema comes from `generators.json`).
 
 - **List:** the generators, each with its presets. Use **+ new**, **Duplicate**, **Delete**, or
   rename a preset in its name field; scenes that use it follow the rename.
@@ -127,34 +140,14 @@ and group and takes the first free row of that layer.
   layers agree again from the next image.
 - **Kick output:** the kick layer's lowest rows at the header (28 of 1080, the 100 of 3840 the
   1920 probe read), mean above 0.5, times the scene's Kick detect. Mark the kick layer in the
-  Scenes tab (**kick layer**); none marked: layer 1. In `6--ESPECTRES_2027_4`, Macro_2's kick
-  input now comes from it (Macro_4's probe at Y = 3740 read outside the 1080-high image and never
-  fired; backup of the patch in the sketch's `backups/`).
+  Scenes tab (**kick layer**); none marked: layer 1. (In the old `6--ESPECTRES_2027_4`, Macro_2's kick
+  input came from it: Macro_4's probe at Y = 3740 read outside the 1080-high image and never fired.)
 - **Timeline:** `sessions/<session>/timeline.jsonl`, one line per image as it reaches the header
   (layer, id, start beat, length, png, blend, gain).
 - **Export panorama** (Engine tab): the last whole cycle of all layers (the least common multiple
   of their lengths) on one beat axis at layer 1's scale, composited as live, as one PNG in the
   session folder (up to 16384 px wide).
 - Not yet: per-layer sound columns (the sound reads the composite).
-
-### Worker renderers (more renders per second)
-
-Multilayer scenes need more renders than one Processing renderer can make. **Workers** (inspector,
-0..3) are extra copies of the renderer on ports Send Port + 1, + 2, ...: the Engine tab's
-setting the number starts them (Processing compiles each first, a few seconds) and 0 stops them;
-**Restart workers** after editing the sketch. Each worker's window has the image size (1920 x
-1080): drawing straight on its canvas is about 1.5x faster than in an offscreen buffer, with the
-same pixels. Keep the windows open (they can be behind others, not minimised).
-- Layer 1 always stays on the main renderer, in order. Workers take layers 2..4 and editor
-  previews (placed by beat or shown by tag, so the order they finish in doesn't matter); without
-  workers, those go to the main renderer as before.
-- A worker says hello with its code hash; the Engine tab shows each one (up / down, in flight,
-  done, last render time) and warns if its code differs from the main renderer's (restart them
-  after editing the sketch). One that stops answering is marked down and its requests go to
-  another worker (or the main renderer).
-- Any canvas size renders the same pixels (a smaller canvas draws offscreen at the image size:
-  checked on the 199-image regression, all identical), but slower, hence the full-size windows.
-- **Processing** (inspector) is the Processing app used to start them.
 
 ## Gallery (Phase 5)
 
@@ -371,15 +364,13 @@ then publish / timeline / MIDI.
 
 ## Forms GL Box: the renderer in the app, no Processing (Phase 7, 2026-11-06/07)
 
-**Forms GL Box** (Forms menu; patch `8--ESPECTRES_2027_GL`) is Forms Box with the ESPECTRES_2027
-renderer ported to C++ (`src/formsGL/`, header only). It needs no Processing: every request is drawn
-in the app on a background thread, into the same files the sketch writes (`L<layer>_<id>_s<seed>.png`
-+ sidecar with `"renderer": "FormsGL"`), then handed to the engine. Its parameter schemas are its own
-(`src/formsGL/formsGLSchemas.h`, regenerated with `tests/formsGL/make_schemas.py`); from the renderer
-folder it reads only `FuturaStd-Bold.otf` (letters) besides the scenes and library. The Engine tab
-hides the Processing workers. Forms Box and the
-sketch are unchanged (Forms Box only gained a virtual `send` and a named constructor); a legacy
-`method` item (no current scene has one) would be left out of its image and counted in the Node tab.
+**Forms GL Box** (Forms menu; patch `8--ESPECTRES_2027_GL`) draws every request itself with the
+ESPECTRES_2027 renderer ported to C++ (`src/formsGL/`, header only), on background threads, into
+`sessions/<session>/L<layer>_<id>_s<seed>.png` + sidecar (`"renderer": "FormsGL"`), then hands it to
+the engine. Its parameter schemas are its own (`src/formsGL/formsGLSchemas.h`, regenerated with
+`tests/formsGL/make_schemas.py`). A legacy `method` item (no current scene has one) would be left out
+of its image and counted in the Node tab. The node class derives from `formsBox` (formsBox.h: the
+player, abstract since Forms Box was removed). Processing is no longer used anywhere.
 
 Ported: every generator (sweep, hits, pulse, masses, shapes, effects) and every process. How it stays
 the sketch's image:
@@ -392,7 +383,7 @@ the sketch's image:
   one anti-aliased shape with Java2D's vertex snapping; Processing's ADD blend;
 - every decimal literal is a float (the Processing preprocessor), Java's left-to-right argument
   order is kept, and floating-point contraction is off (`#pragma clang fp contract(off)`).
-Accuracy against Processing on the same requests (`tests/formsGL/README.md`): sweep pixel-identical;
+How the port was verified, against the sketch on the same requests (`tests/formsGL/README.md`): sweep pixel-identical;
 hits, pulse, processes within 2 levels on most images (a few pixels a few levels off on the rest);
 masses and shapes close (anti-aliased curves: >= 98% of pixels within 2 levels, energy within ~1%).
 Letters are read from the same font file with FreeType (`src/formsGL/formsGLFont.h`): advances
@@ -403,9 +394,8 @@ average, 260 ms at x4). The noise mask can also run on the GPU for images of 4 M
 big images" in the Node tab, off by default: on an M4 Max it is no faster than the CPU cores and a
 few pixels differ by a level; `src/formsGL/formsGLGpu.h`, its own offscreen context on the render
 thread).
-**Make thumbnails** (Engine tab) in Forms GL Box draws a preview of every instrument here (the
-Instruments tab's preview scene, one seed for all) and keeps it as `thumbnails/<ref>.png`; no
-Processing. The sketch's test underlay (legacy t3_clouds / r12_fullEuclidean / h2_iridescence, not
+**Make thumbnails** (Engine tab) draws a preview of every instrument (the Instruments tab's preview
+scene, one seed for all) and keeps it as `thumbnails/<ref>.png`. The sketch's test underlay (legacy t3_clouds / r12_fullEuclidean / h2_iridescence, not
 ported) is replaced, in thumbnails and in "test image underneath" previews, by a busy image from
 ported generators (noise bands, a note grid, kicks, a sweep), so effects-only instruments have
 something to act on.
@@ -452,13 +442,13 @@ Two switches in the Instruments tab, before Same seed, both off by default (Form
 - `tests/test_banks.cpp <renderer copy>`: banks (legacy untouched, new / duplicate / move / rename /
   revert / delete in bank folders, read back).
 - `tests/test_new_scene.sh <work dir>`: a scene built from scratch (presets, scene, setlist) with the
-  engine calls the window uses, read back, requested and rendered by the sketch; and the previews'
-  Same seed / Reroll.
+  engine calls the window uses, read back, requested and drawn by the renderer (render_requests.cpp,
+  from a copy of `bin/data/Forms`); and the previews' Same seed / Reroll.
 
 ## Scales and chords from the Pitchclass catalog
 
-Forms Box reads the shared catalog in `Pitchclass` (inspector; default
-`OceanodeScroller/bin/data/Supercollider/Pitchclass`): `scales.txt` and `chords.txt`, one
+Forms GL Box reads the shared catalog in `Pitchclass` (inspector; default
+`Supercollider/Pitchclass`, in the app's data folder): `scales.txt` and `chords.txt`, one
 `<index>, <name> <semitones...>;` per line. They join the scale library after the local scales
 (`library/scales.json`):
 - Catalog chords are named `chord <name>`.

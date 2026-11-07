@@ -2,7 +2,7 @@
 // window's Instruments "+ new preset" / Save, Scenes "New", Instruments "Add to scene", Setlist
 // "+ Add entry" / Save), read back from disk by a fresh engine, then asked for from the setlist.
 // Writes the request paths to stdout (lines "REQUEST <path>") for the renderer step
-// (test_new_scene.sh renders them with the Processing sketch and checks the images).
+// (test_new_scene.sh draws them with the renderer, src/formsGL, and checks the images).
 // Run on a COPY of the renderer folder: it writes presets, a scene, the setlist and a session.
 #include "formsEngine.h"
 #include <cstdio>

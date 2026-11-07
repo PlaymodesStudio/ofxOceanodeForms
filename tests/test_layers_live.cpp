@@ -17,7 +17,7 @@
 //   chords   every extra-layer page has layer 1's chords at its bars (layer 1's repeated harmony)
 //
 // Build: clang++ -std=c++17 -O1 -I tests/stub -I src/formsBox -I <OF>/libs/json/include tests/test_layers_live.cpp
-// Run:   ./a.out <renderer folder copy> [minutes] [render latency s] [seed] [workers]
+// Run:   ./a.out <data folder copy> [minutes] [render latency s] [seed]
 #include "formsEngine.h"
 #include "formsClock.h"
 #include "scrollerCore.h"
@@ -34,12 +34,11 @@ int main(int argc, char** argv){
     double minutes = argc > 2 ? std::stod(argv[2]) : 6;
     double latency = argc > 3 ? std::stod(argv[3]) : 1.5;
     unsigned seed = argc > 4 ? (unsigned)std::stoul(argv[4]) : 7;
-    int workers = argc > 5 ? std::stoi(argv[5]) : 0;   // extra renderers for layers 2..4 (Forms Box's Workers)
     const int W = 1920, H = 1080;
     const float dt = 1.0f / 60;
 
     Engine e; e.rendererFolder = folder; e.loadAll(); e.newSession(seed);
-    e.maxPending = 2; e.width = W; e.height = H; e.workerCapacity = workers;
+    e.maxPending = 2; e.width = W; e.height = H;
     // two parallax scenes with beat repeats always on
     Scene a = e.scenes.at("PARALLAX_TEST");
     a.name = "A"; a.layers[0].bars = 8; a.layers[1].bars = 6; a.layers[2].bars = 4;
@@ -235,7 +234,7 @@ int main(int argc, char** argv){
         maxB = std::max(maxB, B);
         if(t > 30) maxLoad = std::max(maxLoad, e.renderLoad());
     }
-    std::cout << "simulated " << minutes << " min at 60 fps, render latency " << latency << " s, seed " << seed << ", workers " << workers << "\n";
+    std::cout << "simulated " << minutes << " min at 60 fps, render latency " << latency << " s, seed " << seed << "\n";
     std::cout << "layer-1 plan:";
     for(auto& p : e.layer1Plan) std::cout << " " << p.scene << "@" << p.startBar << (p.hardCut ? "(cut)" : "");
     std::cout << "\n";

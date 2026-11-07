@@ -255,11 +255,8 @@ inline void Editor::drawLibraryTab(){
 inline void Editor::drawEngineTab(){
     float zz = z();
     auto& L = engine->schedule->layers[0];
-    ImGui::SeparatorText("Renderer");
+    ImGui::SeparatorText("Data folder");
     ImGui::TextWrapped("%s", engine->rendererFolder.string().c_str());
-    bool ok = rendererAnswering && rendererAnswering();
-    ImGui::TextColored(ok ? ImVec4(0.4f, 0.9f, 0.5f, 1) : ImVec4(0.95f, 0.4f, 0.35f, 1),
-                       ok ? "answering" : "no answer yet: is the ESPECTRES_2027 sketch running?");
     ImGui::SeparatorText("Image size");
     drawSizeControl();
     ImGui::SeparatorText("Session");
@@ -267,7 +264,7 @@ inline void Editor::drawEngineTab(){
                 (int)engine->pending.size(), (int)L.ready.size(), L.shown, L.repeats);
     ImGui::Text("skipped %d (renderer busy, max %d rendering)   lost %d   errors %d", engine->skipped, engine->maxPending, engine->lost, engine->errors);
     ImGui::Text("render time %.1f s   renderer load %.0f%%", engine->renderSeconds, engine->renderLoad() * 100);
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("New images the scene at the header needs per second, over what the renderers make.\nAbove 100%%: add Workers, or Repeat on some layers.");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("New images the scene at the header needs per second, over what the renderer makes.\nAbove 100%%: Repeat on some layers.");
     if(ImGui::Button("New session")) newSession();
     ImGui::SameLine();
     if(ImGui::Button("Reload scenes and library")) reload();
@@ -305,28 +302,6 @@ inline void Editor::drawEngineTab(){
             ImGui::BeginChild("##sync", ImVec2(0, 120 * zz), ImGuiChildFlags_Borders);
             for(auto it = engine->syncLog.rbegin(); it != engine->syncLog.rend(); ++it) ImGui::TextUnformatted(it->c_str());
             ImGui::EndChild();
-        }
-    }
-    // extra renderers (also Workers in the inspector)
-    if(pool && getWorkers && setWorkers){
-        ImGui::SeparatorText("Worker renderers (layers 2-4, previews)");
-        int nw = getWorkers();
-        ImGui::SetNextItemWidth(90 * zz);
-        if(ImGui::InputInt("workers", &nw)) setWorkers(ofClamp(nw, 0, 3));
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Extra copies of the Processing renderer for multilayer scenes (0-3); setting it starts or stops them.\nLayer 1 always stays on the main renderer.");
-        ImGui::SameLine();
-        ImGui::BeginDisabled(nw == 0);
-        if(startWorkers && ImGui::Button("Restart workers")) startWorkers();
-        ImGui::EndDisabled();
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Setting the number starts them (0 stops them). Restart after editing the sketch.\nEach has a window of the image size: keep them open (not minimised), macOS slows hidden apps. They compile first (a few seconds).");
-        ImGui::SameLine();
-        if(stopWorkers && ImGui::Button("Stop workers")) stopWorkers();
-        for(auto& w : pool->workers){
-            bool sameCode = w.codeHash.empty() || engine->rendererCodeHash.empty() || w.codeHash == engine->rendererCodeHash;
-            ImGui::TextColored(w.alive ? ImVec4(0.4f, 0.9f, 0.5f, 1) : ImVec4(0.6f, 0.6f, 0.6f, 1), "port %d: %s", w.port, w.alive ? "up" : "down");
-            ImGui::SameLine();
-            ImGui::TextDisabled("| %d in flight, %d done, %d sent again, last %.0f ms", (int)w.inFlight.size(), w.answered, w.resent, w.lastMs);
-            if(!sameCode){ ImGui::SameLine(); ImGui::TextColored(ImVec4(1, 0.45f, 0.35f, 1), "| code differs from the main renderer: restart workers"); }
         }
     }
     ImGui::SeparatorText("Log");

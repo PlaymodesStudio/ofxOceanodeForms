@@ -81,7 +81,7 @@ inline void Editor::drawInstrumentsTab(){
     float zz = z();
     pollPreview();
     if(engine->gens.empty()){
-        ImGui::TextDisabled("The renderer offers no parameterised generators. Restart it (it rewrites generators.json), then Engine → Reload.");
+        ImGui::TextDisabled("No parameterised generators: generators.json is missing or unreadable in the data folder (Engine → Reload).");
         return;
     }
     if(!selPreset.empty() && !engine->presets.count(selPreset)) selPreset.clear();
@@ -201,7 +201,7 @@ inline void Editor::drawInstrumentsTab(){
     }
 
     // --- preview and use
-    bool canPreview = (g || pr.isStack()) && rendererAnswering && rendererAnswering() && engine->scenes.count(previewScene);
+    bool canPreview = (g || pr.isStack()) && engine->scenes.count(previewScene);
     ImGui::BeginDisabled(!canPreview);
     auto preview = [&](bool reroll){
         json items = json::array();

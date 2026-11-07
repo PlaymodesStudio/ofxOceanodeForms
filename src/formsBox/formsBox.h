@@ -2,20 +2,18 @@
 //  formsBox.h
 //  ofxOceanodeForms — ESPECTRES 2027
 //
-//  Orchestrates the ESPECTRES_2027 renderer: scenes and setlist (JSON files in the renderer
-//  folder), render requests over OSC (/render → /ready, /error), and the musical values of the
-//  image under the header (what Macro_3 used to read from txt files). Its built-in player is the
-//  clock (formsClock.h Transport), the play-head (Header) and the scroller (scrollerCore.h), so
-//  one node drives the piece. With the player off it works with separate Forms Transport, Forms
-//  Header and Layer Scroller nodes (older patches). Logic in formsEngine.h; this is parameters,
-//  OSC and UI.
+//  The ESPECTRES 2027 player, without its renderer: scenes and setlist (JSON files in the data
+//  folder, bin/data/Forms by default), the requests for each image, and the musical values of the
+//  image under the header. Its built-in player is the clock (formsClock.h Transport), the play-head
+//  (Header) and the scroller (scrollerCore.h), so one node drives the piece; also the layers, the
+//  post-processing, the sonification and the window. Logic in formsEngine.h; this is parameters
+//  and UI. Abstract: the node is Forms GL Box (formsGLBox.h), which draws the requests.
 //
 
 #pragma once
 
 #include "ofxOceanodeNodeModel.h"
 #include "ofxOceanodeShared.h"
-#include "ofxOsc.h"
 #include "imgui.h"
 #include "formsEngine.h"
 #include "formsEditor.h"
@@ -23,7 +21,6 @@
 #include "formsPanels.h"
 #include "scrollerCore.h"
 #include "layerRing.h"
-#include "formsRenderers.h"
 #include "formsPost.h"
 #include "formsSound.h"
 #include "formsControls.h"
@@ -38,40 +35,22 @@
 #define FORMS_HAS_TRANSPORT 1
 #endif
 #include <numeric>
-#include <spawn.h>
-#include <signal.h>
-#include <sys/wait.h>
-#include <fcntl.h>
-extern char **environ;
 
 class formsBox : public ofxOceanodeNodeModel {
 public:
-    formsBox() : formsBox(std::string("Forms Box")) {}
-    // Forms GL Box (formsGLBox.h) is a Forms Box with another name and its own renderer
-    explicit formsBox(const std::string& nodeName) : ofxOceanodeNodeModel(nodeName) {
-        description = "ESPECTRES 2027 orchestrator. Picks the scene of each image (setlist or manual), "
-                      "selects its methods and harmony like the 1920 Director, and asks the ESPECTRES_2027 "
-                      "Processing renderer for it (request file + /render). Its built-in player scrolls the rendered "
-                      "images (Output) at the BPM of the image under the header, asks for the next image at each "
-                      "wrap and moves the header (Header Pos, phLock, Opacity...). The actual* outputs are the "
-                      "values of the image under the header. Show opens the window: Play, Scenes, Methods, "
-                      "Instruments, Setlist, Library, Engine. With Built-in Player off (inspector) it feeds separate "
-                      "Forms Transport / Forms Header / Layer Scroller nodes through Schedule, like older patches.";
-    }
+    explicit formsBox(const std::string& nodeName) : ofxOceanodeNodeModel(nodeName) {}
 
 #ifdef FORMS_HAS_SC
     // with the SuperCollider servers: the Audio output plays the sonification
-    explicit formsBox(std::vector<serverManager*> servers) : formsBox() { scServers = std::move(servers); }
     formsBox(const std::string& nodeName, std::vector<serverManager*> servers) : formsBox(nodeName) { scServers = std::move(servers); }
 #endif
 
     virtual ~formsBox(){
         releaseTransport();
-        if(workers > 0) stopWorkers();   // their Processing windows close with the app
         scheduleOut = nullptr;
     }
 
-    std::string getWindowTitle() override { return "Forms Box " + ofToString(getNumIdentifier()); }
+    std::string getWindowTitle() override { return "Forms GL Box " + ofToString(getNumIdentifier()); }
     ofParameter<bool>* getWindowToggle() override { return &showWindow; }
 
     void setup() override {
@@ -132,7 +111,7 @@ public:
         driveTransport.set("Drive Transport", false);
         ctl.reg(driveTransport);
         postCtl.setup(ctl);
-        soundCtl.setup(ctl, ofToDataPath("Presets/ESPECTRES/6--ESPECTRES_2027_4/samples/KICKS", true));
+        soundCtl.setup(ctl, ofToDataPath("Forms/samples/KICKS", true));
 
         // ---- legacy outputs (what the 2027_4 patch read: published only in old patches, or by hand)
         pitchBend.set("Pitch Bend", 0, -48, 48);
@@ -188,11 +167,9 @@ public:
         for(auto* p : std::vector<ofAbstractParameter*>{&soundCtl.volume, &postCtl.hue, &postCtl.levelMax, &soundCtl.kickOn})
             ctl.publish(p->getEscapedName());
 
-        addInspectorParameter(rendererFolder.set("Renderer", "/Users/santiagovilanova/PM Dropbox/PLAYMODES_STUDIO/ESPECTRES/ESPECTRES_2027"));
-        addInspectorParameter(sendPort.set("Send Port", 12446, 1, 65535));
-        addInspectorParameter(receivePort.set("Receive Port", 11611, 1, 65535));
-        addInspectorParameter(workers.set("Workers", 0, 0, 3));   // extra renderers for layers 2..4 and previews, on Send Port + 1 ..
-        addInspectorParameter(processingApp.set("Processing", "/Applications/Processing.app/Contents/MacOS/Processing"));
+        // the data folder (scenes, presets, library, setlists, thumbnails, sessions): relative to the
+        // app's data folder unless absolute
+        addInspectorParameter(rendererFolder.set("Renderer", "Forms"));
         addInspectorParameter(maxPending.set("Max Pending", 2, 1, 16));
         // Size of the rendered images (any size; also in the Engine tab)
         addInspectorParameter(imageWidth.set("Image Width", 1920, 16, 16384));
@@ -201,7 +178,7 @@ public:
         // a new image replaces the one under the header as soon as it is ready (instead of
         // scrolling in from the right edge); off = as before
         addInspectorParameter(immediateReplace.set("Immediate Replace", false));
-        addInspectorParameter(pitchclassFolder.set("Pitchclass", "/Users/santiagovilanova/Documents/OF/of_playmodes/openFrameworks/apps/Playmodes/OceanodeScroller/bin/data/Supercollider/Pitchclass"));
+        addInspectorParameter(pitchclassFolder.set("Pitchclass", "Supercollider/Pitchclass"));
         listeners.push(pitchclassFolder.newListener([this](string&){ reload(); }));
         addInspectorParameter(builtInPlayer.set("Built-in Player", true));
         addInspectorParameter(saveFrame.set("Save Frame"));
@@ -218,23 +195,12 @@ public:
         listeners.push(useSetlist.newListener([this](bool& b){ engine.useSetlist = b; }));
         listeners.push(sceneIndex.newListener([this](int& i){ pickManualScene(i); }));
         listeners.push(rendererFolder.newListener([this](string&){ reload(); }));
-        listeners.push(sendPort.newListener([this](int&){ setupOsc(); }));
-        listeners.push(receivePort.newListener([this](int&){ setupOsc(); }));
-        // setting Workers starts that many extra renderers (0 stops them); a patch saved with
-        // workers starts them when it loads (on the first update, once the folder is known)
-        listeners.push(workers.newListener([this](int& n){ workersPending = true; }));
 
         editor.engine = &engine;
+        editor.importPath = ofToDataPath("Presets/ESPECTRES/2--ESPECTRES_1920", true);
         editor.exportPanorama = [this](){ return exportPanorama(); };
         editor.lookPng = [this](const std::string& png){ return lookPng(png); };
         editor.sendRequest = [this](const std::string& p){ send(p); };
-        pool.send = [this](int port, const std::string& path){ sendWorker(port, path); };
-        pool.note = [this](const std::string& s){ engine.note(s); };
-        editor.startWorkers = [this](){ startWorkers(); };
-        editor.getWorkers = [this](){ return workers.get(); };
-        editor.setWorkers = [this](int n){ workers = n; };
-        editor.stopWorkers = [this](){ stopWorkers(); };
-        editor.pool = &pool;
         editor.kickLevel = &kickLevel;
         editor.playScene = [this](const std::string& name){
             auto it = std::find(sceneNames.begin(), sceneNames.end(), name);
@@ -248,11 +214,9 @@ public:
         editor.sendPreviews = [this](const std::string& scene, const std::vector<std::pair<std::string, forms::json>>& variants){
             for(auto& path : engine.makePreviews(scene, variants)) send(path);
         };
-        editor.makeThumbnails = [this](){ ofxOscMessage m; m.setAddress("/thumbnails"); sender.sendMessage(m, false); engine.note("thumbnails requested"); };
         editor.reload = [this](){ reload(); };
         editor.newSession = [this](){ engine.newSession(); primePending = true; };
         editor.setImageSize = [this](int w, int h){ imageWidth = w; imageHeight = h; };
-        editor.rendererAnswering = [this](){ return rendererSeen || pool.aliveCount() > 0; };
         editor.useSetlist = &useSetlistLocal;
         editor.playerOn = [this](){ return builtInPlayer.get(); };
         // the view: the final image (every layer, post-processed), else layer 1
@@ -285,7 +249,6 @@ public:
         lane.onRowPlay = [this](const std::string& name){ if(editor.playScene) editor.playScene(name); };
         lane.drawPanel = [this](){ drawLanePanel(); };
 
-        setupOsc();
         reload();
         engine.newSession();
         primePending = true;
@@ -317,41 +280,6 @@ public:
     }
 
     void update(ofEventArgs&) override {
-        // OSC replies from the renderer
-        while(receiver.hasWaitingMessages()){
-            ofxOscMessage m;
-            receiver.getNextMessage(m);
-            if((m.getAddress() == "/ready" && m.getNumArgs() >= 2) || (m.getAddress() == "/error" && m.getNumArgs() >= 1)){
-                std::string aid = m.getArgAsString(m.getAddress() == "/ready" ? 1 : 0);
-                if(pool.owns(aid)) pool.answered(aid);
-                else rendererSeen = true;   // the main renderer answered
-            }
-            if(m.getAddress() == "/worker" && m.getNumArgs() >= 1){
-                pool.hello(m.getArgAsInt(0), m.getNumArgs() >= 2 ? m.getArgAsString(1) : std::string());
-                continue;
-            }
-            if(m.getAddress() == "/ready" && m.getNumArgs() >= 4){
-                engine.onReady(m.getArgAsString(1), m.getArgAsString(2), m.getArgAsString(3));
-            }else if(m.getAddress() == "/error" && m.getNumArgs() >= 2){
-                engine.onError(m.getArgAsString(0), m.getArgAsString(1));
-            }else if(m.getAddress() == "/thumbnails"){
-                rendererSeen = true;
-                engine.note("thumbnails done (" + ofToString(m.getNumArgs() ? m.getArgAsInt(0) : 0) + ")");
-                editor.thumbs.clear();
-                reload(); // methods may have changed
-            }else if(m.getAddress() == "/methodList"){
-                engine.note("renderer started");
-                rendererSeen = true;
-                reload(); // it rewrote generators.json (canvas size, scales)
-            }
-        }
-        if(workersPending){
-            workersPending = false;
-            if(workers > 0) startWorkers(); else stopWorkers();
-        }
-        pool.configure(sendPort + 1, workers);
-        engine.workerCapacity = pool.capacity();
-        for(auto& [id, p] : pool.expire()) sendMain(p);   // no worker left for them: the main renderer
         if(primePending){
             primePending = false;
             for(int i = 0; i < prime; i++) request(true);
@@ -1284,13 +1212,9 @@ protected:   // (Forms GL Box derives from Forms Box)
     forms::Editor editor;
     customGuiRegion faceRegion;
     bool useSetlistLocal = true, lastUseSetlist = true;
-    ofxOscSender sender;
-    ofxOscReceiver receiver;
     ofEventListeners listeners;
     bool primePending = false;
-    bool rendererSeen = false;
     std::vector<std::string> sceneNames;
-    std::string importPath = "/Users/santiagovilanova/Documents/OF/of_playmodes/openFrameworks/apps/Playmodes/OceanodeScroller/bin/data/Presets/ESPECTRES/2--ESPECTRES_1920";
 
     ofParameter<bool> showWindow, useSetlist;
     ofParameter<void> go, resetSetlist;
@@ -1299,12 +1223,8 @@ protected:   // (Forms GL Box derives from Forms Box)
     ofParameter<int> actualBPM, actualBars, actualNoteGrid, actualRoot, actualSnapshot, actualTrans;
     ofParameter<int> sceneRoot, setlistSnapshot;
     ofParameter<vector<float>> actualScale;
-    ofParameter<string> sceneName, rendererFolder, pitchclassFolder, processingApp;
-    ofParameter<int> workers;
-    bool workersPending = true;   // start (or stop) them on the next update
-    forms::RendererPool pool;
-    std::map<int, std::unique_ptr<ofxOscSender>> workerSenders;
-    ofParameter<int> sendPort, receivePort, prime, maxPending, imageWidth, imageHeight;
+    ofParameter<string> sceneName, rendererFolder, pitchclassFolder;
+    ofParameter<int> prime, maxPending, imageWidth, imageHeight;
     // built-in player
     ofParameter<bool> builtInPlayer, analogMode, sequence, autoPng, sequenceOut, autoHeader;
     ofParameter<bool> tremoloOn;              // the scenes' opacity tremolo (off by default)
@@ -1333,14 +1253,15 @@ protected:   // (Forms GL Box derives from Forms Box)
     ofParameter<nodePort> audioOut;
 #endif
 
-    void setupOsc(){
-        sender.setup("127.0.0.1", sendPort);
-        receiver.setup(receivePort);
+    // a folder setting: relative to the app's data folder unless absolute
+    static std::string dataPath(const std::string& p){
+        if(p.empty() || std::filesystem::path(p).is_absolute()) return p;
+        return ofToDataPath(p, true);
     }
 
     void reload(){
-        engine.rendererFolder = rendererFolder.get();
-        engine.pitchclassFolder = pitchclassFolder.get();
+        engine.rendererFolder = dataPath(rendererFolder.get());
+        engine.pitchclassFolder = dataPath(pitchclassFolder.get());
         engine.maxPending = maxPending;
         engine.loadAll();
         engine.width = imageWidth;
@@ -1379,101 +1300,8 @@ protected:   // (Forms GL Box derives from Forms Box)
     virtual bool auditionStage(){ return false; }
     virtual std::shared_ptr<forms::Image> auditionImage(){ return nullptr; }
 
-    // Every request goes through here (GO, prime, layers, previews, prints); Forms GL Box draws
-    // what it can itself and passes the rest on to this
-    virtual void send(const std::string& path){
-        if(path.empty()) return;
-        // extra layers and editor previews may go to a worker (their order doesn't matter);
-        // layer 1 always goes to the main renderer, in order
-        std::string id = ofFilePath::getBaseName(path);
-        auto it = engine.pending.find(id);
-        if(it != engine.pending.end() && (it->second->layer > 1 || it->second->preview) && pool.dispatch(id, path)) return;
-        sendMain(path);
-    }
-    void sendMain(const std::string& path){
-        ofxOscMessage m;
-        m.setAddress("/render");
-        m.addStringArg(path);
-        sender.sendMessage(m, false);
-    }
-    void sendWorker(int port, const std::string& path){
-        auto& s = workerSenders[port];
-        if(!s){ s = std::make_unique<ofxOscSender>(); s->setup("127.0.0.1", port); }
-        ofxOscMessage m;
-        m.setAddress("/render");
-        m.addStringArg(path);
-        s->sendMessage(m, false);
-    }
-
-    // Workers: Processing copies started from here (worker configs in <renderer>/configs/), each
-    // with a small window (the image renders offscreen at its own size, pixel-identical) and its own
-    // build folder, which is also how Stop finds them. Processing compiles at start (10-20 s).
-    std::string workerDir(int port){ return "/tmp/espectres_worker_" + ofToString(port); }
-    std::map<int, pid_t> workerGroups;   // port -> process group of its Processing (launcher + java)
-
-    // Start a program with NOTHING of this app inherited: no sockets (they would keep the app's
-    // OSC / SuperCollider ports after it quits), stdin from /dev/null, stdout + stderr to `log`.
-    // It gets its own process group, so it can be stopped with everything it started.
-    static pid_t spawnClean(const std::vector<std::string>& args, const std::vector<std::string>& extraEnv, const std::string& log, bool newGroup){
-        posix_spawn_file_actions_t fa;
-        posix_spawn_file_actions_init(&fa);
-        posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-        posix_spawn_file_actions_addopen(&fa, 1, log.empty() ? "/dev/null" : log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        posix_spawn_file_actions_adddup2(&fa, 1, 2);
-        posix_spawnattr_t at;
-        posix_spawnattr_init(&at);
-        short flags = POSIX_SPAWN_CLOEXEC_DEFAULT;   // every other descriptor is closed in the child
-        if(newGroup){ flags |= POSIX_SPAWN_SETPGROUP; posix_spawnattr_setpgroup(&at, 0); }
-        posix_spawnattr_setflags(&at, flags);
-        std::vector<char*> argv;
-        for(auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
-        argv.push_back(nullptr);
-        std::vector<std::string> envs;
-        for(char** e = environ; e && *e; e++) envs.push_back(*e);
-        for(auto& e : extraEnv) envs.push_back(e);
-        std::vector<char*> envp;
-        for(auto& e : envs) envp.push_back(const_cast<char*>(e.c_str()));
-        envp.push_back(nullptr);
-        pid_t pid = 0;
-        int r = posix_spawn(&pid, args[0].c_str(), &fa, &at, argv.data(), envp.data());
-        posix_spawn_file_actions_destroy(&fa);
-        posix_spawnattr_destroy(&at);
-        return r == 0 ? pid : 0;
-    }
-
-    // Workers: Processing copies started from here (worker configs in <renderer>/configs/), each
-    // with a canvas of the image size (renders straight on it) and its own build folder.
-    // Processing compiles at start (a few seconds).
-    void startWorkers(){
-        stopWorkers();
-        namespace fs = std::filesystem;
-        fs::path cfgDir = fs::path(rendererFolder.get()) / "configs";
-        std::error_code ec; fs::create_directories(cfgDir, ec);
-        for(int k = 0; k < workers; k++){
-            int port = sendPort + 1 + k;
-            fs::path cfg = cfgDir / ("worker_" + ofToString(port) + ".json");
-            // a full-size canvas: requests of the canvas size render straight on it, about 1.5x faster
-            // than in an offscreen buffer (same pixels)
-            forms::json c{{"width", (int)imageWidth}, {"height", (int)imageHeight}, {"listenPort", port}, {"sendPort", (int)receivePort}, {"worker", true}};
-            std::ofstream(cfg) << c.dump(1);
-            pid_t pid = spawnClean({processingApp.get(), "cli", "--sketch=" + rendererFolder.get(), "--output=" + workerDir(port), "--force", "--run"},
-                                   {"ESPECTRES_CONFIG=" + cfg.string()}, workerDir(port) + ".log", true);
-            if(pid > 0) workerGroups[port] = pid;
-            else engine.note("could not start the worker on port " + ofToString(port) + " (Processing app: " + processingApp.get() + ")");
-        }
-        engine.note("starting " + ofToString((int)workers) + " worker renderers (they compile first: a few seconds)");
-    }
-    void stopWorkers(){
-        // the ones started here: their whole process group (launcher and java)
-        // forced: Processing's launcher and java may ignore a polite stop; a worker writes its PNG
-        // to a temp file and renames it, so nothing half-written is left
-        for(auto& [port, pg] : workerGroups) if(pg > 0) kill(-pg, SIGKILL);
-        workerGroups.clear();
-        // and any left over from an earlier session (matched by their build folder)
-        pid_t p = spawnClean({"/usr/bin/pkill", "-9", "-f", "/tmp/espectres_worker_"}, {}, "", false);
-        if(p > 0){ int st = 0; waitpid(p, &st, 0); }
-        for(auto& w : pool.workers){ w.alive = false; }
-    }
+    // Every request goes through here (GO, prime, layers, previews, prints): Forms GL Box draws it
+    virtual void send(const std::string& path) = 0;
 
     // ---------------------------------------------------------------- window
 
