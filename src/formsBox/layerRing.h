@@ -1,0 +1,259 @@
+//
+//  layerRing.h
+//  ofxOceanodeForms — ESPECTRES 2027
+//
+//  Phase 3: the scrolling of one extra layer (layers 2..4). Its images are placed in absolute
+//  beats (Image::startBeat, from the Forms Box engine), each bars x 4 beats long and one view wide.
+//  Every frame the image under the header is found from the shared header beat (counted by
+//  layer 1's ScrollerCore), and drawn so the header sits at the same beat in every layer: longer
+//  layers scroll more slowly (parallax) and all layers cross each beat line at the header together.
+//  If the last image ends and nothing follows, it is repeated (a placeholder that a late image
+//  replaces). Drawn into a transparent FBO: premultiplied colour and real alpha, for the composite.
+//
+
+#pragma once
+
+#include "ofMain.h"
+#include "ofxThreadedImageLoader.h"
+#include "formsEngine.h"
+#include <chrono>
+
+namespace forms {
+
+class LayerRing {
+public:
+    ofFbo fbo;
+    bool active = true;                       // the current scene has this layer (else no repeats)
+    std::function<float(const Image&)> opacityOf;   // each image's own opacity, read live
+    // the first hard cut (a scene change that cuts every layer) at a beat in (from, to], or -1
+    std::function<double(double from, double to)> hardCutIn;
+    // the scene layer 1 plays (or will play) at a beat; "" if unknown
+    std::function<std::string(double beat)> sceneAt;
+    // Immediate replace: a ready image takes the slot under the header at once (see ScrollerCore)
+    bool immediate = false;
+
+    void allocate(int w, int h){
+        if(w < 1 || h < 1) return;
+        if(fbo.isAllocated() && (int)fbo.getWidth() == w && (int)fbo.getHeight() == h) return;
+        ofFboSettings st;
+        st.width = w; st.height = h; st.internalformat = GL_RGBA;
+        fbo.allocate(st);
+    }
+
+    // The image under the header (for the composite settings), or null
+    std::shared_ptr<Image> current;
+    struct Drawn { std::string png; double start, len; float x; };
+    std::vector<Drawn> lastDrawn;             // what the last frame drew, and where (Save frame)
+
+    // Where a beat is on screen: the images are drawn edge to edge from the one under the header,
+    // each one view wide at its own length; past them, at `lenAfter` beats per view
+    double screenX(const Schedule::Layer& L, double B, double beat, float headerPos, int w, double lenAfter) const {
+        int cur = -1;
+        for(int i = 0; i < (int)L.slots.size(); i++) if(L.slots[i].start <= B && B < L.slots[i].end()){ cur = i; break; }
+        if(cur < 0) return headerPos + (beat - B) / lenAfter * w;
+        const auto& c = L.slots[cur];
+        double x = headerPos - (B - c.start) / c.len * w;
+        double edge = c.start;
+        for(int i = cur; i < (int)L.slots.size(); i++){
+            const auto& s = L.slots[i];
+            if(i > cur && std::fabs(L.slots[i - 1].end() - s.start) > 1e-6) break;
+            if(beat < s.end() + 1e-9) return x + (beat - s.start) / s.len * w;
+            x += (s.end() - s.start) / s.len * w;
+            edge = s.end();
+        }
+        return x + (beat - edge) / lenAfter * w;
+    }
+
+    void update(Schedule::Layer& L, double B, float headerPos, int w, int h){
+        allocate(w, h);
+        // 1. ready images take their place (a real image replaces a repeat placeholder)
+        while(!L.ready.empty()){
+            auto img = L.ready.front();
+            L.ready.pop_front();
+            double len = 4.0 * std::max(1, img->bars);
+            if(immediate){
+                // it takes the place of the image under the header (same start), and what it overlaps goes
+                double st = std::ceil(B / 4.0) * 4.0 - len;
+                for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ st = sl.start; break; }
+                if(st > B) st = B;
+                for(auto it = L.slots.begin(); it != L.slots.end();){
+                    if(it->start < st + len - 1e-6 && it->end() > st + 1e-6) it = L.slots.erase(it); else ++it;
+                }
+                img->startBeat = st; img->cutBeat = -1;
+                Schedule::Layer::Slot sl; sl.img = img; sl.start = st; sl.len = len;
+                auto pos = std::find_if(L.slots.begin(), L.slots.end(), [&](const Schedule::Layer::Slot& x){ return x.start > st; });
+                L.slots.insert(pos, sl);
+                continue;
+            }
+            double start = img->startBeat >= 0 ? img->startBeat : (L.scheduledEnd >= 0 ? L.scheduledEnd : std::ceil(B / 4.0) * 4.0);
+            // a place that is already on screen (or past) is taken: an image never pops in
+            // mid-view. It goes to the next free place after what has been shown instead.
+            bool taken = screenX(L, B, start, headerPos, w, len) < w;   // its left edge would be inside the view
+            for(auto& sl : L.slots) if(sl.seen && sl.start < start + len - 1e-6 && sl.end() > start + 1e-6) taken = true;
+            if(taken){
+                double end = std::ceil(B / 4.0) * 4.0;
+                for(auto& sl : L.slots) if(sl.seen || !sl.repeat) end = std::max(end, sl.end());
+                // still visible at that place? then it waits one more image length
+                for(int guard = 0; guard < 64 && screenX(L, B, end, headerPos, w, len) < w; guard++) end += len;
+                // only where its own scene plays (a late image does not carry its scene into
+                // another one); there, cut at the next hard cut
+                if(sceneAt){ std::string sc = sceneAt(end); if(!sc.empty() && sc != img->scene){ L.retimed++; continue; } }
+                start = end;
+                img->startBeat = start;
+                img->cutBeat = -1;
+                if(hardCutIn){ double c = hardCutIn(start, start + len); if(c > start + 1e-6 && c < start + len - 1e-6) img->cutBeat = c; }
+                L.retimed++;
+            }
+            // drop what it overlaps that hasn't been on screen (repeat placeholders)
+            for(auto it = L.slots.begin(); it != L.slots.end();){
+                if(!it->seen && it->start < start + len - 1e-6 && it->end() > start + 1e-6) it = L.slots.erase(it);
+                else ++it;
+            }
+            // a hard cut at the start of this image cuts the one before it there
+            for(auto& o : L.slots) if(o.start < start - 1e-6 && o.end() > start + 1e-6) o.cut = start;
+            Schedule::Layer::Slot sl; sl.img = img; sl.start = start; sl.len = len;
+            if(img->cutBeat > start) sl.cut = img->cutBeat;
+            auto pos = std::find_if(L.slots.begin(), L.slots.end(), [&](const Schedule::Layer::Slot& x){ return x.start > start; });
+            L.slots.insert(pos, sl);
+        }
+        // 2. nothing after the last image, and the place after it is about to enter the view at
+        // the right edge (or the header has passed its end): repeat it, so the view never shows a
+        // hole that a late image would pop into (only while the scene has this layer)
+        while(active && !L.slots.empty()){
+            auto& last = L.slots.back();
+            double end = last.end();
+            bool needed = end <= B || screenX(L, B, end, headerPos, w, last.len) < w;
+            if(!needed) break;
+            // never across a hard cut: an image from before a cut is not repeated after it (the
+            // new scene's image comes, or nothing if that scene has no such layer)
+            double imgStart = last.img->startBeat >= 0 ? last.img->startBeat : last.start;
+            if(hardCutIn && hardCutIn(imgStart, end) >= 0) break;
+            Schedule::Layer::Slot r = last;
+            r.start = end; r.repeat = true; r.seen = false; r.cut = -1;
+            if(hardCutIn){ double c = hardCutIn(end, end + r.len); if(c > end + 1e-6 && c < end + r.len - 1e-6) r.cut = c; }
+            L.slots.push_back(r);
+            L.repeats++;
+        }
+        // 3. forget images well behind the header (kept a while for beat repeats)
+        while(L.slots.size() > 1 && L.slots[1].end() < B - 16) L.slots.pop_front();
+        L.scheduledEnd = L.slots.empty() ? -1 : L.slots.back().end();
+
+        // 4. which slot is under the header
+        int cur = -1;
+        for(int i = 0; i < (int)L.slots.size(); i++)
+            if(L.slots[i].start <= B && B < L.slots[i].end()){ cur = i; break; }
+        std::shared_ptr<Image> now = cur >= 0 ? L.slots[cur].img : nullptr;
+        if(now && now != current){ L.shown++; L.header = now; }
+        if(!now) L.header.reset();
+        current = now;
+
+        // 5. placement: the current image's left edge at headerPos - u * w; neighbours that touch
+        // it at -w / +w. Before the first image (a layer starting) it comes in at the first
+        // image's speed.
+        // each image is one view wide; a cut image shows only up to its cut
+        auto vis = [&](const Schedule::Layer::Slot& s){ return (float)((s.end() - s.start) / s.len) * w; };
+        std::vector<std::pair<int, float>> draw;   // slot, x
+        if(cur >= 0){
+            auto& c = L.slots[cur];
+            float u = (float)((B - c.start) / c.len);
+            L.phase = u;
+            float x0 = headerPos - u * w;
+            draw.push_back({cur, x0});
+            float x = x0;
+            for(int i = cur - 1; i >= 0 && x > 0; i--){
+                if(std::fabs(L.slots[i].end() - L.slots[i + 1].start) > 1e-6) break;
+                x -= vis(L.slots[i]); draw.push_back({i, x});
+            }
+            x = x0;
+            for(int i = cur + 1; i < (int)L.slots.size(); i++){
+                if(std::fabs(L.slots[i - 1].end() - L.slots[i].start) > 1e-6) break;
+                x += vis(L.slots[i - 1]);
+                if(x >= w) break;
+                draw.push_back({i, x});
+            }
+        }else{
+            L.phase = 0;
+            for(int i = 0; i < (int)L.slots.size(); i++){
+                auto& s = L.slots[i];
+                if(s.start > B){
+                    float x = headerPos + (float)((s.start - B) / s.len) * w;
+                    if(x < w) draw.push_back({i, x});
+                    break;
+                }
+            }
+        }
+
+        // 6. textures: load what is drawn or next, free the rest
+        std::set<std::string> want;
+        for(auto& [i, x] : draw) want.insert(L.slots[i].img->png);
+        if(cur >= 0 && cur + 1 < (int)L.slots.size()) want.insert(L.slots[cur + 1].img->png);
+        for(auto it = images.begin(); it != images.end();){
+            if(!want.count(it->first) && it->first != loadingPng) it = images.erase(it);
+            else ++it;
+        }
+        if(!loadingPng.empty()){
+            auto& im = images[loadingPng];
+            if(im && im->isAllocated() && im->isUsingTexture()) loadingPng.clear();
+        }
+        if(loadingPng.empty()){
+            for(auto& p : want){
+                if(images.count(p)) continue;
+                auto im = std::make_shared<ofImage>();
+                images[p] = im;
+                // in memory (Forms GL Box): straight to a texture
+                std::shared_ptr<Image> src;
+                for(auto& sl : L.slots) if(sl.img && sl.img->png == p && sl.img->rgba){ src = sl.img; break; }
+                if(src && src->pw > 0 && src->ph > 0 && src->rgba->size() >= (size_t)src->pw * src->ph * 4){
+                    auto t0 = std::chrono::steady_clock::now();
+                    im->setFromPixels(src->rgba->data(), src->pw, src->ph, OF_IMAGE_COLOR_ALPHA);
+                    pipelineStats().upload.add(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+                    continue;   // loaded: look at the next one this frame too
+                }
+                loader.loadFromDisk(*im, p);
+                loadingPng = p;
+                break;
+            }
+        }
+
+        lastDrawn.clear();
+        for(auto& [i, x] : draw){
+            L.slots[i].seen = true;
+            lastDrawn.push_back({L.slots[i].img->png, L.slots[i].start, L.slots[i].len, x});
+        }
+        // 7. draw
+        if(!fbo.isAllocated()) return;
+        fbo.begin();
+        ofClear(0, 0, 0, 0);
+        ofPushStyle();
+        ofEnableAlphaBlending();
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        for(auto& [i, x] : draw){
+            auto it = images.find(L.slots[i].img->png);
+            if(it == images.end() || it->first == loadingPng) continue;
+            auto& im = it->second;
+            if(!(im && im->isAllocated() && im->isUsingTexture())) continue;
+            float vw = vis(L.slots[i]);
+            float op = opacityOf ? ofClamp(opacityOf(*L.slots[i].img), 0, 1) : 1.0f;
+            if(op <= 0) continue;
+            ofSetColor(255, 255, 255, 255 * op);
+            if(vw >= w - 0.01f) im->draw(x, 0, w, h);
+            else im->drawSubsection(x, 0, vw, h, 0, 0, vw / w * im->getWidth(), im->getHeight());   // cut
+            ofSetColor(255);
+        }
+        ofPopStyle();
+        fbo.end();
+    }
+
+    // A page's PNG was rewritten (immediate mode): it loads again (the next frames)
+    void reloadPng(const std::string& png){
+        if(png == loadingPng) return;   // still loading the old one: it is re-read below once done
+        images.erase(png);
+    }
+
+private:
+    ofxThreadedImageLoader loader;
+    std::map<std::string, std::shared_ptr<ofImage>> images;   // by PNG path
+    std::string loadingPng;
+};
+
+} // namespace forms

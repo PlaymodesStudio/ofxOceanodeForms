@@ -1,0 +1,1493 @@
+//
+//  formsBox.h
+//  ofxOceanodeForms — ESPECTRES 2027
+//
+//  Orchestrates the ESPECTRES_2027 renderer: scenes and setlist (JSON files in the renderer
+//  folder), render requests over OSC (/render → /ready, /error), and the musical values of the
+//  image under the header (what Macro_3 used to read from txt files). Its built-in player is the
+//  clock (formsClock.h Transport), the play-head (Header) and the scroller (scrollerCore.h), so
+//  one node drives the piece. With the player off it works with separate Forms Transport, Forms
+//  Header and Layer Scroller nodes (older patches). Logic in formsEngine.h; this is parameters,
+//  OSC and UI.
+//
+
+#pragma once
+
+#include "ofxOceanodeNodeModel.h"
+#include "ofxOceanodeShared.h"
+#include "ofxOsc.h"
+#include "imgui.h"
+#include "formsEngine.h"
+#include "formsEditor.h"
+#include "formsClock.h"
+#include "formsPanels.h"
+#include "scrollerCore.h"
+#include "layerRing.h"
+#include "formsRenderers.h"
+#include "formsPost.h"
+#include "formsSound.h"
+#include "formsControls.h"
+#include "formsEditorPost.h"
+#include "formsEditorSound.h"
+#include "formsLane.h"
+#include "formsTransportFeed.h"
+#include "formsLayerFx.h"
+#if __has_include("ofxOceanodeTransport.h") && __has_include("ofxOceanodeContainer.h")
+#include "ofxOceanodeTransport.h"
+#include "ofxOceanodeContainer.h"
+#define FORMS_HAS_TRANSPORT 1
+#endif
+#include <numeric>
+#include <spawn.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+extern char **environ;
+
+class formsBox : public ofxOceanodeNodeModel {
+public:
+    formsBox() : formsBox(std::string("Forms Box")) {}
+    // Forms GL Box (formsGLBox.h) is a Forms Box with another name and its own renderer
+    explicit formsBox(const std::string& nodeName) : ofxOceanodeNodeModel(nodeName) {
+        description = "ESPECTRES 2027 orchestrator. Picks the scene of each image (setlist or manual), "
+                      "selects its methods and harmony like the 1920 Director, and asks the ESPECTRES_2027 "
+                      "Processing renderer for it (request file + /render). Its built-in player scrolls the rendered "
+                      "images (Output) at the BPM of the image under the header, asks for the next image at each "
+                      "wrap and moves the header (Header Pos, phLock, Opacity...). The actual* outputs are the "
+                      "values of the image under the header. Show opens the window: Play, Scenes, Methods, "
+                      "Instruments, Setlist, Library, Engine. With Built-in Player off (inspector) it feeds separate "
+                      "Forms Transport / Forms Header / Layer Scroller nodes through Schedule, like older patches.";
+    }
+
+#ifdef FORMS_HAS_SC
+    // with the SuperCollider servers: the Audio output plays the sonification
+    explicit formsBox(std::vector<serverManager*> servers) : formsBox() { scServers = std::move(servers); }
+    formsBox(const std::string& nodeName, std::vector<serverManager*> servers) : formsBox(nodeName) { scServers = std::move(servers); }
+#endif
+
+    virtual ~formsBox(){
+        releaseTransport();
+        if(workers > 0) stopWorkers();   // their Processing windows close with the app
+        scheduleOut = nullptr;
+    }
+
+    std::string getWindowTitle() override { return "Forms Box " + ofToString(getNumIdentifier()); }
+    ofParameter<bool>* getWindowToggle() override { return &showWindow; }
+
+    void setup() override {
+        ctl.node = this;
+        ctl.setupTimeline();
+        // ---- always on the node
+        addParameter(showWindow.set("Show", false));
+        addCustomRegion(faceRegion.set("Preview", [this](){ editor.drawNodeFace(); }), [this](){ editor.drawNodeFace(); });
+        addParameter(go.set("GO"));
+        addParameter(useSetlist.set("Setlist", true));
+        addParameter(sceneIndex.set("Scene", 0, 0, 255));
+        addParameter(speed.set("Speed", 1, -24, 24));
+        // int 0/1: the custom GUI's MultiToggle drives int or float, not bool
+        addParameter(pause.set("Pause", 0, 0, 1));
+        addParameter(sequence.set("Sequence", true));
+        addParameter(seqFade.set("Seq Fade", 0, 0, 1));
+        addParameter(newPng.set("New PNG"));
+        addParameter(header.set("Header", 0.218182, 0, 1));
+        addParameter(headerPlus.set("Header+", 0, 0, 1));
+        addParameter(smooth.set("Smooth", 0.0001, 0, 0.999));
+        addOutputParameter(output.set("Output", nullptr));   // the final image (post-processed)
+#ifdef FORMS_HAS_SC
+        sound = std::make_shared<forms::SoundEngine>(scServers);
+        addOutputParameter(audioOut.set("Audio", nodePort(0, sound.get())));
+#endif
+        addOutputParameter(headerPosOut.set("Header Pos", 0, 0, 16384));
+        addOutputParameter(headerNorm.set("Header Norm", 0, 0, 1));
+        addOutputParameter(phaseOut.set("Phase", 0, 0, 1));
+        addOutputParameter(bpmOut.set("BPM", 120, 1, 2000));
+        addOutputParameter(kickOut.set("Kick", 0, 0, 1));   // the kick layer's bottom strip at the header
+        // the scene lane's gates (written by a timeline Chords lane; no widget, its pin shows when connected)
+        lane.handle = addParameter(lane.gates.set("Scene Lane", {0.0f}, {0.0f}, {1.0f}),
+                                   ofxOceanodeParameterFlags_NoGuiWidget | ofxOceanodeParameterFlags_DisableSavePreset);
+        listeners.push(lane.gates.newListener([this](std::vector<float>& v){ lane.gatesChanged(v); }));
+        // the harmony under the playhead, as notes (for other synths): the bar's chord root (MIDI)
+        // and the scale's pitch classes on the real root + transpose (sorted, 0..11; what the
+        // partials snap to)
+        addOutputParameter(rootOut.set("Root Out", 24, 0, 127));
+        addOutputParameter(scaleOut.set("Scale Out", {0}, {0}, {11}));
+
+        // ---- the window's settings (publishable with a right-click; the legacy ones were on the node)
+        resetSetlist.set("Reset Setlist");
+        actualBarIn.set("actualBarIn", 0, 0, 64);
+        analogMode.set("Analog Mode", false);
+        bpmAdd.set("BPM Add", 0, -1, 1);
+        maxMinutes.set("Max Minutes", 11, 0.1, 600);
+        autoHeader.set("Auto Header", false);
+        tremoloOn.set("Tremolo", false);
+        hardCut.set("Hard Cut", false);   // manual scene changes: cut every layer at the change
+        headerMin.set("Header Min", 3.0f / 7, 0, 1);
+        headerMax.set("Header Max", 4.0f / 7, 0, 1);
+        viewW.set("Width", 1920, 1, 16384);
+        viewH.set("Height", 1080, 1, 16384);
+        ctl.reg(resetSetlist); ctl.reg(actualBarIn); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes);
+        ctl.reg(autoHeader); ctl.reg(tremoloOn); ctl.reg(hardCut); ctl.reg(headerMin); ctl.reg(headerMax);
+        ctl.reg(viewW); ctl.reg(viewH);
+        // the transport follows Forms Box's beat (off: the transport runs on its own)
+        driveTransport.set("Drive Transport", false);
+        ctl.reg(driveTransport);
+        postCtl.setup(ctl);
+        soundCtl.setup(ctl, ofToDataPath("Presets/ESPECTRES/6--ESPECTRES_2027_4/samples/KICKS", true));
+
+        // ---- legacy outputs (what the 2027_4 patch read: published only in old patches, or by hand)
+        pitchBend.set("Pitch Bend", 0, -48, 48);
+        fade.set("Fade", 1, 0, 1);
+        seqMinutes.set("Seq Minutes", 0, 0, 600);
+        speedOut.set("Speed Out", 1, -24, 24);
+        autoPng.set("Auto", true);
+        sequenceOut.set("Sequence Out", true);
+        restartSetlist.set("Restart Setlist");
+        phLock.set("phLock", 0, 0, 1);
+        phOff.set("phOff", 0, 0, 1);
+        actualBarOut.set("actualBar", 0, 0, 64);
+        opacity.set("Opacity", 1, 0, 1);
+        inHeader.set("In Header", "");
+        scheduleOut.set("Schedule", nullptr);
+        actualBPM.set("actualBPM", 120, 1, 999);
+        actualBars.set("actualBars", 8, 0, 64);
+        actualNoteGrid.set("actualNoteGrid", 100, 0, 999);
+        actualRoot.set("actualRoot", 0, 0, 64);
+        actualScale.set("actualScale", {0}, {0}, {48});
+        actualSnapshot.set("actualSnapshot", -1, -1, 255);
+        actualTrans.set("actualTrans", 0, -48, 48);
+        sceneName.set("Scene Name", "");
+        // What the 1920 Director output directly: the scene root and the Director slot of the scene the setlist is on
+        sceneRoot.set("Root", 24, 0, 127);
+        setlistSnapshot.set("Setlist Snapshot", -1, -1, 255);
+        ctl.regOutput(pitchBend); ctl.regOutput(fade); ctl.regOutput(seqMinutes); ctl.regOutput(speedOut);
+        ctl.regOutput(autoPng); ctl.regOutput(sequenceOut); ctl.regOutput(restartSetlist); ctl.regOutput(phLock);
+        ctl.regOutput(phOff); ctl.regOutput(actualBarOut); ctl.regOutput(opacity); ctl.regOutput(inHeader);
+        ctl.regOutput(scheduleOut); ctl.regOutput(actualBPM); ctl.regOutput(actualBars); ctl.regOutput(actualNoteGrid);
+        ctl.regOutput(actualRoot); ctl.regOutput(actualScale); ctl.regOutput(actualSnapshot); ctl.regOutput(actualTrans);
+        ctl.regOutput(sceneName); ctl.regOutput(sceneRoot); ctl.regOutput(setlistSnapshot);
+        // The scene's performance settings (what Macro_8 output), smoothed like the patch's Smoothers
+        for(auto& p : forms::perfParams()){
+            if(!p.output) continue;
+            auto o = std::make_unique<PerfOut>();
+            o->p = &p;
+            if(p.type == 'f'){ o->f.set(p.key, p.def.get<float>(), p.min, p.max); ctl.regOutput(o->f); }
+            else if(p.type == 'i'){ o->i.set(p.key, p.def.get<int>(), (int)p.min, (int)p.max); ctl.regOutput(o->i); }
+            else { o->v.set(p.key, p.def.get<std::vector<float>>(), {p.min}, {p.max}); ctl.regOutput(o->v); }
+            perfOuts.push_back(std::move(o));
+        }
+        // the old node's parameters, in its order (a patch without "formsPublished" gets them back)
+        legacyKeys.clear();
+        for(auto* p : std::vector<ofAbstractParameter*>{&resetSetlist, &actualBarIn, &analogMode, &bpmAdd, &maxMinutes,
+                &autoHeader, &tremoloOn, &hardCut, &headerMin, &headerMax, &viewW, &viewH,
+                &pitchBend, &fade, &seqMinutes, &speedOut, &autoPng, &sequenceOut, &restartSetlist, &phLock, &phOff,
+                &actualBarOut, &opacity, &inHeader, &scheduleOut, &actualBPM, &actualBars, &actualNoteGrid,
+                &actualRoot, &actualScale, &actualSnapshot, &actualTrans, &sceneName, &sceneRoot, &setlistSnapshot})
+            legacyKeys.push_back(p->getEscapedName());
+        for(auto& o : perfOuts) legacyKeys.push_back(o->p->type == 'f' ? o->f.getEscapedName() : o->p->type == 'i' ? o->i.getEscapedName() : o->v.getEscapedName());
+        // a new node: the few that are worth modulating
+        for(auto* p : std::vector<ofAbstractParameter*>{&soundCtl.volume, &postCtl.hue, &postCtl.levelMax, &soundCtl.kickOn})
+            ctl.publish(p->getEscapedName());
+
+        addInspectorParameter(rendererFolder.set("Renderer", "/Users/santiagovilanova/PM Dropbox/PLAYMODES_STUDIO/ESPECTRES/ESPECTRES_2027"));
+        addInspectorParameter(sendPort.set("Send Port", 12446, 1, 65535));
+        addInspectorParameter(receivePort.set("Receive Port", 11611, 1, 65535));
+        addInspectorParameter(workers.set("Workers", 0, 0, 3));   // extra renderers for layers 2..4 and previews, on Send Port + 1 ..
+        addInspectorParameter(processingApp.set("Processing", "/Applications/Processing.app/Contents/MacOS/Processing"));
+        addInspectorParameter(maxPending.set("Max Pending", 2, 1, 16));
+        // Size of the rendered images (any size; also in the Engine tab)
+        addInspectorParameter(imageWidth.set("Image Width", 1920, 16, 16384));
+        addInspectorParameter(imageHeight.set("Image Height", 1080, 16, 16384));
+        addInspectorParameter(prime.set("Prime", 2, 0, 8));
+        // a new image replaces the one under the header as soon as it is ready (instead of
+        // scrolling in from the right edge); off = as before
+        addInspectorParameter(immediateReplace.set("Immediate Replace", false));
+        addInspectorParameter(pitchclassFolder.set("Pitchclass", "/Users/santiagovilanova/Documents/OF/of_playmodes/openFrameworks/apps/Playmodes/OceanodeScroller/bin/data/Supercollider/Pitchclass"));
+        listeners.push(pitchclassFolder.newListener([this](string&){ reload(); }));
+        addInspectorParameter(builtInPlayer.set("Built-in Player", true));
+        addInspectorParameter(saveFrame.set("Save Frame"));
+        listeners.push(saveFrame.newListener([this](){ saveFramePending = true; }));
+        clock.noise2 = [](float x, float seed){ return ofNoise(x, seed); };
+        head.noise2 = [](float x, float seed){ return ofNoise(x, seed); };
+        listeners.push(newPng.newListener([this](){ clock.newPng(ofGetElapsedTimef()); }));
+
+        listeners.push(go.newListener([this](){ request(false); }));
+        listeners.push(maxPending.newListener([this](int& n){ engine.maxPending = n; }));
+        listeners.push(imageWidth.newListener([this](int& n){ engine.width = n; }));
+        listeners.push(imageHeight.newListener([this](int& n){ engine.height = n; }));
+        listeners.push(resetSetlist.newListener([this](){ engine.resetSetlist(); }));
+        listeners.push(useSetlist.newListener([this](bool& b){ engine.useSetlist = b; }));
+        listeners.push(sceneIndex.newListener([this](int& i){ pickManualScene(i); }));
+        listeners.push(rendererFolder.newListener([this](string&){ reload(); }));
+        listeners.push(sendPort.newListener([this](int&){ setupOsc(); }));
+        listeners.push(receivePort.newListener([this](int&){ setupOsc(); }));
+        // setting Workers starts that many extra renderers (0 stops them); a patch saved with
+        // workers starts them when it loads (on the first update, once the folder is known)
+        listeners.push(workers.newListener([this](int& n){ workersPending = true; }));
+
+        editor.engine = &engine;
+        editor.exportPanorama = [this](){ return exportPanorama(); };
+        editor.lookPng = [this](const std::string& png){ return lookPng(png); };
+        editor.sendRequest = [this](const std::string& p){ send(p); };
+        pool.send = [this](int port, const std::string& path){ sendWorker(port, path); };
+        pool.note = [this](const std::string& s){ engine.note(s); };
+        editor.startWorkers = [this](){ startWorkers(); };
+        editor.getWorkers = [this](){ return workers.get(); };
+        editor.setWorkers = [this](int n){ workers = n; };
+        editor.stopWorkers = [this](){ stopWorkers(); };
+        editor.pool = &pool;
+        editor.kickLevel = &kickLevel;
+        editor.playScene = [this](const std::string& name){
+            auto it = std::find(sceneNames.begin(), sceneNames.end(), name);
+            if(it == sceneNames.end()) return;
+            useSetlist = false;
+            useSetlistLocal = false;
+            sceneIndex = (int)(it - sceneNames.begin());
+        };
+        editor.requestNext = [this](bool force){ request(force); };
+        editor.renderScene = [this](const std::string& name){ send(engine.makeRequest(true, name)); };
+        editor.sendPreviews = [this](const std::string& scene, const std::vector<std::pair<std::string, forms::json>>& variants){
+            for(auto& path : engine.makePreviews(scene, variants)) send(path);
+        };
+        editor.makeThumbnails = [this](){ ofxOscMessage m; m.setAddress("/thumbnails"); sender.sendMessage(m, false); engine.note("thumbnails requested"); };
+        editor.reload = [this](){ reload(); };
+        editor.newSession = [this](){ engine.newSession(); primePending = true; };
+        editor.setImageSize = [this](int w, int h){ imageWidth = w; imageHeight = h; };
+        editor.rendererAnswering = [this](){ return rendererSeen || pool.aliveCount() > 0; };
+        editor.useSetlist = &useSetlistLocal;
+        editor.playerOn = [this](){ return builtInPlayer.get(); };
+        // the view: the final image (every layer, post-processed), else layer 1
+        editor.playTexture = [this]() -> const ofTexture* { return output.get() ? output.get() : scroller.fbo.isAllocated() ? &scroller.fbo.getTexture() : nullptr; };
+        editor.gridInfo = [this](){
+            forms::Editor::GridInfo g;
+            auto& h = engine.schedule->layers[0].header;
+            if(!h) return g;
+            g.valid = true;
+            auto si = engine.scenes.find(h->scene);
+            g.root = si != engine.scenes.end() ? si->second.root : 24;
+            g.notegrid = h->notegrid;
+            g.imageH = imageHeight;
+            auto hv = engine.headerValues(head.actualBar);
+            g.trans = hv.valid ? hv.trans : 0;
+            g.scale = hv.valid ? hv.scale : h->scaleNotes;
+            g.chordRoot = (int)rootOut.get();
+            g.width = viewW;
+            for(auto& sp : scroller.lastSpans) g.spans.push_back({0, sp.x, (float)viewW, sp.bars});
+            for(int i = 0; i < 3; i++) for(auto& d : rings[i].lastDrawn) g.spans.push_back({i + 1, d.x, (float)viewW, std::max(1, (int)std::lround(d.len / 4))});
+            return g;
+        };
+        editor.headerNormalized = [this](){ return viewW > 0 ? head.headerPos / (float)viewW : 0.0f; };
+        editor.setHeaderNormalized = [this](float x){ header = ofClamp(x, 0, 1); };
+        editor.drawPlayControls = [this](){ drawPlayControls(); };
+        editor.drawPostTab = [this](){ postCtl.draw(ctl, post); };
+        editor.drawSoundTab = [this](){ drawSoundTab(); };
+        editor.drawNodeTab = [this](){ ctl.drawList(); };
+        engine.laneSceneAt = [this](int bar, bool& cut){ return laneScene(bar, cut); };
+        lane.onRowPlay = [this](const std::string& name){ if(editor.playScene) editor.playScene(name); };
+        lane.drawPanel = [this](){ drawLanePanel(); };
+
+        setupOsc();
+        reload();
+        engine.newSession();
+        primePending = true;
+    }
+
+    // ---- presets: the window's settings and what is published
+    void presetSave(ofJson& j) override {
+        ctl.save(j);
+        lane.save(j);
+        j["formsSceneBank"] = engine.currentBank;
+    }
+    void loadBeforeConnections(ofJson& j) override {
+        bool legacy = !j.contains("formsPublished");
+        ctl.loadPublished(j, legacyKeys);
+        lane.load(j);   // rows before the timeline binds the lane
+        if(j.contains("formsSceneBank") && j["formsSceneBank"].is_string()) engine.currentBank = j["formsSceneBank"].get<std::string>();
+        // an old patch post-processes and sonifies with its own nodes: Output stays the plain composite
+        if(legacy) postCtl.enabled = false;
+    }
+    void presetRecallAfterSettingParameters(ofJson& j) override {
+        ctl.loadValues(j);
+        postCtl.migrate(j);   // one blur / trail setting for all layers (before 2026-11-06 evening)
+    }
+
+    void presetHasLoaded() override {
+        reload();
+        engine.useSetlist = useSetlist;
+        pickManualScene(sceneIndex);
+    }
+
+    void update(ofEventArgs&) override {
+        // OSC replies from the renderer
+        while(receiver.hasWaitingMessages()){
+            ofxOscMessage m;
+            receiver.getNextMessage(m);
+            if((m.getAddress() == "/ready" && m.getNumArgs() >= 2) || (m.getAddress() == "/error" && m.getNumArgs() >= 1)){
+                std::string aid = m.getArgAsString(m.getAddress() == "/ready" ? 1 : 0);
+                if(pool.owns(aid)) pool.answered(aid);
+                else rendererSeen = true;   // the main renderer answered
+            }
+            if(m.getAddress() == "/worker" && m.getNumArgs() >= 1){
+                pool.hello(m.getArgAsInt(0), m.getNumArgs() >= 2 ? m.getArgAsString(1) : std::string());
+                continue;
+            }
+            if(m.getAddress() == "/ready" && m.getNumArgs() >= 4){
+                engine.onReady(m.getArgAsString(1), m.getArgAsString(2), m.getArgAsString(3));
+            }else if(m.getAddress() == "/error" && m.getNumArgs() >= 2){
+                engine.onError(m.getArgAsString(0), m.getArgAsString(1));
+            }else if(m.getAddress() == "/thumbnails"){
+                rendererSeen = true;
+                engine.note("thumbnails done (" + ofToString(m.getNumArgs() ? m.getArgAsInt(0) : 0) + ")");
+                editor.thumbs.clear();
+                reload(); // methods may have changed
+            }else if(m.getAddress() == "/methodList"){
+                engine.note("renderer started");
+                rendererSeen = true;
+                reload(); // it rewrote generators.json (canvas size, scales)
+            }
+        }
+        if(workersPending){
+            workersPending = false;
+            if(workers > 0) startWorkers(); else stopWorkers();
+        }
+        pool.configure(sendPort + 1, workers);
+        engine.workerCapacity = pool.capacity();
+        for(auto& [id, p] : pool.expire()) sendMain(p);   // no worker left for them: the main renderer
+        if(primePending){
+            primePending = false;
+            for(int i = 0; i < prime; i++) request(true);
+        }
+
+        engine.now = ofGetElapsedTimef();
+        laneMemo.clear();                 // the lane's answers, once per frame
+        lane.syncRows(sceneNames);
+        ctl.update();
+        if(builtInPlayer) runPlayer();
+        driveTransportStep();
+
+        auto v = engine.headerValues(builtInPlayer ? head.actualBar : actualBarIn.get());
+        if(v.valid){
+            if(actualBPM != v.bpm) actualBPM = v.bpm;
+            if(actualBars != v.bars) actualBars = v.bars;
+            if(actualNoteGrid != v.notegrid) actualNoteGrid = v.notegrid;
+            if(actualRoot != v.root) actualRoot = v.root;
+            if(actualTrans != v.trans) actualTrans = v.trans;
+            if(actualSnapshot != v.snapshot) actualSnapshot = v.snapshot;
+            if(actualScale.get() != v.scale) actualScale = v.scale;
+            auto& h = engine.schedule->layers[0].header;
+            if(h && sceneName.get() != h->scene) sceneName = h->scene;
+            if(h){
+                auto it = engine.scenes.find(h->scene);
+                if(it != engine.scenes.end() && sceneRoot != it->second.root) sceneRoot = it->second.root;
+            }
+            int root = sceneRoot.get();
+            float r = (float)forms::chordRootMidi(root, v.root, v.trans, v.scale);
+            if(rootOut.get() != r) rootOut = r;
+            std::vector<float> pcs;
+            for(int pc : forms::scaleGrid(root, v.trans, v.scale)) pcs.push_back((float)pc);
+            if(scaleOut.get() != pcs) scaleOut = pcs;
+        }
+        if(const forms::Scene* next = engine.currentScene()){
+            if(setlistSnapshot != next->snapshot) setlistSnapshot = next->snapshot;
+        }
+        scheduleOut = engine.schedule.get(); // re-set every frame, so a late connection still gets it
+        scroller.immediate = immediateReplace;
+        for(auto& r : rings) r.immediate = immediateReplace;
+
+        auto& h = engine.schedule->layers[0].header;
+        if(h) editor.setHeaderImage(*h);
+        if(h) updatePerformanceOutputs(h->perf);
+        // the window's "Use setlist" checkbox and the Setlist parameter are the same setting
+        if(useSetlistLocal != useSetlist.get()){
+            if(useSetlistLocal != lastUseSetlist) useSetlist = useSetlistLocal;
+            else useSetlistLocal = useSetlist;
+        }
+        lastUseSetlist = useSetlistLocal;
+        editor.imageW = imageWidth;
+        editor.imageH = imageHeight;
+    }
+
+    void draw(ofEventArgs&) override {
+        if(showWindow.get()) drawWindow();
+    }
+
+protected:   // (Forms GL Box derives from Forms Box)
+    struct PerfOut {
+        const forms::PerfParam* p = nullptr;
+        ofParameter<float> f;
+        ofParameter<int> i;
+        ofParameter<vector<float>> v;
+        float smoothed = 0;
+        bool started = false;
+    };
+    std::vector<std::unique_ptr<PerfOut>> perfOuts;
+
+    void updatePerformanceOutputs(const forms::json& perf){
+        for(auto& o : perfOuts){
+            const auto& p = *o->p;
+            if(p.type == 'v'){
+                auto v = forms::perfV(perf, p.key, p.def.get<std::vector<float>>());
+                if(o->v.get() != v) o->v = v;
+                continue;
+            }
+            float target = forms::perfF(perf, p.key, p.def.get<float>());
+            o->smoothed = o->started ? p.smooth * o->smoothed + (1 - p.smooth) * target : target;
+            o->started = true;
+            if(p.type == 'f'){ if(o->f.get() != o->smoothed) o->f = o->smoothed; }
+            else { int iv = (int)std::lround(target); if(o->i.get() != iv) o->i = iv; }
+        }
+    }
+
+    // ---------------------------------------------------------------- built-in player
+
+    // The clock, the header and the scroller, in that order, like the Forms Transport → Forms
+    // Header → Layer Scroller chain of the older patches
+    void runPlayer(){
+        auto* L = &engine.schedule->layers[0];
+        float now = ofGetElapsedTimef(), dt = ofGetLastFrameTime();
+        // transport: values of the image under the header
+        if(L->header){
+            clock.bars = L->header->bars;
+            {   // the scene's BPM as it is now (the Live tab edits it), else the image's
+                auto si = engine.scenes.find(L->header->scene);
+                clock.targetBpm = si != engine.scenes.end() ? si->second.bpm : L->header->bpm;
+            }
+            // the scene's performance settings as they are now (the Live tab edits them), else the image's
+            const forms::json livePerfNow = livePerf(L->header);
+            clock.perf = livePerfNow;
+            head.bars = L->header->bars;
+            head.perf = livePerfNow;
+        }
+        clock.speed = speed;
+        clock.pause = pause != 0;
+        clock.analogMode = analogMode;
+        clock.bpmAdd = bpmAdd;
+        clock.sequence = sequence;
+        clock.maxMinutes = maxMinutes;
+        clock.seqFade = seqFade;
+        int g = clock.goCount, r = clock.restartCount;
+        clock.step(now, dt);
+        int req = clock.takeSequenceRequest();
+        if(req >= 0 && sequence != (req == 1)) sequence = req == 1;
+        phaseOut = clock.phase;   // every frame, like a Phasor
+        bpmOut = clock.bpm;       // every frame: BPM Control re-sends it
+        pitchBend = clock.pitchBend;
+        fade = clock.fade;
+        seqMinutes = clock.seqMinutes;
+        speedOut = clock.speedOut;
+        if(autoPng != clock.autoPng) autoPng = clock.autoPng;
+        if(sequenceOut != sequence.get()) sequenceOut = sequence.get();
+        for(int i = r; i < clock.restartCount; i++) restartSetlist.trigger();
+        for(int i = g; i < clock.goCount; i++) goTick();
+
+        // header
+        head.width = viewW;
+        head.phase = clock.phase;
+        head.bpm = clock.bpm;
+        head.header = header;
+        head.headerPlus = headerPlus;
+        head.smooth = smooth;
+        head.autoHeader = autoHeader;
+        head.tremoloOn = tremoloOn;
+        head.headerMin = headerMin;
+        head.headerMax = headerMax;
+        head.step(now, dt);
+        headerPosOut = head.headerPos;
+        headerNorm = head.headerNorm;
+        phLock = head.phLock;
+        phOff = head.phOff;
+        if(actualBarOut != head.actualBar) actualBarOut = head.actualBar;
+        opacity = head.opacity;
+
+        // scroller (layer 1, the clock's timing). It also counts the beat under the header, which
+        // the other layers follow.
+        scroller.keepAlpha = true;
+        // each image's opacity: its scene's layer setting now (edits show at once), else its own
+        auto opacity = [this](const forms::Image& im) -> float {
+            auto it = engine.scenes.find(im.scene);
+            int li = std::max(0, im.layer - 1);
+            if(it != engine.scenes.end() && li < (int)it->second.layers.size()) return it->second.layers[li].gain;
+            return im.gain;
+        };
+        scroller.opacityOf = opacity;
+        for(auto& r : rings){
+            r.opacityOf = opacity;
+            r.hardCutIn = [this](double a, double b){ return hardCutIn(a, b); };
+            r.sceneAt = [this](double beat){ return engine.sceneAtBeat(beat); };
+        }
+        scroller.defaultBars = std::max(1, clock.bars);
+        scroller.update(L, clock.phase, head.headerPos, viewW, viewH);
+        engine.schedule->headerBeat = scroller.headerBeat;
+        engine.hardCutManual = hardCut;
+        // layer 1's image reached the header: line the plan up with where it really started
+        if(L->header && L->header != lastSyncedHeader){
+            lastSyncedHeader = L->header;
+            engine.syncLayer1(L->header, scroller.headerStart);
+        }
+        if(inHeader.get() != scroller.inHeader) inHeader = scroller.inHeader;
+
+        // Phase 3: the extra layers (their scenes follow layer 1's plan, bar by bar)
+        send(engine.requestLayers());
+        const forms::Scene* cs = engine.sceneAtHeader();
+        int nLayers = 1;
+        for(int i = 1; i < 4; i++){
+            auto& Li = engine.schedule->layers[i];
+            if((cs && i < (int)cs->layers.size()) || !Li.slots.empty() || !Li.ready.empty()) nLayers = i + 1;
+        }
+        for(int i = 1; i < nLayers && i < 4; i++){
+            auto& ring = rings[i - 1];
+            ring.active = cs && i < (int)cs->layers.size();
+            ring.update(engine.schedule->layer(i), scroller.headerBeat, head.headerPos, viewW, viewH);
+        }
+        logBarLine(nLayers);
+        logTimeline(nLayers);
+        // Forms GL Box's audition: its page alone on the stage (drawn into layer 1's buffer), and the
+        // image the sound reads, for this frame; the playback underneath goes on
+        int stageLayers = nLayers;
+        std::shared_ptr<forms::Image> keepHeader;
+        bool audition = auditionStage();
+        if(audition){ stageLayers = 1; keepHeader = engine.schedule->layers[0].header; engine.schedule->layers[0].header = auditionImage(); }
+        layerEffects(stageLayers);   // before the composite and the sound: both use the processed layers
+        composite(stageLayers);
+        runSound(stageLayers);
+        if(audition) engine.schedule->layers[0].header = keepHeader;
+
+        if(saveFramePending){
+            saveFramePending = false;
+            saveComposite(ofToDataPath("FormsBox_frame", true));
+            scroller.saveFrame(ofToDataPath("FormsBox_frame_layer1", true), clock.phase);
+            saveOutputPending = true;
+        }
+        // the final image: post-processing (formsPost.h)
+        postCtl.apply(post);
+        output = compositeFbo.isAllocated() ? const_cast<ofTexture*>(post.process(compositeFbo.getTexture(), head.headerPos, head.opacity, ofGetLastFrameTime())) : nullptr;
+        if(saveOutputPending && output){   // and the final image as it is seen (Output)
+            saveOutputPending = false;
+            ofPixels px;
+            if(output == &compositeFbo.getTexture()) compositeFbo.readToPixels(px); else post.fbo.readToPixels(px);
+            px.setNumChannels(3);
+            ofSaveImage(px, ofToDataPath("FormsBox_frame_output.png", true));
+        }
+    }
+
+    // The first hard cut (layer 1's plan, or predicted from the setlist) at a beat in (a, b], or -1
+    // (the layer rings never repeat an image across one)
+    double hardCutIn(double a, double b) const { return engine.hardCutIn(a, b); }
+
+    // ---------------------------------------------------------------- effects before the sound
+
+    forms::LayerFx layerFx;
+    // H blur, V blur and the trail on every layer's buffer; the trail's length is in beats, so
+    // each layer gets its own pixels (its images scroll at their own speed)
+    // each layer its own settings (Post-processing tab, L1..L4)
+    forms::LayerFxSettings layerFxSettings(int l, double lenBeats) const {
+        forms::LayerFxSettings fx;
+        if(!postCtl.anyFx(l)) return fx;
+        fx.hBlur = postCtl.hBlur[l]; fx.vBlur = postCtl.vBlur[l]; fx.trailLevel = postCtl.trailLevel[l];
+        fx.trailPx = postCtl.trailBeats[l] * viewW / std::max(1.0, lenBeats);
+        return fx;
+    }
+    void layerEffects(int nLayers){
+        layerFx.process(scroller.fbo, layerFxSettings(0, scroller.headerLen));
+        for(int i = 1; i < nLayers && i < 4; i++){
+            auto& r = rings[i - 1];
+            double len = r.current ? 4.0 * std::max(1, r.current->bars) : scroller.headerLen;
+            layerFx.process(r.fbo, layerFxSettings(i, len));
+        }
+    }
+
+    // ---------------------------------------------------------------- transport and timeline
+
+    forms::SceneLane lane;
+    std::map<int, std::pair<std::string, bool>> laneMemo;
+    ofParameter<bool> driveTransport;
+#ifdef FORMS_HAS_TRANSPORT
+    std::weak_ptr<ofxOceanodeTransport> claimed;
+#endif
+    forms::TransportFeed feed;
+    std::string transportStatus;
+
+#ifdef OFXOCEANODE_HAS_TIMELINE_INSTRUMENT
+public:
+    // The scene lane: a chord bank for the timeline's Chords lane, a row per scene
+    bool getTimelineInstrument(ofxOceanodeTimelineInstrument& out) override {
+        if(!lane.handle) return false;
+        lane.syncRows(sceneNames);
+        lane.instrument(out, std::set<std::string>(sceneNames.begin(), sceneNames.end()));
+        return true;
+    }
+protected:   // (Forms GL Box derives from Forms Box)
+#endif
+
+    bool drivingTransport() const {
+#ifdef FORMS_HAS_TRANSPORT
+        auto r = claimed.lock();
+        return r && r->getExternalClockOwner() == this;
+#else
+        return false;
+#endif
+    }
+
+    // The lane's scene for layer 1's image starting at `bar`: read ahead from the timeline while
+    // Forms Box drives the transport (the timeline's beats are then Forms Box's), else the scene
+    // the lane plays now
+    std::string laneScene(int bar, bool& cut){
+        auto it = laneMemo.find(bar);
+        if(it == laneMemo.end()){
+            std::string n = drivingTransport() ? lane.at(this, bar * 4.0 + 1e-3) : lane.live();
+            it = laneMemo.emplace(bar, std::make_pair(n, !n.empty() && lane.hardCut.count(n) > 0)).first;
+        }
+        cut = it->second.second;
+        return it->second.first;
+    }
+
+    // Drive Transport: Forms Box is the transport's external clock (the hook MIDI clock uses): every
+    // frame its beat under the header (beat repeats left out: the transport never runs back), its
+    // tempo as it really moves, and whether it plays. A header jump is a seek.
+    void driveTransportStep(){
+#ifdef FORMS_HAS_TRANSPORT
+        auto* c = getHostContainer();
+        auto root = c ? c->getRootTransport() : nullptr;
+        if(!(driveTransport && builtInPlayer && root)){ releaseTransport(); transportStatus = driveTransport ? "no transport" : ""; return; }
+        if(claimed.lock() != root || root->getExternalClockOwner() != this){
+            if(root->hasExternalClock() && root->getExternalClockOwner() != this && !claimed.lock()){
+                transportStatus = "another clock drives the transport (MIDI clock?)";
+            }
+            root->claimExternalClock(this);
+            claimed = root;
+            feed.restart();
+        }
+        feed.step(scroller.headerBeat, scroller.headerLen, head.repeatPx, viewW, clock.bpm, pause != 0, ofGetLastFrameTime());
+        ofxOceanodeTransport::ExternalClockUpdate u;
+        u.beat = feed.beat;
+        u.steadyTimeUs = ofxOceanodeTransport::steadyNowUs();
+        u.bpm = (float)feed.bpm;
+        u.playing = feed.playing;
+        u.jump = feed.jump;
+        u.maxLeadBeats = 0.25;
+        root->updateExternalClock(this, u);
+        transportStatus = "driving: beat " + ofToString(feed.beat, 1) + ", " + ofToString(feed.bpm, 1) + " BPM";
+#endif
+    }
+    void releaseTransport(){
+#ifdef FORMS_HAS_TRANSPORT
+        if(auto r = claimed.lock()) r->releaseExternalClock(this);
+        claimed.reset();
+#endif
+    }
+
+    // The lane's panel in the timeline (its "Scenes" tab)
+    void drawLanePanel(){
+        ImGui::TextWrapped("A row per Forms Box scene: a block plays that scene. Where the lane has no block, the setlist (or the manual scene) plays.");
+        ImGui::TextWrapped(drivingTransport() ? "Forms Box drives the transport: each image gets the scene of the block at the bar it starts (read ahead)."
+                                              : "Forms Box does not drive the transport: the scene the lane plays now is used for the next images. Turn on Drive Transport (Play tab) to place scenes exactly.");
+        if(!lane.hardCut.empty()){
+            std::string cuts; for(auto& s : lane.hardCut) cuts += (cuts.empty() ? "" : ", ") + s;
+            ImGui::TextDisabled("Hard cut into: %s", cuts.c_str());
+        }
+        ImGui::TextDisabled("Right-click a row: hard cut into that scene, or play it now.");
+    }
+
+    // The Play tab's controls (the window's widgets write these parameters)
+    void drawPlayControls(){
+        float z = ofxOceanodeShared::getZoomLevel();
+        if(!builtInPlayer){
+            ImGui::TextDisabled("Built-in Player is off (inspector): the separate Forms Transport, Forms Header and Layer Scroller nodes play.");
+            return;
+        }
+        if(!ImGui::BeginTable("##play", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) return;
+        ImGui::TableNextColumn();
+        ImGui::SeparatorText("Transport");
+        ImGui::PushItemWidth(-90 * z);
+        forms::paramCheck("Pause", pause); ctl.nodeMenu(pause.getEscapedName());
+        ImGui::SameLine();
+        forms::paramCheck("Sequence", sequence); ctl.nodeMenu(sequence.getEscapedName());
+        ImGui::SameLine();
+        ctl.check(analogMode, "Analog");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Analog Mode");
+        ImGui::SameLine();
+        if(ImGui::Button("New PNG")) newPng.trigger();
+        ctl.check(driveTransport, "Drive transport");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The transport (timelines, synced Phasors, box synths) follows Forms Box's beat under the header,\nits tempo and Pause. Off: the transport runs on its own and Forms Box ignores it.");
+        if(!transportStatus.empty()){ ImGui::SameLine(); ImGui::TextDisabled("%s", transportStatus.c_str()); }
+#ifdef FORMS_HAS_TIMELINE_MENU
+        if(ImGui::Button("Scene lane to timeline")){
+            lane.syncRows(sceneNames);
+            if(!ctl.timeline.addChordTrack(*lane.handle, "Scenes")) engine.note("no timeline to put the scene lane on");
+        }
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("A timeline track with a Scenes lane: a row per scene, draw blocks to choose what plays when.\nRight-click a row for its hard cut. With Drive transport on, scenes start exactly at their blocks.");
+        ImGui::SameLine();
+        ImGui::TextDisabled(lane.onTimeline(this) ? (drivingTransport() ? "lane: read ahead" : "lane: live (drive the transport to place it exactly)") : "no scene lane");
+#endif
+        forms::paramSlider("Speed", speed, "%.2f"); ctl.nodeMenu(speed.getEscapedName());
+        ctl.slider(bpmAdd, "%.2f", "BPM Add");
+        ctl.slider(maxMinutes, "%.1f", "Max Minutes");
+        forms::paramSlider("Seq Fade", seqFade, "%.2f"); ctl.nodeMenu(seqFade.getEscapedName());
+        forms::meter("Phase", phaseOut, 0, 1, "%.3f");
+        forms::meter("Session", seqMinutes, 0, std::max(0.1f, maxMinutes.get()), "%.1f min");
+        forms::meter("Fade", fade, 0, 1, "%.2f");
+        ImGui::Text("BPM %.1f   pitch bend %+.2f   %s", bpmOut.get(), pitchBend.get(), autoPng.get() ? "auto images on" : "auto images off");
+        ImGui::PopItemWidth();
+
+        ImGui::TableNextColumn();
+        ImGui::SeparatorText("Header");
+        ImGui::PushItemWidth(-90 * z);
+        forms::paramSlider("Header", header, "%.3f"); ctl.nodeMenu(header.getEscapedName());
+        forms::paramSlider("Header+", headerPlus, "%.3f"); ctl.nodeMenu(headerPlus.getEscapedName());
+        forms::paramSlider("Smooth", smooth, "%.4f"); ctl.nodeMenu(smooth.getEscapedName());
+        ctl.check(tremoloOn, "Tremolo");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The scenes' opacity tremolo (a wobble of the image's opacity). Off: the opacity only follows\nthe beat-repeat fade and the strobe gate.");
+        ctl.check(autoHeader, "Auto Header");
+        if(autoHeader){
+            ctl.slider(headerMin, "%.3f", "Header Min");
+            ctl.slider(headerMax, "%.3f", "Header Max");
+        }
+        forms::meter("phLock", phLock, 0, 1, "%.3f");
+        forms::meter("Opacity", opacity, 0, 1, "%.2f");
+        ImGui::Text("bar %d   header at %.0f px", actualBarOut.get(), headerPosOut.get());
+        ImGui::PopItemWidth();
+
+        ImGui::TableNextColumn();
+        ImGui::SeparatorText("Scroller");
+        ImGui::Text("%d x %d", viewW.get(), viewH.get());
+        std::string f = inHeader.get();
+        auto slash = f.find_last_of('/');
+        ImGui::TextDisabled("in header: %s", slash == std::string::npos ? f.c_str() : f.substr(slash + 1).c_str());
+        if(ImGui::Button("Save Frame")) saveFramePending = true;
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Saves the output as data/FormsBox_frame.png (and which images were showing)");
+        ImGui::EndTable();
+    }
+
+    forms::Transport clock;
+    forms::Header head;
+    forms::ScrollerCore scroller;
+    forms::LayerRing rings[3];               // layers 2..4
+    ofFbo compositeFbo;
+    int lastLoggedBar = -1;
+    std::shared_ptr<forms::Image> lastSyncedHeader;
+
+    // Reads `rows` pixels of column x of an FBO, from row y0 (row 0 = top), as RGBA bytes. The
+    // pixel-pack state is set and restored around it: other nodes may leave a PBO bound (which
+    // turns our pointer into an offset in GPU memory) or other row settings.
+    static bool readColumn(ofFbo& f, int x, int y0, int rows, std::vector<unsigned char>& px){
+        if(!f.isAllocated() || rows < 1) return false;
+        int w = (int)f.getWidth(), h = (int)f.getHeight();
+        x = ofClamp(x, 0, w - 1);
+        y0 = ofClamp(y0, 0, h - 1);
+        rows = std::min(rows, h - y0);
+        px.assign(rows * 4 + 64, 0);
+        GLint prevFb = 0, prevPbo = 0, pAlign = 4, pRow = 0, pSkipR = 0, pSkipP = 0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevFb);
+        glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &prevPbo);
+        glGetIntegerv(GL_PACK_ALIGNMENT, &pAlign);
+        glGetIntegerv(GL_PACK_ROW_LENGTH, &pRow);
+        glGetIntegerv(GL_PACK_SKIP_ROWS, &pSkipR);
+        glGetIntegerv(GL_PACK_SKIP_PIXELS, &pSkipP);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, f.getId());
+        glReadPixels(x, y0, 1, rows, GL_RGBA, GL_UNSIGNED_BYTE, px.data());   // FBO row 0 = the image's top
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, prevFb);
+        glPixelStorei(GL_PACK_ALIGNMENT, pAlign);
+        glPixelStorei(GL_PACK_ROW_LENGTH, pRow);
+        glPixelStorei(GL_PACK_SKIP_ROWS, pSkipR);
+        glPixelStorei(GL_PACK_SKIP_PIXELS, pSkipP);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, prevPbo);
+        return true;
+    }
+
+    // ---------------------------------------------------------------- sonification
+    //
+    // Kick detection (what Macro_4 did: the bottom strip of the header column, mean brightness over
+    // a threshold, times the scene's Kick detect), read from the kick layer (a scene layer marked
+    // "kick"; none: layer 1). Then, while the Audio output is wired to an SC Output, every layer's
+    // header column feeds its bank (formsSound.h). Columns are read only when they are needed.
+    float kickLevel = 0;
+    double lastKickAt = -1e9;
+    int kicksFired = 0;
+    forms::SoundSettings snd;
+    forms::LRBalance lrBal;
+    std::vector<unsigned char> cols[4];
+    struct LayerKey { int root = -1000, notegrid = -1, trans = 0; float q = -1; std::vector<float> scale; std::vector<float> settings; };
+    LayerKey layerKeys[4];
+    forms::PartialLayout layouts[4];
+    int layoutH[4] = {}, layoutGrid[4] = {}, layoutImageH[4] = {};
+    float duckView = 0;
+    std::map<std::string, float> fxSent;
+#ifdef FORMS_HAS_SC
+    forms::SoundFrame frame;
+#endif
+    forms::SoundView soundView;
+    int previewKick = -1;
+
+    float perfOutValue(const std::string& key, float def) const {
+        for(auto& o : perfOuts) if(o->p->key == key) return o->p->type == 'f' ? o->f.get() : o->p->type == 'i' ? (float)o->i.get() : def;
+        return def;
+    }
+    // the scene's live performance settings (edits apply at once), else the image's
+    forms::json livePerf(const std::shared_ptr<forms::Image>& img) const {
+        if(!img) return forms::json::object();
+        auto it = engine.scenes.find(img->scene);
+        if(it != engine.scenes.end() && it->second.performance.is_object() && !it->second.performance.empty()) return forms::completePerformance(it->second.performance);
+        return img->perf;
+    }
+    std::vector<std::string> kickBaseNames() const {
+        std::vector<std::string> n;
+#ifdef FORMS_HAS_SC
+        if(sound) for(auto& k : sound->kicks()) n.push_back(ofFilePath::getFileName(k));
+#endif
+        return n;
+    }
+    // which sample a scene's kick plays: its file name if set, else its number (kickSelect)
+    int kickIndexFor(const forms::json& perf, const std::vector<std::string>& names) const {
+        if(names.empty()) return -1;
+        if(perf.contains("kickSample") && perf["kickSample"].is_string()){
+            std::string want = perf["kickSample"].get<std::string>();
+            for(int i = 0; i < (int)names.size(); i++) if(names[i] == want) return i;
+        }
+        int k = (int)std::lround(forms::perfF(perf, "kickSelect", 11));
+        return ofClamp(k, 0, (int)names.size() - 1);
+    }
+
+    void runSound(int nLayers){
+        soundCtl.apply(snd);
+        float dt = ofGetLastFrameTime();
+        double now = ofGetElapsedTimef();
+        bool engineOn = false;
+#ifdef FORMS_HAS_SC
+        if(sound){
+            sound->setKickFolder(snd.kickFolder);
+            sound->poll();   // a graph waiting for its SynthDefs
+            engineOn = sound->running();
+            soundView.waitingForDefs = sound->waitingForDefs();
+        }
+#endif
+        auto names = kickBaseNames();
+        if(names != editor.kickNames) editor.kickNames = names;
+        bool playing = engineOn && snd.on;
+
+        // the layers' buffers and images
+        ofFbo* fbos[4] = {&scroller.fbo, nullptr, nullptr, nullptr};
+        std::shared_ptr<forms::Image> imgs[4];
+        imgs[0] = engine.schedule->layers[0].header;
+        for(int i = 1; i < nLayers && i < 4; i++){ fbos[i] = &rings[i - 1].fbo; imgs[i] = rings[i - 1].current; }
+        int kl = 0;
+        for(int i = 1; i < nLayers && i < 4; i++) if(imgs[i] && imgs[i]->kick && fbos[i]->isAllocated()){ kl = i; break; }
+        int x = (int)head.headerPos;
+
+        // columns: every playing layer whole, else only the kick strip
+        bool haveCol[4] = {};
+        if(playing){
+            for(int l = 0; l < 4; l++)
+                if(fbos[l] && imgs[l] && snd.layers[l].on && fbos[l]->isAllocated())
+                    haveCol[l] = readColumn(*fbos[l], x, 0, (int)fbos[l]->getHeight(), cols[l]);
+        }
+
+        // ---- kick detection
+        ofFbo* kf = fbos[kl];
+        std::shared_ptr<forms::Image> kimg = imgs[kl];
+        if(!kf || !kf->isAllocated() || !kimg){ kickLevel = 0; if(kickOut.get() != 0) kickOut = 0; }
+        else{
+            int h = (int)kf->getHeight();
+            int strip = std::max(1, std::min(h, (int)std::lround(h * snd.kickStrip)));
+            const unsigned char* px = nullptr;
+            std::vector<unsigned char> sp;
+            if(haveCol[kl]) px = cols[kl].data() + (h - strip) * 4;
+            else if(readColumn(*kf, x, h - strip, strip, sp)) px = sp.data();
+            double sum = 0;
+            if(px) for(int i = 0; i < strip; i++) sum += (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / (3 * 255.0);
+            kickLevel = (float)(sum / strip);
+            bool on = forms::perfF(kimg->perf, "kDetectOn", 1) > 0.5f;
+            int k = (on && kickLevel > snd.kickThreshold) ? 1 : 0;
+            if(k && !kickOut.get() && snd.kickOn && now - lastKickAt >= snd.kickMinGap){
+                lastKickAt = now;
+                kicksFired++;
+#ifdef FORMS_HAS_SC
+                frame.kickCount++;
+#endif
+            }
+            if(kickOut.get() != k) kickOut = k;
+        }
+
+        // ---- the sound frame
+        auto hv = engine.headerValues(head.actualBar);
+        forms::json perf = livePerf(imgs[0]);
+        float bpm = std::max(1.0f, bpmOut.get());
+        float duckDecay = snd.duckBeats * 60.0f / bpm;
+        duckView = std::max(0.0f, 1.0f - (float)(now - lastKickAt) / std::max(0.01f, duckDecay));
+        float imageMul = postCtl.enabled ? postCtl.val.get() * (postCtl.useOpacity ? std::max(0.001f, head.opacity) : 1.0f) : head.opacity;
+        lrBal.step(head.phLock, imgs[0] ? imgs[0]->bars : 8, bpm, dt, perf, snd.lrBalance);
+        for(int l = 0; l < 4; l++){
+            soundView.layerActive[l] = haveCol[l];
+            soundView.layerLevel[l] = 0;
+        }
+#ifdef FORMS_HAS_SC
+        if(playing){
+            float sideChain = forms::perfF(perf, "sideChain", 1);
+            for(int l = 0; l < 4; l++){
+                auto& L = frame.layers[l];
+                L.active = haveCol[l];
+                L.level = snd.layers[l].level;
+                // the reverb send: the scene's reverbAmt (Macro_2 → Macro_3 passed it through) x Reverb x scene x the layer's Reverb
+                L.send = ofClamp(forms::perfF(perf, "reverbAmt", 0.1119f) * soundCtl.reverbMult.get() * snd.layers[l].reverb, 0, 1);
+                if(!haveCol[l]){ L.amps.clear(); continue; }
+                int h = (int)fbos[l]->getHeight();
+                const forms::Image& im0 = *imgs[l];
+                // the partials' layout follows the renderer's rows (column height, note grid, image height)
+                auto& lay = layouts[l];
+                if(lay.rel.empty() || layoutH[l] != h || layoutGrid[l] != im0.notegrid || layoutImageH[l] != (int)imageHeight){
+                    layoutH[l] = h; layoutGrid[l] = im0.notegrid; layoutImageH[l] = imageHeight;
+                    lay = forms::partialLayout(h, im0.notegrid, imageHeight);
+                    L.pitch.clear();   // pitches again
+                }
+                forms::columnAmps(cols[l].data(), h, imageMul, lay, L.amps);
+                float sum = 0; for(float a : L.amps) sum += a;
+                soundView.layerLevel[l] = sum / forms::SOUND_PARTIALS;
+                // the partials' pitches, gains and duck weights: again when the harmony or the settings change
+                const forms::Image& im = *imgs[l];
+                auto sit = engine.scenes.find(im.scene);
+                LayerKey k;
+                k.root = sit != engine.scenes.end() ? sit->second.root : 24;
+                k.notegrid = im.notegrid;
+                k.trans = hv.valid ? hv.trans : 0;
+                k.scale = hv.valid ? hv.scale : im.scaleNotes;
+                k.q = forms::perfF(livePerf(imgs[l]), "scaleQuant", 0);
+                const auto& S = snd;
+                k.settings = {S.layers[l].pan, S.layers[l].spread, S.loudnessBlend, S.spreadLow, S.spreadHigh,
+                              S.duckBelow, S.duckDepth * sideChain, S.duckShape};
+                auto& K = layerKeys[l];
+                if(L.pitch.empty() || k.root != K.root || k.notegrid != K.notegrid || k.trans != K.trans || k.q != K.q || k.scale != K.scale || k.settings != K.settings){
+                    K = k;
+                    L.pitch = forms::partialPitches(k.root, lay, k.trans, k.scale, k.q);
+                    forms::partialGains(L.pitch, l, S, L.gl, L.gr);
+                    forms::SoundSettings ds = S; ds.duckDepth = S.duckDepth * sideChain;
+                    L.duckw = forms::duckWeights(L.pitch, ds);
+                    L.arraysVersion++;
+                }
+            }
+            // the right bank is detuned up (FormsBank512's detune): both banks shifted down by half,
+            // so the pair is centred on the pitch (the macros' notes)
+            frame.bend = clock.pitchBend - snd.detune * 0.5f;
+            frame.detune = snd.detune;
+            frame.bankGain = snd.bankGain;
+            frame.lag = snd.lag;
+            int ki = kickIndexFor(perf, names);
+            if(previewKick >= 0){ ki = previewKick; previewKick = -1; frame.kickCount++; }
+            frame.kickSample = ki;
+            frame.kickRate = std::pow(2.0f, ((hv.valid ? hv.trans : 0) + snd.kickTune) / 12.0f);
+            frame.kickAmp = forms::perfF(perf, "kickVol", 0.16f);
+            frame.kickGain = snd.kickGain;
+            frame.duckDecay = duckDecay;
+            frame.duckCurve = snd.duckCurve;
+            frame.comp = ofClamp(forms::perfF(perf, "Compressor", 0), 0, 1);
+            frame.fxGain = perfOutValue("SpectrumGain", forms::perfF(perf, "SpectrumGain", 2));
+            frame.fade = clock.fade;
+            frame.lgain = lrBal.l;
+            frame.rgain = lrBal.r;
+            frame.volume = snd.volume;
+            frame.limit = snd.limit > 0;
+            auto fx = [&](const char* key, float v){
+                auto it = fxSent.find(key);
+                if(it != fxSent.end() && it->second == v) return;
+                fxSent[key] = v;
+                sound->setFx(key, v);
+            };
+            fx("revtime", soundCtl.revTime);
+            fx("lowdb", soundCtl.lowShelf);
+            fx("shelfdb", soundCtl.highShelf);
+            fx("lpfpitch", soundCtl.lowpass);
+            // the bus compressor (FormsMaster)
+            auto mx = [&](const char* key, float v){
+                std::string k = std::string("m:") + key;
+                auto it = fxSent.find(k);
+                if(it != fxSent.end() && it->second == v) return;
+                fxSent[k] = v;
+                sound->setMaster(key, v);
+            };
+            mx("bcon", soundCtl.compOn ? 1.0f : 0.0f);
+            mx("bcthr", soundCtl.compThr);
+            mx("bcratio", soundCtl.compRatio);
+            mx("bcknee", soundCtl.compKnee);
+            mx("bcatk", soundCtl.compAtk);
+            mx("bcrel", soundCtl.compRel);
+            mx("bcmakeup", soundCtl.compMakeup);
+            mx("bcauto", soundCtl.compAuto ? 1.0f : 0.0f);
+            mx("bcrms", soundCtl.compRms);
+            mx("bchpf", soundCtl.compHpf);
+            mx("bcmix", soundCtl.compMix);
+            soundView.compGr = soundCtl.compOn ? sound->gainReduction() : 0.0f;
+            sound->send(frame);
+        }
+#endif
+        // the tab's view
+        soundView.engineRunning = engineOn;
+#ifdef FORMS_HAS_SC
+        soundView.hasSC = true;
+#endif
+        soundView.kickLevel = kickLevel;
+        soundView.kicksFired = kicksFired;
+        soundView.duck = duckView;
+        soundView.lgain = lrBal.l;
+        soundView.rgain = lrBal.r;
+        soundView.kickNames = names;
+        soundView.kickScene = imgs[0] ? imgs[0]->scene : std::string();
+        int ki = kickIndexFor(perf, names);
+        soundView.kickChosen = ki >= 0 ? names[ki] : std::string();
+    }
+
+    void drawSoundTab(){
+        soundView.previewKick = [this](int i){ previewKick = i; };
+        soundView.setSceneKick = [this](const std::string& name){
+            auto& h = engine.schedule->layers[0].header;
+            if(!h) return;
+            auto it = engine.scenes.find(h->scene);
+            if(it == engine.scenes.end()) return;
+            it->second.performance = forms::completePerformance(it->second.performance);
+            it->second.performance["kickSample"] = name;
+            engine.saveScene(it->second);
+        };
+        soundCtl.draw(ctl, soundView);
+    }
+
+    // Panorama: the last whole cycle of every layer (or the last `beats`) on one beat axis, layer 1's
+    // scale (its image width per image length), composited as live. sessions/<s>/panorama_<a>-<b>.png
+    std::string exportPanorama(bool withLook = true){
+        std::ifstream in(engine.sessionDir() / "timeline.jsonl");
+        if(!in) return "no timeline yet";
+        struct E { int layer; double start, len; std::string png, blend; float gain; };
+        std::vector<E> es;
+        std::string line;
+        while(std::getline(in, line)){
+            try {
+                auto j = forms::json::parse(line);
+                E e{j.value("layer", 1), j.value("startBeat", 0.0), j.value("lengthBeats", 32.0), j.value("png", std::string()), "lighten", 1};
+                e.blend = j.value("blend", std::string("lighten"));
+                e.gain = j.value("gain", 1.0f);
+                if(!e.png.empty()) es.push_back(e);
+            } catch(...) {}
+        }
+        if(es.empty()) return "timeline is empty";
+        // the cycle: least common multiple of the layers' image lengths, ending at the last fully shown image
+        std::map<int, double> lens;
+        double lastEnd = 0;
+        for(auto& e : es){ lens[e.layer] = e.len; lastEnd = std::max(lastEnd, e.start + e.len); }
+        long cycle = 1;
+        for(auto& [l, len] : lens) cycle = std::lcm(cycle, (long)std::lround(len));
+        double b1 = std::floor(scroller.headerBeat / 4.0) * 4.0;   // up to the bar under the header
+        double b0 = std::max(0.0, b1 - cycle);
+        double ppb = viewW / std::max(1.0, lens.count(1) ? lens[1] : 32.0);   // layer 1's scale
+        int W = std::min(16384, (int)std::lround((b1 - b0) * ppb)), H = viewH;
+        if(W < 2) return "not enough played yet";
+        ofFboSettings st; st.width = W; st.height = H; st.internalformat = GL_RGBA;
+        ofFbo comp; comp.allocate(st);
+        comp.begin(); ofBackground(0); comp.end();
+        for(int layer = 1; layer <= 4; layer++){
+            ofFbo lf; lf.allocate(st);
+            lf.begin(); ofClear(0, 0, 0, 0);
+            ofPushStyle(); ofEnableAlphaBlending();
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            std::string blend = "lighten"; float gain = 1; bool any = false; double layerLen = 32;
+            for(auto& e : es){
+                if(e.layer != layer || e.start + e.len <= b0 || e.start >= b1) continue;
+                ofImage im; if(!im.load(e.png)) continue;
+                im.draw((float)((e.start - b0) * ppb), 0, (float)(e.len * ppb), H);
+                blend = e.blend; gain = e.gain; any = true;
+                layerLen = e.len;
+            }
+            ofPopStyle(); lf.end();
+            if(!any) continue;
+            // the layer's effects as live: blur in its own pixels (its images are drawn at layer 1's
+            // scale here, so H blur scales with it), the trail in beats
+            if(withLook){
+                forms::LayerFxSettings fx = layerFxSettings(layer - 1, layerLen);
+                fx.hBlur *= (float)(layerLen * ppb / std::max(1, (int)viewW));
+                fx.trailPx = postCtl.trailBeats[layer - 1] * (float)ppb;
+                if(fx.any()) exportFx.process(lf, fx);
+            }
+            comp.begin(); ofPushStyle();
+            ofEnableBlendMode(OF_BLENDMODE_DISABLED); glEnable(GL_BLEND);
+            if(blend == "add"){ glBlendEquation(GL_FUNC_ADD); glBlendFunc(GL_ONE, GL_ONE); }
+            else if(blend == "normal"){ glBlendEquation(GL_FUNC_ADD); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }
+            else { glBlendEquation(GL_MAX); glBlendFunc(GL_ONE, GL_ONE); }
+            ofSetColor(gain * 255, gain * 255, gain * 255, 255);
+            lf.draw(0, 0);
+            glBlendEquation(GL_FUNC_ADD);
+            ofPopStyle(); comp.end();
+        }
+        ofPixels px;
+        comp.readToPixels(px);
+        px.setNumChannels(3);
+        std::string out = (engine.sessionDir() / ("panorama_" + ofToString((int)b0) + "-" + ofToString((int)b1) + (withLook ? "" : "_raw") + ".png")).string();
+        ofSaveImage(px, out);
+        return out;
+    }
+
+    // ---- saved PNGs with the effects before the sound (each layer's blur and trail): what the
+    // sound reads. Not the post-processing (colour, levels, stretch, header line), as decided
+    // 2026-11-07.
+    forms::LayerFx exportFx;
+    // A rendered page (a Gallery print: k x the size) with its layer's effects, next to it as <name>_look.png.
+    // Its layer and bars come from its sidecar; blur radii scale with the size (k).
+    std::string lookPng(const std::string& png){
+        ofImage im;
+        if(!im.load(png)) return "";
+        int W = (int)im.getWidth(), H = (int)im.getHeight();
+        if(W < 1 || H < 1 || W > 16384 || H > 16384) return "";
+        int layer = 0, bars = 8;
+        std::ifstream sj(ofFilePath::removeExt(png) + ".json");
+        if(sj){ try { forms::json j; sj >> j; layer = ofClamp(j.value("layer", 1) - 1, 0, 3); bars = std::max(1, j.value("bars", 8)); } catch(...) {} }
+        ofFboSettings st; st.width = W; st.height = H; st.internalformat = GL_RGBA;
+        ofFbo lf; lf.allocate(st);
+        lf.begin(); ofClear(0, 0, 0, 0);
+        ofPushStyle(); ofEnableAlphaBlending();
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // straight -> premultiplied, as the layers
+        ofSetColor(255); im.draw(0, 0, W, H);
+        ofPopStyle(); lf.end();
+        float k = (float)H / std::max(1, (int)viewH);   // the print's size over the live view's
+        forms::LayerFxSettings fx = layerFxSettings(layer, 4.0 * bars);
+        fx.hBlur *= (float)W / std::max(1, (int)viewW); fx.vBlur *= k;
+        fx.trailPx = postCtl.trailBeats[layer] * W / (4.0f * bars);
+        if(fx.any()) exportFx.process(lf, fx);
+        ofFbo comp; comp.allocate(st);
+        comp.begin(); ofBackground(0); ofPushStyle(); ofEnableBlendMode(OF_BLENDMODE_DISABLED); glEnable(GL_BLEND);
+        glBlendEquation(GL_FUNC_ADD); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // over black
+        ofSetColor(255); lf.draw(0, 0);
+        ofPopStyle(); comp.end();
+        ofPixels px; comp.readToPixels(px); px.setNumChannels(3);
+        std::string out = ofFilePath::removeExt(png) + "_look.png";
+        return ofSaveImage(px, out) ? out : "";
+    }
+
+    // The layers over black, bottom (layer 1) to top. Each layer FBO holds premultiplied colour
+    // and alpha, so every blend mode sees rgb x a (lighten = max, add = sum, normal = src + dst
+    // x (1 - a)); gain (0..1) scales the colour. A single layer comes out as before: rgb x a.
+    void composite(int nLayers){
+        int w = viewW, h = viewH;
+        if(w < 1 || h < 1) return;
+        if(!compositeFbo.isAllocated() || (int)compositeFbo.getWidth() != w || (int)compositeFbo.getHeight() != h){
+            ofFboSettings st; st.width = w; st.height = h; st.internalformat = GL_RGBA;
+            compositeFbo.allocate(st);
+        }
+        compositeFbo.begin();
+        ofBackground(0);
+        ofPushStyle();
+        // live settings: the layer's current values in its scene (edits show at once); the image's
+        // own values if the scene is gone
+        auto layerDef = [&](int i, const std::shared_ptr<forms::Image>& img) -> const forms::LayerDef* {
+            if(!img) return nullptr;
+            auto it = engine.scenes.find(img->scene);
+            if(it == engine.scenes.end() || i >= (int)it->second.layers.size()) return nullptr;
+            return &it->second.layers[i];
+        };
+        auto drawLayer = [&](ofFbo& f, const std::shared_ptr<forms::Image>& img, int i){
+            if(!f.isAllocated()) return;
+            const forms::LayerDef* ld = layerDef(i, img);
+            std::string blend = ld ? ld->blend : img ? img->blend : std::string("lighten");
+            float gain = 1;   // opacity is applied per image as the layers are drawn (scroller / rings)
+            ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+            glEnable(GL_BLEND);
+            if(blend == "add"){ glBlendEquation(GL_FUNC_ADD); glBlendFunc(GL_ONE, GL_ONE); }
+            else if(blend == "normal"){ glBlendEquation(GL_FUNC_ADD); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }
+            else { glBlendEquation(GL_MAX); glBlendFunc(GL_ONE, GL_ONE); }
+            // keep the destination opaque
+            ofSetColor(gain * 255, gain * 255, gain * 255, 255);
+            f.draw(0, 0, w, h);
+            glBlendEquation(GL_FUNC_ADD);
+        };
+        // stacking order from the scene at the header (layer 1 at the bottom unless moved)
+        std::vector<int> order;
+        const forms::Scene* hs = engine.sceneAtHeader();
+        if(!hs && engine.schedule->layers[0].header){ auto it = engine.scenes.find(engine.schedule->layers[0].header->scene); if(it != engine.scenes.end()) hs = &it->second; }
+        if(hs) for(int i : forms::stackOrder(hs->layers)) if(i < nLayers && i < 4) order.push_back(i);
+        for(int i = 0; i < nLayers && i < 4; i++) if(std::find(order.begin(), order.end(), i) == order.end()) order.push_back(i);
+        for(int i : order){
+            if(i == 0) drawLayer(scroller.fbo, engine.schedule->layers[0].header, 0);
+            else drawLayer(rings[i - 1].fbo, rings[i - 1].current, i);
+        }
+        glBlendEquation(GL_FUNC_ADD);
+        ofPopStyle();
+        compositeFbo.end();
+    }
+
+    // The composite, plus what every layer drew and where (to check alignment and alpha offline)
+    void saveComposite(const std::string& base){
+        if(!compositeFbo.isAllocated()) return;
+        ofPixels px;
+        compositeFbo.readToPixels(px);
+        ofSaveImage(px, base + ".png");
+        ofBuffer info;
+        info.append("headerBeat " + ofToString(scroller.headerBeat, 6) + "\nheaderPos " + ofToString(head.headerPos, 4) +
+                    "\nview " + ofToString(viewW) + " " + ofToString(viewH) + "\nphase " + ofToString(clock.phase, 6) + "\n");
+        auto& L1 = engine.schedule->layers[0];
+        info.append("layer 1 header " + (L1.header ? L1.header->png + " blend " + L1.header->blend + " gain " + ofToString(L1.header->gain) : std::string("-")) + "\n");
+        for(int i = 0; i < 3; i++){
+            auto& r = rings[i];
+            if(r.current) info.append("layer " + ofToString(i + 2) + " current " + r.current->png + " blend " + r.current->blend + " gain " + ofToString(r.current->gain) + "\n");
+            for(auto& d : r.lastDrawn)
+                info.append("layer " + ofToString(i + 2) + " drew " + d.png + " start " + ofToString(d.start, 3) + " len " + ofToString(d.len, 3) + " x " + ofToString(d.x, 3) + "\n");
+        }
+        ofBufferToFile(base + ".txt", info);
+    }
+
+    // sessions/<session>/timeline.jsonl: one line per image as it reaches the header (layer, id,
+    // start beat, length in beats, png), for the drift check and the panorama later
+    std::shared_ptr<forms::Image> loggedHeader[4];
+    double loggedStart[4] = {-1e9, -1e9, -1e9, -1e9};
+    std::string loggedSession;
+    void logTimeline(int nLayers){
+        if(engine.session.empty()) return;
+        if(engine.session != loggedSession){
+            loggedSession = engine.session;
+            for(int i = 0; i < 4; i++){ loggedHeader[i].reset(); loggedStart[i] = -1e9; }
+            lastSyncedHeader.reset();
+        }
+        auto put = [&](int layer, const std::shared_ptr<forms::Image>& img, double start, double len){
+            if(!img || img == loggedHeader[layer]) return;
+            loggedHeader[layer] = img;
+            if(start <= loggedStart[layer] + 1e-6) return;   // a beat repeat went back: already logged
+            loggedStart[layer] = start;
+            forms::json j{{"layer", layer + 1}, {"id", img->id}, {"startBeat", start}, {"lengthBeats", len},
+                          {"headerBeat", scroller.headerBeat}, {"png", img->png}, {"scene", img->scene},
+                          {"blend", img->blend}, {"gain", img->gain}};
+            std::ofstream f(engine.sessionDir() / "timeline.jsonl", std::ios::app);
+            if(f) f << j.dump() << "\n";
+        };
+        put(0, engine.schedule->layers[0].header, scroller.headerStart, scroller.headerLen);
+        for(int i = 1; i < nLayers && i < 4; i++){
+            auto& L = engine.schedule->layers[i];
+            for(auto& sl : L.slots) if(sl.img == rings[i - 1].current && sl.start <= scroller.headerBeat && scroller.headerBeat < sl.start + sl.len){
+                put(i, sl.img, sl.start, sl.len); break;
+            }
+        }
+    }
+
+    // The sync readout: at every bar line under the header, each layer's position in its image
+    void logBarLine(int nLayers){
+        int bar = (int)std::floor(scroller.headerBeat / 4.0);
+        if(bar == lastLoggedBar) return;
+        lastLoggedBar = bar;
+        if(nLayers < 2) return;
+        std::string line = "bar " + std::to_string(bar) + "  beat " + ofToString(scroller.headerBeat, 2);
+        for(int i = 1; i < nLayers && i < 4; i++){
+            auto& L = engine.schedule->layers[i];
+            line += "  L" + std::to_string(i + 1) + " " + ofToString(L.phase, 3);
+            if(rings[i - 1].current) line += " (" + rings[i - 1].current->id + ")";
+        }
+        engine.syncLog.push_back(line);
+        while(engine.syncLog.size() > 64) engine.syncLog.pop_front();
+    }
+    bool saveFramePending = false;
+
+    forms::Engine engine;
+    forms::Editor editor;
+    customGuiRegion faceRegion;
+    bool useSetlistLocal = true, lastUseSetlist = true;
+    ofxOscSender sender;
+    ofxOscReceiver receiver;
+    ofEventListeners listeners;
+    bool primePending = false;
+    bool rendererSeen = false;
+    std::vector<std::string> sceneNames;
+    std::string importPath = "/Users/santiagovilanova/Documents/OF/of_playmodes/openFrameworks/apps/Playmodes/OceanodeScroller/bin/data/Presets/ESPECTRES/2--ESPECTRES_1920";
+
+    ofParameter<bool> showWindow, useSetlist;
+    ofParameter<void> go, resetSetlist;
+    ofParameter<int> sceneIndex, actualBarIn;
+    ofParameter<forms::Schedule*> scheduleOut;
+    ofParameter<int> actualBPM, actualBars, actualNoteGrid, actualRoot, actualSnapshot, actualTrans;
+    ofParameter<int> sceneRoot, setlistSnapshot;
+    ofParameter<vector<float>> actualScale;
+    ofParameter<string> sceneName, rendererFolder, pitchclassFolder, processingApp;
+    ofParameter<int> workers;
+    bool workersPending = true;   // start (or stop) them on the next update
+    forms::RendererPool pool;
+    std::map<int, std::unique_ptr<ofxOscSender>> workerSenders;
+    ofParameter<int> sendPort, receivePort, prime, maxPending, imageWidth, imageHeight;
+    // built-in player
+    ofParameter<bool> builtInPlayer, analogMode, sequence, autoPng, sequenceOut, autoHeader;
+    ofParameter<bool> tremoloOn;              // the scenes' opacity tremolo (off by default)
+    ofParameter<int> pause, viewW, viewH, actualBarOut;
+    ofParameter<float> speed, bpmAdd, maxMinutes, seqFade, header, headerPlus, smooth, headerMin, headerMax;
+    ofParameter<float> phaseOut, bpmOut, pitchBend, fade, seqMinutes, speedOut;
+    ofParameter<float> headerPosOut, headerNorm, phLock, phOff, opacity;
+    ofParameter<int> kickOut;
+    ofParameter<float> rootOut;                 // the bar's chord root (MIDI)
+    ofParameter<vector<float>> scaleOut;        // the scale's pitch classes on root + transpose
+    ofParameter<bool> hardCut;
+    ofParameter<void> newPng, restartSetlist, saveFrame;
+    ofParameter<bool> immediateReplace;
+    ofParameter<ofTexture*> output;
+    ofParameter<string> inHeader;
+    // single node: the window's settings registry, post-processing and sound
+    forms::ControlRegistry ctl;
+    std::vector<std::string> legacyKeys;
+    forms::PostControls postCtl;
+    forms::Post post;
+    bool saveOutputPending = false;
+    forms::SoundControls soundCtl;
+#ifdef FORMS_HAS_SC
+    std::vector<serverManager*> scServers;
+    std::shared_ptr<forms::SoundEngine> sound;
+    ofParameter<nodePort> audioOut;
+#endif
+
+    void setupOsc(){
+        sender.setup("127.0.0.1", sendPort);
+        receiver.setup(receivePort);
+    }
+
+    void reload(){
+        engine.rendererFolder = rendererFolder.get();
+        engine.pitchclassFolder = pitchclassFolder.get();
+        engine.maxPending = maxPending;
+        engine.loadAll();
+        engine.width = imageWidth;
+        engine.height = imageHeight;
+        sceneNames.clear();
+        for(auto& [name, s] : engine.scenes) sceneNames.push_back(name);
+        pickManualScene(sceneIndex);
+    }
+
+    void pickManualScene(int i){
+        if(sceneNames.empty()) return;
+        engine.manualScene = sceneNames[ofClamp(i, 0, (int)sceneNames.size() - 1)];
+    }
+
+    // force: prime and "Render now" ignore the in-flight limit
+    void request(bool force){
+        std::string p = engine.makeRequest(force);
+        // a page that repeats N times stands for N GOs: the next N - 1 are skipped (goTick)
+        if(!p.empty()) goDebt += std::max(0, engine.lastRequestRepeat - 1);
+        send(p);
+    }
+    // The clock's GO (one per wrap): a new page unless the last one still has repeats to play.
+    // The next page is asked for when its predecessor's first copy starts, so it is rendered in time.
+    int goDebt = 0;
+    void goTick(){
+        if(goDebt > 0){
+            bool queued = !engine.schedule->layers[0].ready.empty();
+            for(auto& [id, im] : engine.pending) if(im->layer <= 1 && !im->preview) queued = true;
+            if(queued){ goDebt--; return; }
+            goDebt = 0;   // nothing queued for layer 1 any more (a reset, a lost render): ask now
+        }
+        request(false);
+    }
+
+    // Forms GL Box: audition (an edited instrument's page alone on the stage, heard)
+    virtual bool auditionStage(){ return false; }
+    virtual std::shared_ptr<forms::Image> auditionImage(){ return nullptr; }
+
+    // Every request goes through here (GO, prime, layers, previews, prints); Forms GL Box draws
+    // what it can itself and passes the rest on to this
+    virtual void send(const std::string& path){
+        if(path.empty()) return;
+        // extra layers and editor previews may go to a worker (their order doesn't matter);
+        // layer 1 always goes to the main renderer, in order
+        std::string id = ofFilePath::getBaseName(path);
+        auto it = engine.pending.find(id);
+        if(it != engine.pending.end() && (it->second->layer > 1 || it->second->preview) && pool.dispatch(id, path)) return;
+        sendMain(path);
+    }
+    void sendMain(const std::string& path){
+        ofxOscMessage m;
+        m.setAddress("/render");
+        m.addStringArg(path);
+        sender.sendMessage(m, false);
+    }
+    void sendWorker(int port, const std::string& path){
+        auto& s = workerSenders[port];
+        if(!s){ s = std::make_unique<ofxOscSender>(); s->setup("127.0.0.1", port); }
+        ofxOscMessage m;
+        m.setAddress("/render");
+        m.addStringArg(path);
+        s->sendMessage(m, false);
+    }
+
+    // Workers: Processing copies started from here (worker configs in <renderer>/configs/), each
+    // with a small window (the image renders offscreen at its own size, pixel-identical) and its own
+    // build folder, which is also how Stop finds them. Processing compiles at start (10-20 s).
+    std::string workerDir(int port){ return "/tmp/espectres_worker_" + ofToString(port); }
+    std::map<int, pid_t> workerGroups;   // port -> process group of its Processing (launcher + java)
+
+    // Start a program with NOTHING of this app inherited: no sockets (they would keep the app's
+    // OSC / SuperCollider ports after it quits), stdin from /dev/null, stdout + stderr to `log`.
+    // It gets its own process group, so it can be stopped with everything it started.
+    static pid_t spawnClean(const std::vector<std::string>& args, const std::vector<std::string>& extraEnv, const std::string& log, bool newGroup){
+        posix_spawn_file_actions_t fa;
+        posix_spawn_file_actions_init(&fa);
+        posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+        posix_spawn_file_actions_addopen(&fa, 1, log.empty() ? "/dev/null" : log.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        posix_spawn_file_actions_adddup2(&fa, 1, 2);
+        posix_spawnattr_t at;
+        posix_spawnattr_init(&at);
+        short flags = POSIX_SPAWN_CLOEXEC_DEFAULT;   // every other descriptor is closed in the child
+        if(newGroup){ flags |= POSIX_SPAWN_SETPGROUP; posix_spawnattr_setpgroup(&at, 0); }
+        posix_spawnattr_setflags(&at, flags);
+        std::vector<char*> argv;
+        for(auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+        argv.push_back(nullptr);
+        std::vector<std::string> envs;
+        for(char** e = environ; e && *e; e++) envs.push_back(*e);
+        for(auto& e : extraEnv) envs.push_back(e);
+        std::vector<char*> envp;
+        for(auto& e : envs) envp.push_back(const_cast<char*>(e.c_str()));
+        envp.push_back(nullptr);
+        pid_t pid = 0;
+        int r = posix_spawn(&pid, args[0].c_str(), &fa, &at, argv.data(), envp.data());
+        posix_spawn_file_actions_destroy(&fa);
+        posix_spawnattr_destroy(&at);
+        return r == 0 ? pid : 0;
+    }
+
+    // Workers: Processing copies started from here (worker configs in <renderer>/configs/), each
+    // with a canvas of the image size (renders straight on it) and its own build folder.
+    // Processing compiles at start (a few seconds).
+    void startWorkers(){
+        stopWorkers();
+        namespace fs = std::filesystem;
+        fs::path cfgDir = fs::path(rendererFolder.get()) / "configs";
+        std::error_code ec; fs::create_directories(cfgDir, ec);
+        for(int k = 0; k < workers; k++){
+            int port = sendPort + 1 + k;
+            fs::path cfg = cfgDir / ("worker_" + ofToString(port) + ".json");
+            // a full-size canvas: requests of the canvas size render straight on it, about 1.5x faster
+            // than in an offscreen buffer (same pixels)
+            forms::json c{{"width", (int)imageWidth}, {"height", (int)imageHeight}, {"listenPort", port}, {"sendPort", (int)receivePort}, {"worker", true}};
+            std::ofstream(cfg) << c.dump(1);
+            pid_t pid = spawnClean({processingApp.get(), "cli", "--sketch=" + rendererFolder.get(), "--output=" + workerDir(port), "--force", "--run"},
+                                   {"ESPECTRES_CONFIG=" + cfg.string()}, workerDir(port) + ".log", true);
+            if(pid > 0) workerGroups[port] = pid;
+            else engine.note("could not start the worker on port " + ofToString(port) + " (Processing app: " + processingApp.get() + ")");
+        }
+        engine.note("starting " + ofToString((int)workers) + " worker renderers (they compile first: a few seconds)");
+    }
+    void stopWorkers(){
+        // the ones started here: their whole process group (launcher and java)
+        // forced: Processing's launcher and java may ignore a polite stop; a worker writes its PNG
+        // to a temp file and renames it, so nothing half-written is left
+        for(auto& [port, pg] : workerGroups) if(pg > 0) kill(-pg, SIGKILL);
+        workerGroups.clear();
+        // and any left over from an earlier session (matched by their build folder)
+        pid_t p = spawnClean({"/usr/bin/pkill", "-9", "-f", "/tmp/espectres_worker_"}, {}, "", false);
+        if(p > 0){ int st = 0; waitpid(p, &st, 0); }
+        for(auto& w : pool.workers){ w.alive = false; }
+    }
+
+    // ---------------------------------------------------------------- window
+
+    void drawWindow(){
+        float z = ofxOceanodeShared::getZoomLevel();
+        ImGui::SetNextWindowSize(ImVec2(1180 * z, 820 * z), ImGuiCond_FirstUseEver);
+        bool open = showWindow.get();
+        if(!ImGui::Begin(getWindowId().c_str(), &open)){
+            ImGui::End();
+            if(!open) showWindow = false;
+            return;
+        }
+        if(!open){ showWindow = false; ImGui::End(); return; }
+        editor.drawWindowContent();
+        ImGui::End();
+    }
+};

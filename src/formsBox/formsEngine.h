@@ -1,0 +1,1616 @@
+//
+//  formsEngine.h
+//  ofxOceanodeForms — ESPECTRES 2027
+//
+//  What FormsBox does, without OF or GUI: scenes and setlist on disk, stepping through the
+//  setlist, building render requests for the ESPECTRES_2027 renderer, and the queue of rendered
+//  images shared with LayerScroller (FormsSchedule). The node only adds parameters, OSC and UI.
+//
+
+#pragma once
+
+#include "formsCore.h"
+#include "formsGenerators.h"
+#include "formsPerformance.h"
+#include <chrono>
+#include <ctime>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <sstream>
+#include <set>
+
+namespace forms {
+
+namespace fs = std::filesystem;
+
+// One rendered (or pending) image and the musical values it was made with
+struct Image {
+    std::string id, png, json, scene, palette, scale;
+    int layer = 1, bars = 8, bpm = 120, notegrid = 100, snapshot = -1;
+    unsigned seed = 0;
+    std::vector<int> roots, trans;     // per bar: degree index, transpose in semitones
+    std::vector<float> scaleNotes;     // semitones of the scale (what Macro_3 output as actualScale)
+    nlohmann::json perf = nlohmann::json::object();   // the scene's performance settings when it was requested
+    bool preview = false;              // editor preview: shown in the editor, never scrolls in
+    std::string previewOf;             // the preset it previews
+    // Phase 3 (layers 2..4): where the image sits in absolute beats (layer 1 keeps the 1920 timing
+    // of the clock and leaves this at -1), and how it composites
+    double startBeat = -1;
+    double cutBeat = -1;               // hard cut: the image stops here (a new scene starts), else -1
+    int startBar = -1;                 // the absolute bar its harmony was sliced from
+    bool kick = false;                 // its layer is the kick layer
+    bool cancelled = false;            // a scene change made it obsolete before it was shown
+    // Repetition (LayerDef::repeat): a request stands for `repeat` pages in a row; when it is
+    // rendered it becomes that many copies (repeatIndex 0..repeat-1, each repeat = 1)
+    int repeat = 1, repeatIndex = 0;
+    double copiesUntil = -1;           // a scene change: copies that would start here or later are dropped
+    double askedAt = -1;               // Engine::now when it was asked for (render time)
+    std::string blend = "lighten";
+    float gain = 1;
+    // The rendered pixels, when the renderer is inside the app (Forms GL Box): straight-alpha RGBA,
+    // pw x ph. The scrollers upload them directly instead of loading the PNG (which may still be
+    // being written, or not written at all when archiving is off). Shared by repeat copies.
+    std::shared_ptr<const std::vector<uint8_t>> rgba;
+    int pw = 0, ph = 0;
+};
+
+// Timings of the image pipeline (ms), for the Engine / Node tabs: last value and a running mean
+struct StageTime {
+    double last = 0, mean = 0; int n = 0;
+    void add(double ms){ last = ms; n++; mean = n == 1 ? ms : mean + (ms - mean) * (n < 50 ? 1.0 / n : 0.02); }
+};
+struct PipelineStats {
+    StageTime queue, render, archive, upload, total;   // waiting for a worker, drawing, PNG + sidecar, texture upload, asked -> on screen-ready
+    int archiveBacklog = 0;
+};
+inline PipelineStats& pipelineStats(){ static PipelineStats s; return s; }
+
+// Shared between FormsBox (writes) and LayerScroller (reads, and reports what is under the
+// header). Both run on the main thread. One entry per layer; Phase 2 uses layer 0 only.
+struct Schedule {
+    struct Layer {
+        std::deque<std::shared_ptr<Image>> ready;   // rendered, waiting to scroll in
+        std::shared_ptr<Image> header;              // set by LayerScroller
+        int shown = 0;                              // images that scrolled in
+        int repeats = 0;                            // wraps with no ready image (image repeated)
+        // Phase 3, layers 2..4: the images placed in absolute beats (written by the player)
+        struct Slot {
+            std::shared_ptr<Image> img; double start = 0, len = 32; bool repeat = false; bool seen = false;
+            double cut = -1;                        // hard cut: shown only up to this beat
+            double end() const { return cut >= 0 ? cut : start + len; }
+        };
+        std::deque<Slot> slots;
+        double scheduledEnd = -1;                   // end beat of the last placed slot (-1: none)
+        float phase = 0;                            // where the header is inside its image (0..1)
+        int dropped = 0;                            // images that arrived after their time had passed
+        int retimed = 0;                            // late images moved to the next free place (not popped in mid-view)
+    };
+    std::vector<Layer> layers = std::vector<Layer>(4);   // layer 1 + up to 3 extra (fixed: no reallocation)
+    double headerBeat = 0;                          // absolute beat under the header (from layer 1)
+    Layer& layer(int i){ if((int)layers.size() <= i) layers.resize(i + 1); return layers[i]; }
+};
+
+inline json readJsonFile(const fs::path& p){
+    std::ifstream f(p);
+    if(!f) throw std::runtime_error("cannot read " + p.string());
+    return json::parse(f);
+}
+
+// Write to a temporary name, then rename: readers never see half-written files
+inline void writeJsonAtomic(const fs::path& p, const json& j){
+    fs::create_directories(p.parent_path());
+    fs::path tmp = p.parent_path() / ("." + p.filename().string() + ".tmp");
+    {
+        std::ofstream f(tmp);
+        f << j.dump(1);
+    }
+    fs::rename(tmp, p);
+}
+
+inline std::string safeFileName(std::string s){
+    for(char& c : s) if(!(isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.')) c = '_';
+    return s;
+}
+
+class Engine {
+public:
+    // --- configuration
+    fs::path rendererFolder;           // the ESPECTRES_2027 sketch folder
+    fs::path pitchclassFolder;         // shared scale / chord catalog (scales.txt, chords.txt), read-only
+    int width = 1920, height = 1080;   // size of the images to request (any size: the renderer
+                                       // draws other sizes than its canvas offscreen)
+    int maxPending = 2;                // a GO beyond this many unanswered requests is skipped
+    double pendingTimeout = 120;       // seconds: an unanswered request is given up after this
+
+    // --- content
+    std::map<std::string, Scene> scenes;   // by name
+    std::vector<SetlistEntry> setlist;
+    std::vector<ScaleDef> scaleLib;          // library/scales.json
+    std::vector<PaletteDef> paletteLib;      // library/palettes.json
+    std::vector<std::pair<std::string, std::string>> methods;   // name, family: legacy methods, then presets ("gen/<gen>")
+    std::vector<GenDef> gens;                // parameterised generators (generators.json)
+    std::map<std::string, Preset> presets;   // instrument presets, by ref "<gen>/<name>"
+    std::string previewPng, previewId, previewRef;   // last finished editor preview (and its preset)
+    int previewCount = 0;                    // bumps when a preview finishes
+    std::deque<std::pair<std::string, std::string>> previewsDone;   // (tag, png) of finished previews, for the editor
+
+    // --- state
+    bool useSetlist = true;
+    std::string manualScene;
+    int setlistEntry = 0, imagesInEntry = 0;
+    std::string session;
+    int counter = 0;
+    Rng rng;
+    std::map<std::string, std::shared_ptr<Image>> pending;   // requested, not rendered yet
+    std::map<std::string, std::chrono::steady_clock::time_point> pendingSince;
+    std::shared_ptr<Schedule> schedule = std::make_shared<Schedule>();
+    // Phase 3: one harmony timeline in absolute bars, shared by all layers. Layer 1 fills it as
+    // before (makeHarmony per image, so a single-layer scene draws the same numbers); the other
+    // layers slice it, filling gaps the same way.
+    std::map<int, std::pair<int, int>> harmonyBars;   // absolute bar -> (degree, transpose)
+    int layer1NextBar = 0;             // predicted start bar of the next layer-1 image
+    int lastRequestRepeat = 1;         // pages the last layer-1 request stands for (GO pacing)
+    // Layer 1's images in absolute bars, as requested (shifted when layer 1 drifts): which scene
+    // plays at each bar, and where scenes change (and whether that change is a hard cut)
+    // bars: what the entry spans (its image's bars x repeat); period: its image's bars
+    struct PlanEntry { int startBar = 0, bars = 8, period = 0; std::string scene, id; bool hardCut = false; };
+    // The scene lane (formsLane.h): the scene its blocks give layer 1's image starting at a bar
+    // ("" = none: the setlist / manual scene), and whether the lane cuts into it
+    std::function<std::string(int bar, bool& hardCut)> laneSceneAt;
+    std::deque<PlanEntry> layer1Plan;
+    bool hardCutManual = false;        // scene changes not from the setlist (manual): hard cut?
+
+    // --- Replay (Gallery): a session played back from its archive, no renderer involved
+    bool replaying = false;
+    std::string replayName;
+    std::deque<std::shared_ptr<Image>> replayAll1;                 // the whole plan (for looping)
+    std::map<int, std::deque<std::shared_ptr<Image>>> replayAllX;
+    std::deque<std::shared_ptr<Image>> replay1;                    // still to play
+    std::map<int, std::deque<std::shared_ptr<Image>>> replayX;
+    std::shared_ptr<Image> replayFirst;                            // its first layer-1 image
+    double replayOrigin = std::numeric_limits<double>::quiet_NaN();// header beat where that one started
+    double replayLoopBeats = 0;                                    // one pass of layer 1, in beats
+    int replayLoop = 0;
+
+    void startReplay(const std::string& name, const std::deque<std::shared_ptr<Image>>& l1, const std::map<int, std::deque<std::shared_ptr<Image>>>& extra){
+        if(l1.empty()){ note("replay: " + name + " has no layer-1 images"); return; }
+        replaying = true; replayName = name;
+        replayAll1 = l1; replayAllX = extra;
+        replayLoop = 0;
+        replayLoopBeats = 0; for(auto& im : l1) replayLoopBeats += 4.0 * std::max(1, im->bars);
+        replayX.clear();
+        refillReplay();
+        replayFirst = replay1.front();
+        replayOrigin = std::numeric_limits<double>::quiet_NaN();
+        for(auto& L : schedule->layers){ L.ready.clear(); L.slots.clear(); L.scheduledEnd = -1; }
+        pending.clear(); pendingSince.clear();
+        layer1Plan.clear(); layerNextBar.clear();
+        for(int k = 0; k < 2 && !replay1.empty(); k++){ schedule->layers[0].ready.push_back(replay1.front()); replay1.pop_front(); }
+        note("replaying " + name + " (" + std::to_string(l1.size()) + " images on layer 1)");
+    }
+    void stopReplay(){
+        if(!replaying) return;
+        replaying = false;
+        replay1.clear(); replayX.clear();
+        note("replay stopped");
+    }
+    // a fresh copy of the plan for the next pass (images on screen are never changed)
+    void refillReplay(){
+        replay1.clear();   // (the extra layers' queues keep what is not handed over yet: the next pass goes after it)
+        for(auto& im : replayAll1) replay1.push_back(std::make_shared<Image>(*im));
+        for(auto& [l, q] : replayAllX){
+            for(auto& im : q){
+                auto c = std::make_shared<Image>(*im);
+                c->startBeat = im->startBeat + replayLoop * replayLoopBeats;   // + origin when it is known
+                replayX[l].push_back(c);
+            }
+        }
+    }
+    // GO during a replay: the next archived image instead of a render
+    void replayNext(){
+        if(replay1.empty()){ replayLoop++; refillReplay(); }
+        if(!replay1.empty()){ schedule->layers[0].ready.push_back(replay1.front()); replay1.pop_front(); }
+    }
+    // extra layers during a replay: hand over the images due within the next 64 beats
+    void replayLayers(){
+        if(std::isnan(replayOrigin)) return;
+        double B = schedule->headerBeat;
+        for(auto& [l, q] : replayX){
+            auto& L = schedule->layer(l);
+            while(!q.empty() && q.front()->startBeat + replayOrigin < B + 64){
+                auto im = q.front(); q.pop_front();
+                im->startBeat += replayOrigin;
+                if(im->startBeat + im->bars * 4.0 > B) L.ready.push_back(im);
+            }
+        }
+    }
+    std::map<int, int> layerNextBar;   // layers 2..4: start bar of the next request
+    int renderAheadBars = 2;           // a new layer starts this many bars after the header
+    std::deque<std::string> log;
+    std::deque<std::string> syncLog;   // Phase 3: each layer's position at every bar line (Engine tab)
+    int errors = 0;
+    int skipped = 0;                   // GOs skipped because the renderer was busy
+    int lost = 0;                      // requests that got no answer before pendingTimeout
+    int rendererCanvasW = 0, rendererCanvasH = 0;   // its default canvas (generators.json)
+    std::string rendererCodeHash;                    // what the main renderer was compiled from (generators.json)
+    int workerCapacity = 0;            // extra renderers: requests they can take now (set by the node)
+
+    fs::path scenesDir() const { return rendererFolder / "scenes"; }
+    // --- scene banks: a bank is a folder under scenes/ ("" = scenes/ itself, the legacy scenes).
+    // Scene names stay unique across banks (the setlist and the scene lane refer to them by name).
+    std::string currentBank = "My scenes";   // where new scenes go (Forms Box saves it with the patch)
+    // a bank's name is its folder's name (only characters a folder can't have are replaced)
+    static std::string bankName(std::string b){
+        for(char& c : b) if(c == '/' || c == '\\' || c == ':') c = '-';
+        while(!b.empty() && (b[0] == '.' || b[0] == ' ')) b.erase(0, 1);
+        return b;
+    }
+    fs::path scenePath(const Scene& s) const { return (s.bank.empty() ? scenesDir() : scenesDir() / bankName(s.bank)) / (safeFileName(s.name) + ".json"); }
+    std::vector<std::string> banks() const {
+        std::set<std::string> b{""};
+        for(auto& [n, sc] : scenes) b.insert(sc.bank);
+        std::error_code ec;
+        if(fs::exists(scenesDir(), ec)) for(auto& e : fs::directory_iterator(scenesDir(), ec)) if(e.is_directory()) b.insert(e.path().filename().string());
+        if(!currentBank.empty()) b.insert(currentBank);
+        return std::vector<std::string>(b.begin(), b.end());
+    }
+    static std::string bankLabel(const std::string& b){ return b.empty() ? std::string("Legacy") : b; }
+    // A new bank (an empty folder)
+    // returns its name ("" if it could not be made)
+    std::string createBank(const std::string& wanted){
+        std::string b = bankName(wanted);
+        if(b.empty()) return "";
+        std::error_code ec; fs::create_directories(scenesDir() / b, ec);
+        return ec ? std::string() : b;
+    }
+    // A scene to another bank (its file moves)
+    bool moveSceneToBank(const std::string& name, const std::string& bank){
+        auto it = scenes.find(name);
+        if(it == scenes.end() || it->second.bank == bank) return false;
+        std::error_code ec;
+        fs::remove(scenePath(it->second), ec);
+        it->second.bank = bank;
+        saveScene(it->second);
+        return true;
+    }
+    fs::path setlistPath() const { return rendererFolder / "setlists" / "current.json"; }
+    fs::path libraryDir() const { return rendererFolder / "library"; }
+    fs::path presetsDir() const { return rendererFolder / "presets"; }
+    fs::path presetPath(const Preset& p) const { return presetsDir() / safeFileName(p.gen) / (safeFileName(p.name) + ".json"); }
+    fs::path sessionDir() const { return rendererFolder / "sessions" / session; }
+
+    void note(const std::string& s){
+        log.push_back(s);
+        while(log.size() > 200) log.pop_front();
+    }
+
+    // New session: unique name (seconds), counter from 0, fresh queue, setlist from the start
+    void newSession(unsigned seed = 0){
+        auto t = std::time(nullptr);
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d_%H%M%S", std::localtime(&t));
+        session = buf;
+        counter = 0;
+        rng.seed(seed ? seed : (unsigned)std::chrono::high_resolution_clock::now().time_since_epoch().count());
+        pending.clear();
+        pendingSince.clear();
+        skipped = lost = errors = 0;
+        for(auto& l : schedule->layers){ l.ready.clear(); l.shown = 0; l.repeats = 0; l.slots.clear(); l.scheduledEnd = -1; l.dropped = 0; }
+        schedule->headerBeat = 0;
+        harmonyBars.clear();
+        layer1NextBar = 0;
+        layerNextBar.clear();
+        layer1Plan.clear();
+        setlistEntry = 0;
+        imagesInEntry = 0;
+        note("session " + session);
+    }
+
+    void resetSetlist(){
+        setlistEntry = 0;
+        imagesInEntry = 0;
+        note("setlist reset");
+    }
+
+    // --- disk
+
+    void loadAll(){
+        scenes.clear();
+        if(fs::exists(scenesDir())){
+            // scenes/ (the legacy bank) and one level of bank folders
+            auto loadFolder = [&](const fs::path& dir, const std::string& bank){
+                for(auto& e : fs::directory_iterator(dir)){
+                    if(e.path().extension() != ".json") continue;
+                    try {
+                        Scene s = readJsonFile(e.path()).get<Scene>();
+                        if(s.name.empty()) s.name = e.path().stem().string();
+                        s.bank = bank;
+                        if(scenes.count(s.name)) note("scene " + s.name + " is in two banks (" + bankLabel(scenes[s.name].bank) + ", " + bankLabel(bank) + "): " + bankLabel(bank) + " kept");
+                        scenes[s.name] = s;
+                    } catch(std::exception& ex){ note("scene " + e.path().filename().string() + ": " + ex.what()); }
+                }
+            };
+            loadFolder(scenesDir(), "");
+            for(auto& e : fs::directory_iterator(scenesDir()))
+                if(e.is_directory() && e.path().filename().string()[0] != '.') loadFolder(e.path(), e.path().filename().string());
+        }
+        setlist.clear();
+        if(fs::exists(setlistPath())){
+            try { setlist = readJsonFile(setlistPath()).value("entries", std::vector<SetlistEntry>()); }
+            catch(std::exception& ex){ note(std::string("setlist: ") + ex.what()); }
+        }
+        json gen;
+        try { gen = readJsonFile(rendererFolder / "generators.json"); }
+        catch(std::exception& ex){ note(std::string("generators.json: ") + ex.what()); }
+        methods.clear();
+        gens.clear();
+        for(auto& g : gen.value("generators", json::array())){
+            std::string fam = g.value("family", std::string());
+            if(fam.rfind("legacy/", 0) == 0) methods.push_back({g.value("name", std::string()), fam});
+            else gens.push_back(genDefFromJson(g));
+        }
+        // the process slot: the effects generator's parameters, appended to the other generators
+        // (generators.json lists them once); a generator that still lists them keeps its own
+        const GenDef* fx = nullptr;
+        for(auto& g : gens) if(g.name == "effects") fx = &g;
+        if(fx){
+            std::vector<ParamDef> proc;
+            for(auto& p : fx->params) if(p.key != "steps") proc.push_back(p);
+            for(auto& g : gens){
+                if(g.name == "effects" || g.param("processOn")) continue;
+                for(auto& p : proc){ g.params.push_back(p); g.processKeys.push_back(p.key); }
+            }
+        }
+        loadPresets();
+        rendererCodeHash = gen.value("codeHash", std::string());
+        if(gen.contains("canvas") && gen["canvas"].size() == 2){
+            rendererCanvasW = gen["canvas"][0].get<int>();
+            rendererCanvasH = gen["canvas"][1].get<int>();
+        }
+        loadLibrary(gen);
+        // scenes saved with 1920 indices ("#n") get library names, and are saved that way
+        for(auto& [name, sc] : scenes){
+            bool changed = false;
+            if(!sc.scale.empty() && sc.scale[0] == '#'){ sc.scale = scaleNameForLegacy(std::stoi(sc.scale.substr(1))); changed = true; }
+            if(!sc.palette.empty() && sc.palette[0] == '#'){ sc.palette = paletteNameForLegacy(std::stoi(sc.palette.substr(1))); changed = true; }
+            if(changed) saveScene(sc);
+        }
+        note("loaded " + std::to_string(scenes.size()) + " scenes, " + std::to_string(setlist.size()) + " setlist entries");
+    }
+
+    void saveScene(const Scene& s){
+        std::error_code ec; fs::create_directories(scenePath(s).parent_path(), ec);
+        writeJsonAtomic(scenePath(s), json(s));
+    }
+
+    // Macro_8's router snapshots → each scene's performance settings, by the scene's Director slot
+    // (Macro_8 was selected by that same number). Values a slot doesn't have come from slot 0
+    // (Macro_8's state when the patch was saved). Returns the number of scenes updated.
+    int importPerformance(const fs::path& presetFolder){
+        json m = readJsonFile(presetFolder / "Macro_8.json");
+        json snaps = m.value("Snapshots", json::object());
+        auto valuesOf = [](const json& slot){
+            json v = json::object();
+            const json routers = slot.value("routerValues", json::object());   // named: items() of a temporary would dangle
+            for(auto& [k, rv] : routers.items()){
+                if(rv.value("type", std::string()) == "c" || !rv.contains("value") || rv["value"].is_null()) continue;
+                v[k] = rv["value"];
+            }
+            return v;
+        };
+        json base = snaps.contains("0") ? valuesOf(snaps["0"]) : json::object();
+        int n = 0;
+        for(auto& [name, sc] : scenes){
+            if(sc.snapshot < 0) continue;
+            json v = base;
+            std::string key = std::to_string(sc.snapshot);
+            if(snaps.contains(key)){
+                const json sv = valuesOf(snaps[key]);
+                for(auto& [k, x] : sv.items()) v[k] = x;
+            }
+            else note("performance: " + name + " (slot " + key + ") had no Macro_8 snapshot; slot 0 values used");
+            sc.performance = completePerformance(v);
+            saveScene(sc);
+            n++;
+        }
+        note("performance settings imported into " + std::to_string(n) + " scenes");
+        return n;
+    }
+
+    // --- instrument presets
+
+    const GenDef* findGen(const std::string& name) const {
+        for(auto& g : gens) if(g.name == name) return &g;
+        return nullptr;
+    }
+
+    void loadPresets(){
+        presets.clear();
+        if(fs::exists(presetsDir())){
+            for(auto& d : fs::directory_iterator(presetsDir())){
+                if(!d.is_directory()) continue;
+                for(auto& e : fs::directory_iterator(d.path())){
+                    if(e.path().extension() != ".json") continue;
+                    try {
+                        Preset p = readPresetFile(e.path());
+                        if(p.gen.empty()) p.gen = d.path().filename().string();
+                        if(p.name.empty()) p.name = e.path().stem().string();
+                        if(presets.count(p.ref())) note("preset " + p.ref() + " defined twice; using " + e.path().filename().string());
+                        presets[p.ref()] = p;
+                    } catch(std::exception& ex){ note("preset " + e.path().filename().string() + ": " + ex.what()); }
+                }
+            }
+        }
+        refreshPresetMethods();
+    }
+
+    // presets appear in the method lists after the legacy methods
+    void refreshPresetMethods(){
+        methods.erase(std::remove_if(methods.begin(), methods.end(), [](auto& m){ return isPresetRef(m.first); }), methods.end());
+        for(auto& [ref, p] : presets) methods.push_back({ref, "gen/" + p.gen});
+    }
+
+    // A preset file, with its "process" blocks merged into "params" (how presets are kept in memory)
+    static Preset readPresetFile(const fs::path& path){
+        json j = readJsonFile(path);
+        mergeProcess(j);
+        if(j.contains("layers")) for(auto& l : j["layers"]) mergeProcess(l);
+        return j.get<Preset>();
+    }
+    // Files keep the process settings in "process"; in memory they sit in "params"
+    static void mergeProcess(json& j){
+        if(!j.is_object() || !j.contains("process") || !j["process"].is_object()) return;
+        if(!j.contains("params") || !j["params"].is_object()) j["params"] = json::object();
+        for(auto& [k, v] : j["process"].items()) j["params"][k] = v;
+        j.erase("process");
+    }
+    void splitProcess(json& j) const {
+        if(!j.is_object() || !j.contains("params") || !j["params"].is_object()) return;
+        const GenDef* g = findGen(j.value("gen", std::string()));
+        if(!g || g->processKeys.empty()) return;
+        json proc = json::object(), own = json::object();
+        for(auto& [k, v] : j["params"].items()) (g->isProcessKey(k) ? proc : own)[k] = v;
+        j["params"] = own;
+        if(!proc.empty()) j["process"] = proc;
+    }
+    json presetFile(const Preset& p) const {
+        json j = p;
+        splitProcess(j);
+        if(j.contains("layers")) for(auto& l : j["layers"]) splitProcess(l);
+        return j;
+    }
+    // A resolved item: its process values go to "process" (requests keep them apart too)
+    json item(const GenDef& g, const std::string& ref, json params) const {
+        json it{{"gen", g.name}, {"preset", ref}, {"params", params}};
+        splitProcess(it);
+        return it;
+    }
+
+    void savePreset(const Preset& p){
+        writeJsonAtomic(presetPath(p), presetFile(p));
+        presets[p.ref()] = p;
+        refreshPresetMethods();
+    }
+
+    void deletePreset(const std::string& ref){
+        auto it = presets.find(ref);
+        if(it == presets.end()) return;
+        fs::remove(presetPath(it->second));
+        presets.erase(it);
+        refreshPresetMethods();
+    }
+
+    // Renames a preset; scenes that use it follow
+    bool renamePreset(const std::string& ref, const std::string& newName){
+        auto it = presets.find(ref);
+        if(it == presets.end() || newName.empty() || newName.find('/') != std::string::npos) return false;
+        Preset p = it->second;
+        p.name = newName;
+        if(presets.count(p.ref())) return false;
+        fs::remove(presetPath(it->second));
+        presets.erase(it);
+        savePreset(p);
+        for(auto& [n, sc] : scenes){
+            bool changed = false;
+            for(auto& l : sc.layers) for(auto& c : l.cells) if(c.item == ref){ c.item = p.ref(); changed = true; }
+            if(changed) saveScene(sc);
+        }
+        // stacks that play it as a layer follow too
+        for(auto& [r, sp] : presets){
+            bool changed = false;
+            for(auto& l : sp.layers) if(l.value("preset", std::string()) == ref){ l["preset"] = p.ref(); changed = true; }
+            if(changed) savePreset(sp);
+        }
+        return true;
+    }
+
+    // Stacks that play this preset as a layer
+    int stacksUsing(const std::string& ref) const {
+        int n = 0;
+        for(auto& [r, sp] : presets) for(auto& l : sp.layers) if(l.value("preset", std::string()) == ref){ n++; break; }
+        return n;
+    }
+
+    // --- building a scene from scratch (the window's Scenes tab New, Instruments tab Add to scene)
+
+    // A new empty scene, saved: one layer of 8 bars, the library's first palette and scale
+    std::string createScene(const std::string& base = "NEW SCENE"){
+        Scene s;
+        s.name = base;
+        for(int i = 2; scenes.count(s.name); i++) s.name = base + " " + std::to_string(i);
+        s.bank = currentBank;
+        s.bpm = 95;
+        if(!paletteLib.empty()) s.palette = paletteLib[0].name;
+        if(!scaleLib.empty()) s.scale = scaleLib[0].name;
+        s.degreeWeights[0] = 1;
+        s.transposeWeights[0] = 1;
+        LayerDef l;
+        l.bars = 8;
+        l.rows = 64;
+        l.groupProb.assign(7, 1.0f);
+        s.layers.push_back(l);
+        scenes[s.name] = s;
+        saveScene(s);
+        return s.name;
+    }
+
+    // The group most scenes give this item's family (the 1920 scenes group methods by family)
+    int groupForItem(const std::string& m) const {
+        auto fam = [](const std::string& x){ return x.rfind("fx", 0) == 0 ? std::string("fx") : x.substr(0, 1); };
+        std::string pre = fam(m);
+        std::map<int, int> count;
+        for(auto& [n, sc] : scenes) for(auto& l : sc.layers) for(auto& c : l.cells)
+            if(!c.item.empty() && fam(c.item) == pre) count[c.group]++;
+        int best = 0, bestN = -1;
+        for(auto& [g, n] : count) if(n > bestN){ best = g; bestN = n; }
+        return best;
+    }
+
+    // Adds an instrument (a preset or a legacy method) to a layer of a scene, in its first empty
+    // cell. The first instrument of a layer plays on every image; the next ones at 50 % (edit the
+    // cell's chance in the Scenes tab). Not saved: the scene is marked as edited by the caller.
+    bool addItemToScene(Scene& s, int layer, const std::string& m){
+        if(s.layers.empty()) return false;
+        auto& l = s.layers[std::max(0, std::min(layer, (int)s.layers.size() - 1))];
+        bool empty = true;
+        for(int i = 0; i < std::min<int>(l.rows, (int)l.cells.size()); i++) if(!l.cells[i].item.empty()) empty = false;
+        Cell c; c.item = m; c.prob = empty ? 100 : 50; c.group = groupForItem(m);
+        if((int)l.groupProb.size() <= c.group) l.groupProb.resize(c.group + 1, 1.0f);
+        bool placed = false;
+        for(int i = 0; i < std::min<int>(l.rows, (int)l.cells.size()); i++) if(l.cells[i].item.empty()){ l.cells[i] = c; placed = true; break; }
+        if(!placed){ l.cells.insert(l.cells.begin() + std::min<int>(l.rows, (int)l.cells.size()), c); if((int)l.cells.size() > l.rows) l.rows++; }
+        return true;
+    }
+
+    std::string uniquePresetName(const std::string& gen, const std::string& base) const {
+        std::string n = base;
+        for(int i = 2; presets.count(gen + "/" + n); i++) n = base + " " + std::to_string(i);
+        return n;
+    }
+
+    // --- library (scales, palettes)
+
+    // Loads library/*.json; the first time, seeds it from the renderer's built-in tables
+    // (generators.json), keeping their 1920 index, so existing scenes sound the same.
+    void loadLibrary(const json& gen){
+        scaleLib.clear();
+        paletteLib.clear();
+        try { scaleLib = readJsonFile(libraryDir() / "scales.json").value("scales", std::vector<ScaleDef>()); } catch(...) {}
+        try { paletteLib = readJsonFile(libraryDir() / "palettes.json").value("palettes", std::vector<PaletteDef>()); } catch(...) {}
+        bool seeded = false;
+        bool hadLocal = !scaleLib.empty();
+        if(scaleLib.empty() && gen.contains("scales")){
+            auto names = gen.value("scaleNames", json::array());
+            for(size_t i = 0; i < gen["scales"].size(); i++){
+                ScaleDef d;
+                d.name = i < names.size() ? names[i].get<std::string>() : "scale " + std::to_string(i);
+                d.notes = gen["scales"][i].get<std::vector<int>>();
+                d.legacyIndex = (int)i;
+                scaleLib.push_back(d);
+            }
+            seeded = true;
+        }
+        if(paletteLib.empty() && gen.contains("palettes")){
+            int i = 0;
+            for(auto& p : gen["palettes"]){
+                PaletteDef d;
+                d.name = p.value("name", "palette " + std::to_string(i));
+                d.colors = p.value("colors", std::vector<std::string>{"FFFFFF"});
+                d.legacyIndex = i++;
+                paletteLib.push_back(d);
+            }
+            seeded = true;
+        }
+        (void)hadLocal;
+        addCatalog();
+        if(seeded){
+            saveLibrary();
+            note("library created from the renderer's tables: " + std::to_string(scaleLib.size()) + " scales, " + std::to_string(paletteLib.size()) + " palettes");
+        }
+    }
+
+    // The Pitchclass catalog ("<index>, <name> <notes...>;" per line): its scales and chords join the
+    // library after the local ones. A local entry with the same name wins (scenes keep their sound);
+    // a catalog entry whose name is taken by a different local scale gets " (catalog)".
+    void addCatalog(){
+        if(pitchclassFolder.empty()) return;
+        int added = 0;
+        auto read = [&](const char* file, bool chords){
+            std::ifstream f(pitchclassFolder / file);
+            if(!f) return;
+            std::string line;
+            while(std::getline(f, line)){
+                auto comma = line.find(',');
+                auto semi = line.find(';');
+                if(comma == std::string::npos || semi == std::string::npos || semi < comma) continue;
+                std::string idx = line.substr(0, comma);
+                std::stringstream ss(line.substr(comma + 1, semi - comma - 1));
+                std::string name;
+                ss >> name;
+                std::vector<int> notes;
+                int n;
+                while(ss >> n) notes.push_back(n);
+                if(name.empty() || notes.empty()) continue;
+                ScaleDef d;
+                d.name = chords ? "chord " + name : name;
+                d.notes = notes;
+                d.source = std::string(chords ? "catalog chord #" : "catalog scale #") + idx;
+                bool clash = false, same = false;
+                for(auto& s : scaleLib) if(s.name == d.name){ clash = true; same = s.notes == d.notes; }
+                if(same) continue;
+                if(clash) d.name += " (catalog)";
+                scaleLib.push_back(d);
+                added++;
+            }
+        };
+        read("scales.txt", false);
+        read("chords.txt", true);
+        if(added) note("Pitchclass catalog: " + std::to_string(added) + " scales and chords");
+    }
+
+    void saveLibrary(){
+        std::vector<ScaleDef> local;
+        for(auto& s : scaleLib) if(s.source.empty()) local.push_back(s);
+        writeJsonAtomic(libraryDir() / "scales.json", json{{"scales", local}});
+        writeJsonAtomic(libraryDir() / "palettes.json", json{{"palettes", paletteLib}});
+    }
+
+    const ScaleDef* findScale(const std::string& n) const {
+        for(auto& d : scaleLib) if(d.name == n) return &d;
+        return scaleLib.empty() ? nullptr : &scaleLib[0];
+    }
+    const PaletteDef* findPalette(const std::string& n) const {
+        for(auto& d : paletteLib) if(d.name == n) return &d;
+        return paletteLib.empty() ? nullptr : &paletteLib[0];
+    }
+    std::string scaleNameForLegacy(int i) const {
+        for(auto& d : scaleLib) if(d.legacyIndex == i) return d.name;
+        return "#" + std::to_string(i);
+    }
+    std::string paletteNameForLegacy(int i) const {
+        for(auto& d : paletteLib) if(d.legacyIndex == i) return d.name;
+        return "#" + std::to_string(i);
+    }
+
+    // --- scene and setlist editing
+
+    bool renameScene(const std::string& from, const std::string& to){
+        if(to.empty() || scenes.count(to) || !scenes.count(from)) return false;
+        Scene s = scenes[from];
+        fs::remove(scenePath(s));
+        s.name = to;
+        scenes.erase(from);
+        scenes[to] = s;
+        saveScene(s);
+        for(auto& e : setlist) if(e.scene == from) e.scene = to;
+        if(manualScene == from) manualScene = to;
+        saveSetlist();
+        return true;
+    }
+
+    std::string duplicateScene(const std::string& from){
+        if(!scenes.count(from)) return "";
+        std::string to = from + " copy";
+        for(int i = 2; scenes.count(to); i++) to = from + " copy " + std::to_string(i);
+        Scene s = scenes[from];
+        s.name = to;
+        s.snapshot = -1;
+        s.bank = currentBank;   // a copy is a new scene: the bank new scenes go to
+        scenes[to] = s;
+        saveScene(s);
+        return to;
+    }
+
+    // Back to the saved file (undo unsaved edits)
+    void reloadScene(const std::string& name){
+        try {
+            std::string bank = scenes.count(name) ? scenes[name].bank : std::string();
+            Scene probe; probe.name = name; probe.bank = bank;
+            Scene s = readJsonFile(scenePath(probe)).get<Scene>();
+            s.name = name; s.bank = bank;
+            scenes[name] = s;
+        } catch(std::exception& e){ note("revert " + name + ": " + e.what()); }
+    }
+
+    // Library entries renamed: scenes that use them follow
+    void renameLibraryRefs(bool isScale, const std::string& from, const std::string& to){
+        for(auto& [n, sc] : scenes){
+            std::string& ref = isScale ? sc.scale : sc.palette;
+            if(ref == from){ ref = to; saveScene(sc); }
+        }
+    }
+
+    void deleteScene(const std::string& name){
+        auto it = scenes.find(name);
+        if(it != scenes.end()) fs::remove(scenePath(it->second));
+        scenes.erase(name);
+    }
+
+    void saveSetlist(){
+        writeJsonAtomic(setlistPath(), json{{"name", "current"}, {"entries", setlist}});
+    }
+
+    int scenesUsing(const std::string& method) const {
+        int n = 0;
+        for(auto& [name, sc] : scenes){
+            for(auto& l : sc.layers){
+                bool used = false;
+                for(auto& c : l.cells) if(c.item == method && c.prob > 0) used = true;
+                if(used){ n++; break; }
+            }
+        }
+        return n;
+    }
+
+    // Import the 30 Director snapshots and the 1920 setlist from a 2--ESPECTRES_1920 preset folder
+    int importPreset(const fs::path& presetFolder, const std::string& directorFile = "FORMS_P5_PNG_Director_1.json"){
+        json node = readJsonFile(presetFolder / directorFile);
+        auto bySlot = importDirector(node);
+        for(auto& [slot, s] : bySlot) saveScene(s);
+        auto csv = [&](const char* f){
+            std::vector<float> v;
+            try {
+                json j = readJsonFile(presetFolder / f);
+                std::stringstream ss(j.value("CSV_Input", std::string()));
+                std::string tok;
+                while(std::getline(ss, tok, ',')) if(!tok.empty()) v.push_back(std::stof(tok));
+            } catch(...) {}
+            return v;
+        };
+        auto slotsF = csv("CSV_to_Vector_10.json");
+        auto durs = csv("CSV_to_Vector_11.json");
+        std::vector<int> slots(slotsF.begin(), slotsF.end());
+        auto entries = importSetlist(slots, durs, bySlot);
+        writeJsonAtomic(setlistPath(), json{{"name", "espectres_1920"}, {"entries", entries}});
+        loadAll();
+        importPerformance(presetFolder);
+        note("imported " + std::to_string(bySlot.size()) + " scenes and a " + std::to_string(entries.size()) + "-entry setlist");
+        return (int)bySlot.size();
+    }
+
+    // --- rendering
+
+    // The scene the next image will use (does not advance)
+    const Scene* currentScene() const {
+        std::string name = manualScene;
+        if(useSetlist && !setlist.empty()) name = setlist[setlistEntry % setlist.size()].scene;
+        auto it = scenes.find(name);
+        return it != scenes.end() ? &it->second : nullptr;
+    }
+
+    void advanceSetlist(){
+        if(!useSetlist || setlist.empty()) return;
+        imagesInEntry++;
+        if(imagesInEntry >= setlist[setlistEntry % setlist.size()].images){
+            imagesInEntry = 0;
+            setlistEntry = (setlistEntry + 1) % (int)setlist.size();
+        }
+    }
+
+    // Requests nobody answered (renderer stopped, packet lost) stop blocking after a while
+    void expirePending(){
+        auto now = std::chrono::steady_clock::now();
+        for(auto it = pendingSince.begin(); it != pendingSince.end();){
+            if(std::chrono::duration<double>(now - it->second).count() > pendingTimeout){
+                note("no answer for " + it->first + ", given up");
+                pending.erase(it->first);
+                it = pendingSince.erase(it);
+                lost++;
+            }else ++it;
+        }
+    }
+
+    // Builds and writes the next request. Returns its path ("" if there is no scene, or if the
+    // renderer is still busy with maxPending requests: like 1920, where a /go during a render
+    // was merged away, the image is skipped instead of queued, so what scrolls in stays current).
+    // sceneOverride: render this scene now (editor preview) without moving the setlist.
+    // previewItem: render only this preset (editor preview, its unsaved values); the image is shown
+    // in the editor and never scrolls in.
+    // layerIndex: 0 = layer 1 (the clock's timing); 1..3 = the extra layers (Phase 3), placed in
+    // absolute beats at startBar (from requestLayer).
+    std::string makeRequest(bool force = false, const std::string& sceneOverride = "", const Preset* previewItem = nullptr, int layerIndex = 0, int startBar = -1, const Scene* sceneFor = nullptr, int cutBar = -1){
+        if(session.empty()) newSession();
+        if(layerIndex == 0) lastRequestRepeat = 1;
+        if(replaying && !previewItem && sceneOverride.empty() && layerIndex == 0){ replayNext(); return ""; }
+        expirePending();
+        if(!force){
+            // the limit is the main renderer's queue: with workers, the extra layers' requests are
+            // on them and must not hold layer 1 back (it would repeat its last image forever)
+            int onMain = 0;
+            for(auto& [id, im] : pending) if(workerCapacity <= 0 || im->layer <= 1) onMain++;
+            if(onMain >= maxPending){
+                skipped++;
+                return "";
+            }
+        }
+        const Scene* s = currentScene();
+        if(!sceneOverride.empty()){
+            auto it = scenes.find(sceneOverride);
+            s = it != scenes.end() ? &it->second : nullptr;
+        }
+        // the scene lane, where it has a block at the bar this image starts
+        bool laneChose = false, laneCut = false;
+        if(layerIndex == 0 && sceneOverride.empty() && !previewItem && !sceneFor && laneSceneAt && !replaying){
+            std::string n = laneSceneAt(layer1NextBar, laneCut);
+            auto it = scenes.find(n);
+            if(!n.empty() && it != scenes.end() && !it->second.layers.empty()){ s = &it->second; laneChose = true; }
+        }
+        if(!s || s->layers.empty()){
+            note("no scene to render");
+            return "";
+        }
+        if(sceneFor) s = sceneFor;
+        if(layerIndex >= (int)s->layers.size()){ note("scene " + s->name + " has no layer " + std::to_string(layerIndex + 1)); return ""; }
+        const LayerDef& l = s->layers[layerIndex];
+        auto img = std::make_shared<Image>();
+        char idbuf[16];
+        snprintf(idbuf, sizeof(idbuf), "%04d", counter++);
+        img->id = idbuf;
+        img->scene = s->name;
+        img->layer = layerIndex + 1;
+        img->askedAt = now;
+        img->blend = l.blend;
+        img->gain = l.gain;
+        img->kick = l.kick;
+        img->bars = l.bars;
+        img->repeat = (previewItem || !sceneOverride.empty()) ? 1 : std::max(1, l.repeat);
+        img->bpm = s->bpm;
+        img->notegrid = s->notegrid;
+        img->palette = s->palette;
+        img->scale = s->scale;
+        img->snapshot = s->snapshot;
+        const bool frozen = l.fixed.is_object() && l.fixed.contains("items") && !previewItem;
+        img->seed = frozen ? l.fixed.value("seed", 0u) : (rng() & 0x7fffffff);
+        const ScaleDef* sd = findScale(s->scale);
+        const PaletteDef* pd = findPalette(s->palette);
+        if(sd) img->scaleNotes.assign(sd->notes.begin(), sd->notes.end());
+
+        img->perf = completePerformance(s->performance);
+        img->preview = previewItem != nullptr;
+        if(previewItem) img->previewOf = previewItem->ref();
+        std::vector<std::string> items;
+        if(!frozen) items = selectItems(l, rng);
+        Harmony h;
+        bool live = !previewItem && sceneOverride.empty();
+        if(frozen){
+            // its own harmony; on the timeline too, so the other layers play along with it
+            h.roots = l.fixed.value("roots", std::vector<int>(l.bars, 0));
+            h.trans = l.fixed.value("trans", std::vector<int>(l.bars, 0));
+            h.roots.resize(l.bars, 0); h.trans.resize(l.bars, 0);
+        }
+        if(!live){ if(!frozen) h = makeHarmony(*s, l.bars, rng); }   // editor renders: their own harmony, as before
+        else{
+            int bar = layerIndex == 0 ? layer1NextBar : startBar;
+            if(frozen){
+                auto pred = layerIndex == 0 ? std::vector<PlanEntry>() : predictedPlan(bar + l.bars + 1);
+                for(int b = 0; b < l.bars; b++) harmonyBars[layerIndex == 0 ? bar + b : harmonyBar(bar + b, &pred)] = {h.roots[b], h.trans[b]};
+            }
+            else h = harmonyAt(*s, bar, l.bars, layerIndex != 0);
+            img->startBar = bar;
+            if(layerIndex == 0){
+                // the plan: a scene change here is a hard cut if the setlist entry (or, without
+                // the setlist, the manual setting) says so
+                PlanEntry pe; pe.startBar = bar; pe.bars = l.bars * img->repeat; pe.period = l.bars; pe.scene = s->name; pe.id = img->id;
+                bool changes = layer1Plan.empty() || layer1Plan.back().scene != s->name;
+                if(changes) pe.hardCut = laneChose ? laneCut : (useSetlist && !setlist.empty()) ? setlist[setlistEntry % setlist.size()].hardCut : hardCutManual;
+                layer1Plan.push_back(pe);
+                if(changes && layer1Plan.size() > 1) onSceneChange(pe.startBar, pe.scene, pe.hardCut);
+                while(layer1Plan.size() > 64) layer1Plan.pop_front();
+                layer1NextBar += l.bars * img->repeat;
+                lastRequestRepeat = img->repeat;
+            }else{
+                img->startBeat = bar * 4.0;
+                if(cutBar > bar){ img->cutBeat = cutBar * 4.0; layerNextBar[layerIndex] = cutBar; }
+                else layerNextBar[layerIndex] = bar + l.bars * img->repeat;
+            }
+        }
+        img->roots = h.roots;
+        img->trans = h.trans;
+
+        json req{{"id", img->id}, {"layer", img->layer}, {"session", session}, {"seed", img->seed},
+                 {"size", {width, height}}, {"scene", s->name}, {"snapshot", s->snapshot},
+                 {"bars", l.bars}, {"notegrid", s->notegrid}, {"bpm", s->bpm},
+                 {"roots", h.roots}, {"trans", h.trans}, {"compat", s->compat}};
+        // the scale and palette themselves travel with the request
+        req["scale"] = sd ? sd->legacyIndex : -1;
+        req["palette"] = pd ? pd->legacyIndex : -1;
+        if(sd){ req["scaleName"] = sd->name; req["scaleNotes"] = sd->notes; }
+        if(pd){ req["paletteName"] = pd->name; req["paletteColors"] = pd->colors; }
+        req["performance"] = img->perf;   // archived in the sidecar
+        // presets resolve after the selection and the harmony, so scenes without presets draw the
+        // same random numbers as before
+        json jitems = json::array();
+        itemBars = l.bars;
+        auto genItem = [&](const Preset& pr){
+            for(auto& it : presetItems(pr)) jitems.push_back(it);
+        };
+        if(previewItem) genItem(*previewItem);
+        else if(frozen) jitems = l.fixed["items"];
+        else for(auto& it : items){
+            if(!isPresetRef(it)){ jitems.push_back({{"method", it}}); continue; }
+            auto pi = presets.find(it);
+            if(pi == presets.end()){ note("preset " + it + " not found"); continue; }
+            genItem(pi->second);
+        }
+        req["items"] = jitems;
+
+        fs::path p = sessionDir() / "requests" / (img->id + ".json");
+        writeJsonAtomic(p, req);
+        pending[img->id] = img;
+        pendingSince[img->id] = std::chrono::steady_clock::now();
+        if(sceneOverride.empty() && !previewItem && layerIndex == 0 && !laneChose) advanceSetlist();   // the lane's images don't count
+        note((previewItem ? "preview " + previewItem->ref() + " " : "request ") + img->id + " " + s->name + " (" + std::to_string(jitems.size()) + " items)");
+        return p.string();
+    }
+
+    // A rendered request as the pages it stands for: `repeat` copies of the image one after the
+    // other (same PNG and harmony; startBar, and startBeat for layers 2..4, moved by the image's
+    // length each). Copies past a hard cut or a scene change (copiesUntil) are dropped; the one a
+    // cut falls in is cut there.
+    static std::vector<std::shared_ptr<Image>> expandRepeats(const std::shared_ptr<Image>& img){
+        std::vector<std::shared_ptr<Image>> out;
+        int n = std::max(1, img->repeat);
+        double len = 4.0 * std::max(1, img->bars);
+        double cut = img->cutBeat, until = img->copiesUntil;
+        for(int k = 0; k < n; k++){
+            auto c = k == 0 ? img : std::make_shared<Image>(*img);
+            c->repeat = 1; c->repeatIndex = k; c->copiesUntil = -1;
+            if(img->startBar >= 0) c->startBar = img->startBar + k * img->bars;
+            if(img->startBeat >= 0){
+                double st = img->startBeat + k * len;
+                if(k > 0 && ((cut >= 0 && st >= cut - 1e-6) || (until >= 0 && st >= until - 1e-6))) break;
+                c->startBeat = st;
+                c->cutBeat = (cut > st + 1e-6 && cut < st + len - 1e-6) ? cut : -1;
+            }else if(k > 0 && until >= 0 && c->startBar * 4.0 >= until - 1e-6) break;
+            out.push_back(c);
+        }
+        return out;
+    }
+
+    // Ready with its pixels in memory (Forms GL Box): the scrollers use them, the files follow
+    void onReady(const std::string& id, const std::string& png, const std::string& jsonPath,
+                 std::shared_ptr<const std::vector<uint8_t>> rgba, int pw, int ph){
+        auto it = pending.find(id);
+        if(it != pending.end()){ it->second->rgba = std::move(rgba); it->second->pw = pw; it->second->ph = ph; }
+        onReady(id, png, jsonPath);
+    }
+    void onReady(const std::string& id, const std::string& png, const std::string& jsonPath){
+        auto it = pending.find(id);
+        if(it == pending.end()){ note("ready for unknown id " + id); return; }
+        if(it->second->askedAt >= 0 && now > it->second->askedAt && !it->second->preview)
+            pipelineStats().total.add((now - it->second->askedAt) * 1000.0);
+        pendingSince.erase(id);
+        // how long renders take (the extra layers ask that much ahead)
+        if(it->second->askedAt >= 0 && now > it->second->askedAt && !it->second->preview)
+            renderSeconds = 0.8 * renderSeconds + 0.2 * std::min(60.0, now - it->second->askedAt);
+        it->second->png = png;
+        it->second->json = jsonPath;
+        if(it->second->preview){
+            previewPng = png;
+            previewId = id;
+            previewRef = it->second->previewOf;
+            previewCount++;
+            previewsDone.push_back({it->second->previewOf, png});
+            while(previewsDone.size() > 8) previewsDone.pop_front();
+            pending.erase(it);
+            note("preview ready " + id);
+            return;
+        }
+        int layer = it->second->layer;
+        if(it->second->cancelled){ pending.erase(it); note("ready " + id + " (cancelled by a scene change)"); return; }
+        auto& Lq = schedule->layer(std::max(0, layer - 1));
+        for(auto& c : expandRepeats(it->second)) Lq.ready.push_back(c);
+        pending.erase(it);
+        note("ready " + id + (layer > 1 ? " (layer " + std::to_string(layer) + ")" : ""));
+    }
+
+    // --- Gallery
+
+    // A larger copy of an archived image (its sidecar), for print: the same recipe at k x the size,
+    // in sessions/prints/. Returns the request path ("" on failure); it comes back as a preview.
+    std::string makePrint(const json& side, int k){
+        if(session.empty()) newSession();
+        json req = side;
+        req.erase("result");
+        auto sz = side.value("size", std::vector<int>{width, height});
+        if(sz.size() < 2) return "";
+        char idbuf[32];
+        snprintf(idbuf, sizeof(idbuf), "%sx%d_%04d", side.value("id", std::string("img")).c_str(), k, counter++);
+        req["id"] = idbuf;
+        req["session"] = "prints";
+        req["size"] = {sz[0] * k, sz[1] * k};
+        req["refSize"] = {sz[0], sz[1]};   // size-dependent sampling follows the original image
+        fs::path p = sessionDir() / "requests" / (std::string(idbuf) + ".json");
+        writeJsonAtomic(p, req);
+        auto img = std::make_shared<Image>();
+        img->id = idbuf; img->preview = true; img->previewOf = "print x" + std::to_string(k);
+        img->layer = side.value("layer", 1); img->scene = side.value("scene", std::string());
+        pending[img->id] = img;
+        pendingSince[img->id] = std::chrono::steady_clock::now();
+        note("print request " + std::string(idbuf) + " (" + std::to_string(sz[0] * k) + " x " + std::to_string(sz[1] * k) + ")");
+        return p.string();
+    }
+
+    // A new scene from an archived image. freeze: one frozen layer that always draws exactly this
+    // image; else: a normal scene with the image's instruments (each at 100%) to vary from.
+    std::string sceneFromImage(const json& side, bool freeze){
+        auto src = scenes.find(side.value("scene", std::string()));
+        Scene s = src != scenes.end() ? src->second : Scene();
+        std::string base = side.value("scene", std::string("image")) + (freeze ? " frozen " : " from ") + side.value("id", std::string());
+        std::string name = base;
+        for(int i = 2; scenes.count(name); i++) name = base + " " + std::to_string(i);
+        s.name = name;
+        s.snapshot = -1;
+        s.bank = currentBank;   // a new scene: the bank new scenes go to
+        int li = std::max(0, side.value("layer", 1) - 1);
+        LayerDef l = (src != scenes.end() && li < (int)src->second.layers.size()) ? src->second.layers[li] : LayerDef();
+        l.bars = side.value("bars", l.bars);
+        l.z = -1;
+        l.cells.clear();
+        if(freeze){
+            l.fixed = json{{"seed", side.value("seed", 0u)}, {"items", side.value("items", json::array())},
+                           {"roots", side.value("roots", json::array())}, {"trans", side.value("trans", json::array())},
+                           {"from", side.value("session", std::string()) + "/" + side.value("id", std::string())}};
+            l.globalProb = 100;
+        }else{
+            l.fixed = json();
+            std::set<std::string> seen;
+            for(auto& it : side.value("items", json::array())){
+                std::string ref = it.value("preset", it.value("method", std::string()));
+                if(ref.empty() || seen.count(ref)) continue;
+                seen.insert(ref);
+                Cell c; c.item = ref; c.prob = 100; c.group = 0;
+                l.cells.push_back(c);
+            }
+            l.rows = std::max(1, (int)l.cells.size());
+            l.globalProb = 100;
+            l.groupProb.assign(7, 1.0f);
+        }
+        s.layers = {l};
+        scenes[name] = s;
+        saveScene(scenes[name]);
+        note((freeze ? "froze " : "promoted ") + side.value("id", std::string()) + " as scene " + name);
+        return name;
+    }
+
+    // The harmony of `bars` bars from absolute bar `start`: bars already on the timeline are
+    // reused; if none are, it is made as for one image (makeHarmony) and stored.
+    // Where layer 1 repeats a page, its bars repeat that page's harmony: they are read and stored at
+    // the bar of the page's first copy, so every layer plays the same chords on every repeat.
+    int harmonyBar(int b, const std::vector<PlanEntry>* predicted = nullptr) const {
+        auto fold = [&](const PlanEntry& pe){ return pe.startBar + (b - pe.startBar) % pe.period; };
+        for(auto& pe : layer1Plan) if(pe.startBar <= b && b < pe.startBar + pe.bars) return (pe.period > 0 && pe.period < pe.bars) ? fold(pe) : b;
+        if(predicted) for(auto& pe : *predicted) if(pe.startBar <= b && b < pe.startBar + pe.bars) return (pe.period > 0 && pe.period < pe.bars) ? fold(pe) : b;
+        return b;
+    }
+    // folded: the extra layers fold onto layer 1's repeated pages (planned or predicted); layer 1's
+    // own new page does not (it starts where the plan ends)
+    Harmony harmonyAt(const Scene& s, int start, int bars, bool folded = true){
+        auto predicted = folded ? predictedPlan(start + bars + 1) : std::vector<PlanEntry>();
+        std::vector<int> hb(bars);
+        for(int i = 0; i < bars; i++) hb[i] = folded ? harmonyBar(start + i, &predicted) : start + i;
+        bool any = false;
+        for(int i = 0; i < bars; i++) if(harmonyBars.count(hb[i])){ any = true; break; }
+        Harmony h;
+        if(!any){
+            h = makeHarmony(s, bars, rng);
+            for(int i = 0; i < bars; i++) if(!harmonyBars.count(hb[i])) harmonyBars[hb[i]] = {h.roots[i], h.trans[i]};
+            // a bar folded onto one set just above (a page shorter than this image repeats): read it back
+            for(int i = 0; i < bars; i++){ auto& v = harmonyBars[hb[i]]; h.roots[i] = v.first; h.trans[i] = v.second; }
+        }else{
+            Harmony fill;
+            bool made = false;
+            h.roots.assign(bars, 0); h.trans.assign(bars, 0);
+            for(int i = 0; i < bars; i++){
+                auto it = harmonyBars.find(hb[i]);
+                if(it == harmonyBars.end()){
+                    if(!made){ fill = makeHarmony(s, bars, rng); made = true; }
+                    harmonyBars[hb[i]] = {fill.roots[i], fill.trans[i]};
+                    it = harmonyBars.find(hb[i]);
+                }
+                h.roots[i] = it->second.first;
+                h.trans[i] = it->second.second;
+            }
+        }
+        // forget bars far behind the header
+        int keepFrom = (int)std::floor(schedule->headerBeat / 4.0) - 256;
+        if(!layer1Plan.empty()) keepFrom = std::min(keepFrom, layer1Plan.front().startBar);   // a long repeat folds back to its first page
+        while(!harmonyBars.empty() && harmonyBars.begin()->first < keepFrom) harmonyBars.erase(harmonyBars.begin());
+        return h;
+    }
+
+    // Phase 3: keeps the extra layers of the current scene rendered ahead. Called every frame by
+    // the player. Layer 1 has priority: nothing is asked while a layer-1 request is pending (the
+    // renderer is one queue, and a late layer-1 image repeats on stage).
+    // Returns the request's path ("" if none): the caller sends it to the renderer.
+    // Two: the next image starts showing at the right edge long before the header reaches it.
+    int aheadImages = 2;               // per extra layer: at most this many images beyond the one under the header, ...
+    // ... and each asked for as soon as its deadline (the beat its left edge can first enter the
+    // view: its start minus its length) is within two render times + 2 bars
+    double now = 0;                    // seconds (set by the node every frame)
+    double renderSeconds = 3;          // measured render time (smoothed)
+    // How busy the renderers are with the scene at the header: the new images its layers need per
+    // second (bpm / 60 / (4 x bars x repeat) each) over what the renderers make ((1 + workers) /
+    // render time). Above about 1 they cannot keep up: after a hard cut an extra layer's new image
+    // comes late and the layer is empty until it does (more workers, or Repeat, fix it). 0: unknown.
+    double renderLoad() const {
+        const Scene* s = sceneAtHeader();
+        if(!s) s = currentScene();
+        if(!s || s->layers.empty() || renderSeconds <= 0) return 0;
+        double perSec = 0;
+        for(auto& l : s->layers) perSec += std::max(1, s->bpm) / 60.0 / (4.0 * std::max(1, l.bars) * std::max(1, l.repeat));
+        return perSec * renderSeconds / (1.0 + std::max(0, workerCapacity));
+    }
+    double leadBeats() const {
+        double bpm = 120;
+        if(schedule && !schedule->layers.empty() && schedule->layers[0].header) bpm = std::max(1, schedule->layers[0].header->bpm);
+        return 2 * renderSeconds * bpm / 60.0 + 8;
+    }
+    std::string requestLayers(){
+        if(replaying){ replayLayers(); return ""; }
+        if(session.empty() || layer1Plan.empty()) return "";
+        bool anyLayers = currentScene() && currentScene()->layers.size() > 1;
+        for(auto& pe : layer1Plan){ auto it = scenes.find(pe.scene); if(it != scenes.end() && it->second.layers.size() > 1){ anyLayers = true; break; } }
+        if(!anyLayers) return "";
+        if(workerCapacity > 0){
+            // extra renderers take the extra layers: layer 1 keeps the main renderer to itself
+            int extra = 0;
+            for(auto& [id, img] : pending) if(img->layer > 1 && !img->preview) extra++;
+            if(extra >= workerCapacity) return "";
+        }else{
+            for(auto& [id, img] : pending) if(img->layer == 1 && !img->preview) return "";
+            // keep one place in the renderer queue for layer 1's next GO (a skipped GO repeats on stage)
+            if((int)pending.size() >= maxPending - 1) return "";
+        }
+        double B = schedule->headerBeat;
+        // layer 1's plan, then what it will play next (predicted from the setlist)
+        auto predicted = predictedPlan((int)std::ceil(B / 4.0) + renderAheadBars + 96);
+        auto planOrPredicted = [&](int b) -> const PlanEntry* {
+            if(const PlanEntry* pe = planAt(b)) if(b < pe->startBar + pe->bars) return pe;
+            for(auto& pe : predicted) if(pe.startBar <= b && b < pe.startBar + pe.bars) return &pe;
+            return planAt(b);
+        };
+        // the layer whose next image is due soonest goes first; one request per frame
+        int best = -1, bestBar = 0, bestCut = -1;
+        double bestDeadline = 0;
+        const Scene* bestScene = nullptr;
+        for(int i = 1; i < 4; i++){
+            auto& L = schedule->layer(i);
+            int waiting = 0;
+            for(auto& [id, img] : pending) if(img->layer == i + 1 && !img->cancelled) waiting++;
+            int future = (int)L.ready.size() + waiting;
+            for(auto& sl : L.slots) if(!sl.repeat && sl.start + sl.len > B) future++;
+            if(future > aheadImages + 2) continue;   // a cap, whatever the deadlines
+            // the next start: right after what is placed or asked for, or a few bars ahead of the
+            // header when the layer (re)starts
+            int earliest = (int)std::ceil(B / 4.0) + renderAheadBars;
+            int next = layerNextBar.count(i) ? layerNextBar[i] : earliest;
+            if(L.scheduledEnd >= 0) next = std::max(next, (int)std::ceil(L.scheduledEnd / 4.0 - 1e-6));
+            if(next * 4.0 + 4.0 <= B) next = earliest;   // fell behind: restart ahead
+            // the scene at that bar is layer 1's (its plan); a layer the scene doesn't have is
+            // silent until a planned scene has it again
+            const Scene* s = nullptr;
+            for(int guard = 0; guard < 64; guard++){
+                const PlanEntry* pe = planOrPredicted(next);
+                if(!pe){
+                    // past the prediction too: assume the scene layer 1 asks for next (a different
+                    // choice later is corrected by onSceneChange)
+                    const Scene* cs = currentScene();
+                    if(cs && i < (int)cs->layers.size()) s = cs;
+                    break;
+                }
+                auto it = scenes.find(pe->scene);
+                if(it != scenes.end() && i < (int)it->second.layers.size()){ s = &it->second; break; }
+                next = pe->startBar + pe->bars;                  // skip to the next planned image
+            }
+            if(!s) continue;
+            int bars = s->layers[i].bars;
+            int span = bars * std::max(1, s->layers[i].repeat);   // the page and its repeats
+            // not due yet: its deadline is further than the lead (one image ahead is always kept)
+            double deadline = next * 4.0 - bars * 4.0;
+            if(future >= 1 && deadline - B > leadBeats()) continue;
+            if(future > aheadImages && deadline - B > 0.5 * leadBeats()) continue;
+            // a hard cut inside this image: it stops there and the next one starts at the cut
+            int cut = -1;
+            for(auto& pe : layer1Plan)
+                if(pe.hardCut && pe.startBar > next && pe.startBar < next + span){ cut = pe.startBar; break; }
+            if(cut < 0) for(auto& pe : predicted)
+                if(pe.hardCut && pe.startBar > next && pe.startBar < next + span){ cut = pe.startBar; break; }
+            if(best < 0 || deadline < bestDeadline){ best = i; bestBar = next; bestCut = cut; bestScene = s; bestDeadline = deadline; }
+        }
+        if(best > 0) return makeRequest(false, "", nullptr, best, bestBar, bestScene, bestCut);
+        return "";
+    }
+
+    // Layer 1 planned a scene change at `bar`. The extra layers may already have images asked for
+    // or placed past it (they render ahead): those that start there or later with another scene
+    // are cancelled (unless already on screen) and the layer asks again from `bar`; with a hard
+    // cut, an image that runs across `bar` is cut there.
+    void onSceneChange(int bar, const std::string& scene, bool hard){
+        double cb = bar * 4.0;
+        auto obsolete = [&](const std::shared_ptr<Image>& im){ return im->startBeat >= cb - 1e-6 && im->scene != scene; };
+        for(auto& [id, im] : pending){
+            if(im->layer < 2) continue;
+            double span = im->bars * 4.0 * std::max(1, im->repeat);   // with its repeats
+            if(obsolete(im)) im->cancelled = true;
+            else if(im->startBeat < cb && im->startBeat + span > cb){
+                if(hard){ if(im->cutBeat < 0 || im->cutBeat > cb) im->cutBeat = cb; }
+                else if(im->scene != scene) im->copiesUntil = cb;   // its copies from cb on: the new scene's
+            }
+        }
+        for(int i = 1; i < (int)schedule->layers.size(); i++){
+            auto& L = schedule->layers[i];
+            for(auto it = L.ready.begin(); it != L.ready.end();){
+                if(obsolete(*it)){ it = L.ready.erase(it); continue; }
+                if(hard && (*it)->startBeat < cb && (*it)->startBeat + (*it)->bars * 4.0 > cb) (*it)->cutBeat = cb;
+                ++it;
+            }
+            for(auto it = L.slots.begin(); it != L.slots.end();){
+                if(!it->seen && it->start >= cb - 1e-6 && (it->repeat || it->img->scene != scene)){ it = L.slots.erase(it); continue; }
+                if(hard && it->start < cb && it->end() > cb){ it->cut = cb; if(!it->repeat) it->img->cutBeat = cb; }
+                ++it;
+            }
+            L.scheduledEnd = L.slots.empty() ? -1 : L.slots.back().end();
+            if(layerNextBar.count(i) && layerNextBar[i] > bar) layerNextBar[i] = bar;
+        }
+        syncLog.push_back(std::string(hard ? "hard cut" : "scene change") + " to " + scene + " at bar " + std::to_string(bar));
+    }
+
+    // Only effects (no drawing of its own): previews and thumbnails draw it over the underlay
+    bool onlyEffects(const Preset& pr, int depth = 0) const {
+        if(depth > 4) return false;
+        if(!pr.isStack()) return pr.gen == "effects";
+        if(pr.layers.empty()) return false;
+        for(auto& l : pr.layers){
+            if(l.contains("preset")){
+                auto it = presets.find(l.value("preset", std::string()));
+                if(it == presets.end() || !onlyEffects(it->second, depth + 1)) return false;
+            }else if(l.value("gen", std::string()) != "effects") return false;
+        }
+        return true;
+    }
+
+    // The planned layer-1 image covering absolute bar b (or null if b is past the plan)
+    // What layer 1 will play after its plan if nothing changes: the setlist (or the manual scene)
+    // walked forward from where it is, image by image. The extra layers render ahead with it, so
+    // a scene change (and a hard cut) further ahead than layer 1's own requests is known in time.
+    std::vector<PlanEntry> predictedPlan(int untilBar) const {
+        std::vector<PlanEntry> out;
+        int bar = layer1NextBar;
+        std::string prev = layer1Plan.empty() ? std::string() : layer1Plan.back().scene;
+        int entry = setlistEntry, inEntry = imagesInEntry;
+        bool sl = useSetlist && !setlist.empty();
+        for(int guard = 0; guard < 128 && bar < untilBar; guard++){
+            std::string name = sl ? setlist[entry % setlist.size()].scene : manualScene;
+            bool cutFlag = sl ? setlist[entry % setlist.size()].hardCut : hardCutManual;
+            bool fromLane = false;
+            if(laneSceneAt){
+                bool lc = false;
+                std::string n = laneSceneAt(bar, lc);
+                auto li = scenes.find(n);
+                if(!n.empty() && li != scenes.end() && !li->second.layers.empty()){ name = n; cutFlag = lc; fromLane = true; }
+            }
+            auto it = scenes.find(name);
+            if(it == scenes.end() || it->second.layers.empty()) break;
+            PlanEntry pe; pe.startBar = bar; pe.period = std::max(1, it->second.layers[0].bars);
+            pe.bars = pe.period * std::max(1, it->second.layers[0].repeat); pe.scene = name;
+            pe.hardCut = !prev.empty() && prev != name && cutFlag;
+            out.push_back(pe);
+            prev = name; bar += pe.bars;
+            if(sl && !fromLane){
+                inEntry++;
+                if(inEntry >= std::max(1, setlist[entry % setlist.size()].images)){ inEntry = 0; entry = (entry + 1) % (int)setlist.size(); }
+            }
+        }
+        return out;
+    }
+    // The first hard cut (planned or predicted) at a beat in (a, b], or -1
+    double hardCutIn(double a, double b) const {
+        double best = -1;
+        auto look = [&](const PlanEntry& p){
+            if(!p.hardCut) return;
+            double c = p.startBar * 4.0;
+            if(c > a + 1e-6 && c <= b + 1e-6 && (best < 0 || c < best)) best = c;
+        };
+        for(auto& p : layer1Plan) look(p);
+        for(auto& p : predictedPlan((int)std::ceil(b / 4.0) + 1)) look(p);
+        return best;
+    }
+
+    // The scene layer 1 plays (planned, or predicted from the setlist) at a beat; "" if unknown
+    std::string sceneAtBeat(double beat) const {
+        int b = (int)std::floor(beat / 4.0);
+        for(auto& pe : layer1Plan) if(pe.startBar <= b && b < pe.startBar + pe.bars) return pe.scene;
+        for(auto& pe : predictedPlan(b + 1)) if(pe.startBar <= b && b < pe.startBar + pe.bars) return pe.scene;
+        return "";
+    }
+
+    const PlanEntry* planAt(int b) const {
+        for(auto& pe : layer1Plan) if(pe.startBar <= b && b < pe.startBar + pe.bars) return &pe;
+        if(!layer1Plan.empty() && b < layer1Plan.front().startBar) return &layer1Plan.front();
+        return nullptr;
+    }
+
+    // The scene playing at the header (layer 1's plan at the header bar)
+    const Scene* sceneAtHeader() const {
+        const PlanEntry* pe = planAt((int)std::floor(schedule->headerBeat / 4.0));
+        if(!pe) return nullptr;
+        auto it = scenes.find(pe->scene);
+        return it != scenes.end() ? &it->second : nullptr;
+    }
+
+    // Layer 1's image under the header started at headerStart beats, but its harmony (and plan)
+    // was made for img->startBar: after a repeat, a lost request or a renderer error they differ.
+    // Shift what is still to come by the difference, so the next images line up again.
+    void syncLayer1(const std::shared_ptr<Image>& img, double headerStart){
+        if(replaying && img && replayFirst && img->id == replayFirst->id && img->png == replayFirst->png && std::isnan(replayOrigin)) replayOrigin = headerStart;
+        if(!img || img->startBar < 0) return;
+        int drift = (int)std::lround(headerStart / 4.0) - img->startBar;
+        if(drift == 0) return;
+        layer1NextBar += drift;
+        int from = img->startBar;
+        for(auto& pe : layer1Plan) if(pe.startBar >= from || pe.id == img->id) pe.startBar += drift;
+        // what is still to come (its next copies too) moves with it, so it is not shifted twice
+        for(auto& q : schedule->layers[0].ready) if(q != img && q->startBar >= from) q->startBar += drift;
+        for(auto& [pid, q] : pending) if(q->layer <= 1 && !q->preview && q->startBar >= from) q->startBar += drift;
+        img->startBar += drift;
+        syncLog.push_back("layer 1 is " + std::to_string(drift) + " bars off its plan (repeat or lost image): the plan moves");
+    }
+
+    // A preset's items with values resolved for one image (several for a layered preset)
+    // shared: values laid over every item's params (a stack's own linked pick, passed down)
+    int itemBars = 8;                  // bars of the image being resolved (per-bar choices)
+    json presetItems(const Preset& pr, int depth = 0, const json& shared = json::object(), int clipFrom = -1, int clipTo = -1){
+        json out = json::array();
+        if(depth > 4){ note("presets nested too deep at " + pr.ref() + " (a preset that includes itself?)"); return out; }
+        // per-bar choices: resolve again for every perBar bars, each result clipped to them
+        if(pr.perBar > 0 && clipFrom < 0){
+            int bars = std::max(1, itemBars);
+            for(int b = 0; b < bars; b += pr.perBar)
+                for(auto& it : presetItems(pr, depth, shared, b, std::min(bars, b + pr.perBar))) out.push_back(it);
+            return out;
+        }
+        int layerNo = 0;   // which stack layer an item comes from (for its shareKey)
+        auto clip = [&](json item){
+            if(clipFrom >= 0){ item["clipBars"] = {clipFrom, clipTo}; item["shareKey"] = pr.ref() + "#" + std::to_string(layerNo); }
+            return item;
+        };
+        if(pr.isStack()){
+            // the stack's own linked pick: one choice per image, shared by all its layers
+            json sharedHere = shared;
+            if(!pr.linked.empty()){ json pick = json::object(); applyLinked(pick, pr.linked, rng); for(auto& [k, v] : pick.items()) sharedHere[k] = v; }
+            // which layers play in this image
+            std::vector<bool> on(pr.layers.size(), true);
+            if(pr.pick == "group" && !pr.layers.empty()){
+                // groups in order of first appearance; a layer without a group is its own group
+                std::vector<int> keys; std::vector<float> weights;
+                auto keyOf = [&](size_t i){ return pr.layers[i].value("group", -1 - (int)i); };
+                for(size_t i = 0; i < pr.layers.size(); i++){
+                    int k = keyOf(i);
+                    if(std::find(keys.begin(), keys.end(), k) == keys.end()){
+                        keys.push_back(k);
+                        weights.push_back(std::max(0.0f, pr.layers[i].value("weight", 1.0f)));
+                    }
+                }
+                float total = 0;
+                for(float w : weights) total += w;
+                float r = uniform(rng, total), acc = 0;
+                int chosen = keys.back();
+                for(size_t j = 0; j < keys.size(); j++){ acc += weights[j]; if(r < acc){ chosen = keys[j]; break; } }
+                for(size_t i = 0; i < on.size(); i++) on[i] = keyOf(i) == chosen;
+            }else if(pr.pick == "one" && !pr.layers.empty()){
+                float total = 0;
+                for(auto& l : pr.layers) total += std::max(0.0f, l.value("weight", 1.0f));
+                float r = uniform(rng, total), acc = 0;
+                size_t chosen = pr.layers.size() - 1;
+                for(size_t i = 0; i < pr.layers.size(); i++){
+                    acc += std::max(0.0f, pr.layers[i].value("weight", 1.0f));
+                    if(r < acc){ chosen = i; break; }
+                }
+                for(size_t i = 0; i < on.size(); i++) on[i] = i == chosen;
+            }
+            std::map<int, bool> groupRoll;
+            for(size_t i = 0; i < pr.layers.size(); i++){
+                const json& l = pr.layers[i];
+                if(!on[i] || !l.contains("chance")) continue;
+                // in "pick: group" mode the group is already chosen: chance rolls per layer
+                if(pr.pick == "group"){ on[i] = uniform(rng, 100) < l.value("chance", 100.0f); continue; }
+                float ch = l.value("chance", 100.0f);
+                int grp = l.value("group", -1 - (int)i);   // no group: its own roll
+                if(!groupRoll.count(grp)) groupRoll[grp] = uniform(rng, 100) < ch;
+                on[i] = groupRoll[grp];
+            }
+            for(size_t i = 0; i < pr.layers.size(); i++){
+                if(!on[i]) continue;
+                layerNo = (int)i;
+                auto& l = pr.layers[i];
+                if(l.contains("preset")){
+                    // a layer that plays another preset
+                    std::string r = l.value("preset", std::string());
+                    auto pi = presets.find(r);
+                    if(r == pr.ref()){ note("stack " + pr.ref() + " includes itself"); continue; }
+                    if(pi == presets.end()){ note("layer preset " + r + " not found (" + pr.ref() + ")"); continue; }
+                    // order, as for plain layers: the layer's "params", then the stack's shared
+                    // pick, then the layer's own "linked"
+                    json sh = (l.contains("params") && l["params"].is_object()) ? l["params"] : json::object();
+                    for(auto& [k, v] : sharedHere.items()) sh[k] = v;
+                    if(l.contains("linked")){ json pick = json::object(); applyLinked(pick, l["linked"], rng); for(auto& [k, v] : pick.items()) sh[k] = v; }
+                    for(auto& it : presetItems(pi->second, depth + 1, sh, clipFrom, clipTo)) out.push_back(it);
+                    continue;
+                }
+                Preset layer;
+                layer.gen = l.value("gen", std::string());
+                layer.params = l.value("params", json::object());
+                for(auto& [k, v] : sharedHere.items()) layer.params[k] = v;
+                layer.linked = l.value("linked", json::array());
+                int lpb = std::max(0, l.value("perBar", 0));
+                if(lpb > 0 && clipFrom < 0){
+                    // this layer alone is redrawn per bar
+                    const GenDef* lg = findGen(layer.gen);
+                    if(!lg){ note("layer generator " + layer.gen + " unknown to the renderer (" + pr.ref() + ")"); continue; }
+                    int bars = std::max(1, itemBars);
+                    for(int b = 0; b < bars; b += lpb)
+                    {
+                        json it = item(*lg, pr.ref(), resolve(*lg, layer, rng));
+                        it["clipBars"] = {b, std::min(bars, b + lpb)};
+                        it["shareKey"] = pr.ref() + "#" + std::to_string(i);
+                        out.push_back(it);
+                    }
+                    continue;
+                }
+                const GenDef* g = findGen(layer.gen);
+                if(!g){ note("layer generator " + layer.gen + " unknown to the renderer (" + pr.ref() + ")"); continue; }
+                out.push_back(clip(item(*g, pr.ref(), resolve(*g, layer, rng))));
+            }
+            return out;
+        }
+        const GenDef* g = findGen(pr.gen);
+        if(!g){ note("generator " + pr.gen + " unknown to the renderer (" + pr.ref() + ")"); return out; }
+        if(!shared.empty()){
+            Preset withShared = pr;
+            for(auto& [k, v] : shared.items()) withShared.params[k] = v;
+            out.push_back(clip(item(*g, pr.ref(), resolve(*g, withShared, rng))));
+            return out;
+        }
+        out.push_back(clip(item(*g, pr.ref(), resolve(*g, pr, rng))));
+        return out;
+    }
+
+    // Editor previews with a scene's bars, harmony, scale and palette: one request per variant
+    // (tag, items), all with the same seed and harmony, so an A/B differs only in what is compared.
+    // They are shown in the editor and never scroll in.
+    // Instruments tab previews: "Same seed" re-renders the last preview's image (its renderer seed,
+    // harmony and the draws of the preset's ranges), so a parameter change is seen on the same
+    // image; off (or Reroll), each preview is a new one
+    bool previewLock = false;
+    unsigned previewSeed = 0, previewItemsSeed = 0;
+    std::string previewSeedScene;
+    Harmony previewHarmony;
+    bool previewSeedSet = false;
+    // the seed to resolve a preset's ranges with, for the next preview
+    unsigned nextPreviewItemsSeed(){
+        if(!previewLock || !previewSeedSet) previewItemsSeed = rng() & 0x7fffffff;
+        return previewItemsSeed;
+    }
+    // resolves a preset's items with a given seed, leaving the engine's own random stream as it was
+    json presetItemsSeeded(const Preset& pr, unsigned seed){
+        Rng saved = rng;
+        rng.seed(seed);
+        json items = json::array();
+        for(auto& x : presetItems(pr)) items.push_back(x);
+        rng = saved;
+        return items;
+    }
+
+    std::vector<std::string> makePreviews(const std::string& sceneName, const std::vector<std::pair<std::string, json>>& variants){
+        std::vector<std::string> paths;
+        if(session.empty()) newSession();
+        auto sit = scenes.find(sceneName);
+        if(sit == scenes.end() || sit->second.layers.empty()){ note("no scene to preview with"); return paths; }
+        const Scene& s = sit->second;
+        const LayerDef& l = s.layers[0];
+        unsigned seed;
+        Harmony h;
+        if(previewLock && previewSeedSet && previewSeedScene == sceneName){ seed = previewSeed; h = previewHarmony; }
+        else{
+            seed = rng() & 0x7fffffff;
+            h = makeHarmony(s, l.bars, rng);
+            previewSeed = seed; previewHarmony = h; previewSeedScene = sceneName; previewSeedSet = true;
+        }
+        const ScaleDef* sd = findScale(s.scale);
+        const PaletteDef* pd = findPalette(s.palette);
+        for(auto& [tag, items] : variants){
+            auto img = std::make_shared<Image>();
+            char idbuf[16];
+            snprintf(idbuf, sizeof(idbuf), "%04d", counter++);
+            img->id = idbuf;
+            img->scene = s.name;
+            img->bars = l.bars;
+            img->bpm = s.bpm;
+            img->notegrid = s.notegrid;
+            img->palette = s.palette;
+            img->scale = s.scale;
+            img->snapshot = s.snapshot;
+            img->seed = seed;
+            img->roots = h.roots;
+            img->trans = h.trans;
+            img->preview = true;
+            img->previewOf = tag;
+            json req{{"id", img->id}, {"layer", 1}, {"session", session}, {"seed", seed},
+                     {"size", {width, height}}, {"scene", s.name}, {"snapshot", s.snapshot},
+                     {"bars", l.bars}, {"notegrid", s.notegrid}, {"bpm", s.bpm},
+                     {"roots", h.roots}, {"trans", h.trans}, {"compat", s.compat}, {"preview", tag}};
+            req["scale"] = sd ? sd->legacyIndex : -1;
+            req["palette"] = pd ? pd->legacyIndex : -1;
+            if(sd){ req["scaleName"] = sd->name; req["scaleNotes"] = sd->notes; }
+            if(pd){ req["paletteName"] = pd->name; req["paletteColors"] = pd->colors; }
+            req["items"] = items;
+            fs::path p = sessionDir() / "requests" / (img->id + ".json");
+            writeJsonAtomic(p, req);
+            pending[img->id] = img;
+            pendingSince[img->id] = std::chrono::steady_clock::now();
+            paths.push_back(p.string());
+            note("preview " + tag + " " + img->id + " (" + std::to_string(items.size()) + " items)");
+        }
+        return paths;
+    }
+
+    void onError(const std::string& id, const std::string& msg){
+        if(!pending.count(id)){ note("late answer for " + id + " (sent twice): " + msg); return; }
+        pending.erase(id);
+        pendingSince.erase(id);
+        errors++;
+        note("ERROR " + id + ": " + msg);
+    }
+
+    // Macro_3's outputs for the image under the header
+    struct HeaderValues {
+        int bpm = 120, bars = 8, notegrid = 100, root = 0, trans = 0, snapshot = -1;
+        std::vector<float> scale {0};
+        bool valid = false;
+    };
+    HeaderValues headerValues(int barIn) const {
+        HeaderValues v;
+        auto& h = schedule->layers[0].header;
+        if(!h) return v;
+        v.valid = true;
+        v.bpm = h->bpm;
+        v.bars = h->bars;
+        v.notegrid = h->notegrid;
+        v.snapshot = h->snapshot;
+        if(!h->scaleNotes.empty()) v.scale = h->scaleNotes;
+        // Vector Getter: index clamped to the vector
+        auto at = [&](const std::vector<int>& vec){
+            if(vec.empty()) return 0;
+            int i = std::max(0, std::min(barIn, (int)vec.size() - 1));
+            return vec[i];
+        };
+        v.root = at(h->roots);
+        v.trans = at(h->trans);
+        return v;
+    }
+};
+
+} // namespace forms
