@@ -177,7 +177,7 @@ public:
         addInspectorParameter(prime.set("Prime", 2, 0, 8));
         // a new image replaces the one under the header as soon as it is ready (instead of
         // scrolling in from the right edge); off = as before
-        addInspectorParameter(immediateReplace.set("Immediate Replace", false));
+        addInspectorParameter(immediateReplace.set("Replace at Playhead", false));
         addInspectorParameter(pitchclassFolder.set("Pitchclass", "Supercollider/Pitchclass"));
         listeners.push(pitchclassFolder.newListener([this](string&){ reload(); }));
         addInspectorParameter(builtInPlayer.set("Built-in Player", true));

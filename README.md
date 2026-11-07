@@ -491,7 +491,7 @@ are bit-identical before and after, also drawn in parallel.
 - **Drawing:** round points use a per-width coverage table with inside / outside shortcuts, the
   straight-alpha conversion a lookup table, the spectral cell's envelope is computed once per
   column: about 19% less CPU, same pixels.
-- **Immediate Replace** (inspector, off by default, all layers): a new image replaces the one under
+- **Replace at Playhead** (inspector, off by default, all layers): a new image replaces the one under
   the header as soon as it is ready, instead of scrolling in from the right edge. The beat under
   the header stays continuous; the image shows (wrapped) until the next one arrives.
 
