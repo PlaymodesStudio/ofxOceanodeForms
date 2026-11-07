@@ -240,6 +240,8 @@ private:
     std::string selPreset, renameFor, previewScene, previewShownRef, listActive;
     char presetFilter[64] = "";
     bool justSelected = false;
+    int instrumentsFrame = -10;      // the last frame the tab was drawn (opening it: frame gap)
+    std::string playingFor;          // the playing scene the tab last followed
     bool useUnderlay = false;
     bool flipView = false;
     std::string stackFor, procTab;

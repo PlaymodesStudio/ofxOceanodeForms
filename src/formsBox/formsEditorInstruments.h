@@ -88,11 +88,78 @@ inline void Editor::drawInstrumentsTab(){
     if(selPreset.empty() && !engine->presets.empty()) selPreset = engine->presets.begin()->first;
     if(previewScene.empty() || !engine->scenes.count(previewScene)) previewScene = selected;
 
-    // --- list: one foldable section per generator (and Stack), with a filter
+    // the scene playing (under the header), else the one selected in Scenes; its instruments per
+    // layer (cells with a chance), and the presets a stack of it plays
+    std::string playing;
+    if(engine->schedule && !engine->schedule->layers.empty() && engine->schedule->layers[0].header)
+        playing = engine->schedule->layers[0].header->scene;
+    bool isPlaying = !playing.empty() && engine->scenes.count(playing);
+    std::string sceneHere = isPlaying ? playing : selected;
+    struct Use { std::string ref; int layer; float prob; int depth; };
+    std::vector<Use> uses;
+    std::set<std::string> inScene;
+    if(auto sit = engine->scenes.find(sceneHere); sit != engine->scenes.end()){
+        std::function<void(const std::string&, int, float, int)> add = [&](const std::string& r, int l, float pb, int d){
+            auto pi = engine->presets.find(r);
+            if(pi == engine->presets.end() || d > 4) return;
+            uses.push_back({r, l, pb, d});
+            inScene.insert(r);
+            if(pi->second.isStack())
+                for(auto& ly : pi->second.layers){
+                    std::string inner = ly.is_object() ? ly.value("preset", std::string()) : std::string();
+                    if(!inner.empty()) add(inner, l, pb, d + 1);
+                }
+        };
+        auto& L = sit->second.layers;
+        for(int l = 0; l < (int)L.size(); l++){
+            std::set<std::string> seen;
+            for(int c = 0; c < (int)L[l].cells.size() && c < L[l].rows; c++){
+                auto& cell = L[l].cells[c];
+                if(cell.item.empty() || cell.prob <= 0 || !seen.insert(cell.item).second) continue;
+                add(cell.item, l, cell.prob, 0);
+            }
+        }
+    }
+    // opening the tab, or the playing scene changing: select one of its instruments (unless the
+    // selection is already one of them)
+    bool opened = ImGui::GetFrameCount() - instrumentsFrame > 1;
+    instrumentsFrame = ImGui::GetFrameCount();
+    if((opened || sceneHere != playingFor) && !uses.empty() && !inScene.count(selPreset)){
+        selPreset = uses[0].ref;
+    }
+    playingFor = sceneHere;
+
+    // --- list: the scene's instruments, then one foldable section per generator (and Stack)
     ImGui::BeginChild("##presetList", ImVec2(250 * zz, 0), ImGuiChildFlags_Borders);
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##pfilter", "filter presets", presetFilter, sizeof(presetFilter));
     std::string q = ofToLower(presetFilter);
+    if(!sceneHere.empty()){
+        ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
+        std::string head = std::string(isPlaying ? "Playing: " : "Scene: ") + sceneHere + "  (" + std::to_string(uses.size()) + ")###sceneInstruments";
+        if(ImGui::TreeNodeEx(head.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding)){
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip(isPlaying ? "The instruments of the scene under the header" : "Nothing playing: the scene selected in Scenes");
+            int lastLayer = -1;
+            auto sit = engine->scenes.find(sceneHere);
+            bool multi = sit != engine->scenes.end() && sit->second.layers.size() > 1;
+            for(size_t i = 0; i < uses.size(); i++){
+                auto& u = uses[i];
+                if(!q.empty() && ofToLower(u.ref).find(q) == std::string::npos) continue;
+                if(multi && u.layer != lastLayer){ ImGui::TextDisabled("Layer %d", u.layer + 1); lastLayer = u.layer; }
+                auto& p = engine->presets[u.ref];
+                ImGui::PushStyleColor(ImGuiCol_Text, genColour(p.gen));
+                ImGui::Indent((float)u.depth * 12 * zz);
+                std::string label = p.name + (dirtyPresets.count(u.ref) ? "  *" : "") + (u.depth ? "" : "   " + std::to_string((int)std::lround(u.prob)) + "%") + "##use" + std::to_string(i);
+                if(ImGui::Selectable(label.c_str(), selPreset == u.ref)) selPreset = u.ref;
+                ImGui::Unindent((float)u.depth * 12 * zz);
+                ImGui::PopStyleColor();
+                if(ImGui::IsItemHovered()) methodTooltip(u.ref);
+            }
+            if(uses.empty()) ImGui::TextDisabled("no instruments (legacy methods only)");
+            ImGui::TreePop();
+        }
+        ImGui::Separator();
+    }
     std::vector<std::pair<std::string, std::string>> sections;   // gen, label
     for(auto& g : engine->gens) sections.push_back({g.name, g.label});
     sections.push_back({"stack", "Stack"});
