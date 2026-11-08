@@ -33,7 +33,7 @@ void formsScroller::setup(){
     //addParameter(scale.set("Scale", {0}, {0}, {24}));
     //addParameter(notegrid.set("Notegrid", 120, 24, 999));
     addParameter(nextFileToLoad.set("Next File", ""));
-    addParameter(currentFileInHeader.set("In Header", ""));
+    addOutputParameter(currentFileInHeader.set("In Header", ""));
     addOutputParameter(output.set("Output", nullptr));
     
     fbo.allocate(width, height);

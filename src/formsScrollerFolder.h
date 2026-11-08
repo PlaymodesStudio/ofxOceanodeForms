@@ -18,9 +18,9 @@ public:
         addParameter(header.set("Header", 0.25, 0, 1));
         addParameter(selectFolderButton.set("Select Folder", false));
         addParameter(folderPath.set("Folder", ""));
-        addParameter(numImages.set("Num Imgs", 0, 0, INT_MAX));
-        addParameter(nextFileToLoad.set("Next File", ""));
-        addParameter(lastLoadedFile.set("Last File", ""));
+        addOutputParameter(numImages.set("Num Imgs", 0, 0, INT_MAX));
+        addOutputParameter(nextFileToLoad.set("Next File", ""));
+        addOutputParameter(lastLoadedFile.set("Last File", ""));
         addParameter(nextButton.set("Next Image", false));
         addOutputParameter(currentImageNumber.set("Current", 1, 1, INT_MAX));
         addOutputParameter(output.set("Output", nullptr));
@@ -32,7 +32,7 @@ public:
         vector<int> defaultScale = {0}; // Default scale with one note
         vector<int> minScale(1, 0); // Minimum value for each note
         vector<int> maxScale(1, 11); // Maximum value for each note (assuming 0-11 for 12 notes in an octave)
-        addParameter(scale.set("Scale", defaultScale, minScale, maxScale));
+        addOutputParameter(scale.set("Scale", defaultScale, minScale, maxScale));
         addOutputParameter(range.set("Range", 0, 0, INT_MAX));
 
         
