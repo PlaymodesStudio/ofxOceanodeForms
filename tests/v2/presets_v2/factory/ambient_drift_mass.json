@@ -1,0 +1,22 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "ambient_drift_mass",
+  "notes": "From the scene \"ambient drift\" (mass).",
+  "phrase": {
+    "length": 16
+  },
+  "sequencer": {
+    "hits": 1,
+    "mode": "euclidean",
+    "steps": 4
+  },
+  "tags": [
+    "ambient drift"
+  ],
+  "type": "mass",
+  "version": 1
+}

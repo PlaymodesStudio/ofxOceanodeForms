@@ -1,0 +1,217 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "effects on layer buses and cover below",
+  "version": 1,
+  "notes": "Layer 1 (melody + Time FX): a 0.5-beat reverse right before each snare (beats 2 and 4), and a stutter on the last beat of each bar. Layer 0 (texture + Filter FX): a band filter whose amount swells across each phrase. A kick shape on layer 2 covers (erases) the layers below with a short release.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "cloud",
+      "type": "texture",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "cell": "nebula",
+        "bandLow": 0,
+        "bandHigh": 1,
+        "density": 0.7
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "bandfx",
+      "type": "filterfx",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "effect": "band",
+        "shape": "swell",
+        "amount": 0.8,
+        "bandLow": 0.3,
+        "bandHigh": 0.6
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "mel",
+      "type": "melody",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 5,
+        "partials": 5,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.6,
+        "steps": 16,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "prerev",
+      "type": "timefx",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "effect": "reverse",
+        "slotBeats": 0.5
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": ".x...x..",
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "laststut",
+      "type": "timefx",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "effect": "stutter",
+        "slotBeats": 1,
+        "stutterDiv": 8
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "......x.",
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "snare",
+      "type": "snare",
+      "layer": 3,
+      "follow": "off",
+      "params": {
+        "cell": "burst"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "..x...x.",
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "kickshape",
+      "type": "shapes",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "shape": "ellipse",
+        "heightCenter": 0.5,
+        "heightSize": 0.6,
+        "shapeLength": 0.5,
+        "coverEnable": true,
+        "coverDilate": 6,
+        "coverRelease": 0.5,
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x...x...",
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

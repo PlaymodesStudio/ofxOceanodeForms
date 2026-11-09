@@ -1,0 +1,137 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "euclidean vs probability vs typed",
+  "version": 1,
+  "notes": "Three hit lanes, same sound: euclidean 5 in 16 (even, rotating), probability 0.4 (new each phrase), typed pattern 'x..x..x.|X.x.x...' (one alternative chosen per phrase, X accented, ? half chance).",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "euclid",
+      "type": "hats",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "cell": "block",
+        "heightLow": 0.7,
+        "heightHigh": 0.9,
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 5,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "prob",
+      "type": "hats",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "cell": "block",
+        "heightLow": 0.4,
+        "heightHigh": 0.6
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.4,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "typed",
+      "type": "hats",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "block",
+        "heightLow": 0.1,
+        "heightHigh": 0.3,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x..x..x.|X.x.x..?",
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

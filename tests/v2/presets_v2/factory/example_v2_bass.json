@@ -1,0 +1,35 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {
+    "colourRole": "bass",
+    "partials": 3,
+    "thickness": 16
+  },
+  "modulation": [],
+  "name": "example_v2_bass",
+  "notes": "From the scene \"example v2\" (bass).",
+  "phrase": {
+    "length": 8,
+    "variation": {
+      "amount": 0.3,
+      "pitch": "mutate",
+      "rhythm": "new"
+    }
+  },
+  "sequencer": {
+    "density": 0.45,
+    "mode": "probability",
+    "noteLength": 0.8,
+    "octave": -1,
+    "pitchSource": "scale",
+    "range": 5,
+    "scaleMode": "walk"
+  },
+  "tags": [
+    "example v2"
+  ],
+  "type": "bass",
+  "version": 1
+}

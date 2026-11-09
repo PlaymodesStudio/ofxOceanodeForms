@@ -1,0 +1,27 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "breakbeat_snare",
+  "notes": "From the scene \"breakbeat\" (snare).",
+  "phrase": {
+    "length": 8,
+    "variation": {
+      "amount": 0.3,
+      "pitch": "keep",
+      "rhythm": "mutate"
+    }
+  },
+  "sequencer": {
+    "mode": "pattern",
+    "pattern": "....x.......x..x",
+    "steps": 16
+  },
+  "tags": [
+    "breakbeat"
+  ],
+  "type": "snare",
+  "version": 1
+}

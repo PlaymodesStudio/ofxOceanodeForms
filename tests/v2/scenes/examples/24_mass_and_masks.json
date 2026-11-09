@@ -1,0 +1,180 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "mass strands and masks",
+  "version": 1,
+  "notes": "Mass strands gliding with a steep ease (sloped strokes stay as thick as flat ones), a noise mask scoped to the mass instance, a page window over layer 1 and a tile squeeze on layer 1's last beat. Checks the GPU against the CPU for Mass coverage / slope / width and the noise, page and tile effects.",
+  "bpm": 100,
+  "seed": 2024,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "mass",
+      "type": "mass",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "heightFrom": 0.15,
+        "heightTo": 0.8,
+        "strands": 6,
+        "lineWidth": 3,
+        "spread": 0.2,
+        "glideShape": "ease"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "holes",
+      "type": "filterfx",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "effect": "noise",
+        "fxScope": "instance",
+        "fxTarget": "mass",
+        "amount": 0.9,
+        "noiseScale": 0.1,
+        "noiseContrast": 1.5
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "mel",
+      "type": "melody",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 4,
+        "partials": 4,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.7,
+        "steps": 16,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "pagefx",
+      "type": "filterfx",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "effect": "page",
+        "amount": 1,
+        "pagePower": 2
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "squeeze",
+      "type": "timefx",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "effect": "tile",
+        "slotBeats": 1,
+        "repeats": 3
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "......x.",
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

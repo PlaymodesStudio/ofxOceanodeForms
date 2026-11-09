@@ -1,0 +1,121 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "retuning on screen",
+  "version": 1,
+  "notes": "Retuning on screen (5.13): retune 'ahead' with a 2-beat ease. When the performer jumps the harmony (Perform: harmony override jump), the melody and bass notes already planned but not yet at the playhead glide to their new degrees; notes already past stay. 'all' would also move the passed notes; 'new' keeps the old behaviour (only new phrases change).",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "mel",
+      "type": "melody",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 6,
+        "partials": 4,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.7,
+        "steps": 8,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "bass",
+      "type": "bass",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "thickness": 14,
+        "partials": 3,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x.x.",
+        "steps": 8,
+        "octave": -1
+      },
+      "phrase": {
+        "length": 8
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {},
+  "retune": "ahead",
+  "retuneBeats": 2,
+  "retuneCurve": "ease"
+}

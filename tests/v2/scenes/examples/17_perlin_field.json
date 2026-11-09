@@ -1,0 +1,148 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "Perlin field mask",
+  "version": 1,
+  "notes": "A full-screen cloud texture masked out (holes) by a Perlin field in general scope: one continuous field of islands across phrases that drifts with the content. A filterfx blob effect on layer 1 shows the layer-bus version: torn full-height windows (tear preset) over the bass line every 4 beats.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "cl",
+      "type": "texture",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "cell": "cloud",
+        "bandLow": 0,
+        "bandHigh": 1,
+        "density": 0.9,
+        "blob": "custom",
+        "blobPlacement": "perlin",
+        "blobMode": "out",
+        "blobScope": "general",
+        "blobSizeBeats": 3,
+        "blobSizeHeight": 0.25,
+        "blobThreshold": 0.5,
+        "blobOctaves": 3,
+        "blobSoftness": 0.4
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "bass",
+      "type": "bass",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 16,
+        "partials": 6,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.6,
+        "pitchSource": "scale",
+        "octave": -1
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "tears",
+      "type": "filterfx",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "effect": "blob",
+        "blob": "tear",
+        "blobPlacement": "fullHeight",
+        "blobCount": 3,
+        "blobScope": "phrase"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

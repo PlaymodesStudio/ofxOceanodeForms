@@ -1,0 +1,27 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "ambient_drift_pad",
+  "notes": "From the scene \"ambient drift\" (pad).",
+  "phrase": {
+    "length": 32
+  },
+  "sequencer": {
+    "hold": true,
+    "level": 0.5,
+    "mode": "pattern",
+    "pattern": "x",
+    "pitchSource": "chord",
+    "steps": 1,
+    "voices": 4,
+    "voicing": "open"
+  },
+  "tags": [
+    "ambient drift"
+  ],
+  "type": "chords",
+  "version": 1
+}

@@ -1,0 +1,22 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "breakbeat_ghost",
+  "notes": "From the scene \"breakbeat\" (ghost).",
+  "phrase": {
+    "length": 4
+  },
+  "sequencer": {
+    "followId": "kick",
+    "followMode": "skipped",
+    "mode": "follow"
+  },
+  "tags": [
+    "breakbeat"
+  ],
+  "type": "snare",
+  "version": 1
+}

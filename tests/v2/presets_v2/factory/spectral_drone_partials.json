@@ -1,0 +1,32 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "spectral_drone_partials",
+  "notes": "From the scene \"spectral drone\" (partials).",
+  "phrase": {
+    "length": [
+      16,
+      32
+    ],
+    "quant": "bars",
+    "variation": {
+      "amount": 0.25,
+      "pitch": "mutate",
+      "rhythm": "mutate"
+    }
+  },
+  "sequencer": {
+    "density": 0.1,
+    "mode": "probability",
+    "pitchSource": "chord",
+    "range": 12
+  },
+  "tags": [
+    "spectral drone"
+  ],
+  "type": "bells",
+  "version": 1
+}

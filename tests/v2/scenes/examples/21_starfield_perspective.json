@@ -1,0 +1,159 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "starfield in perspective",
+  "version": 1,
+  "notes": "Example 04 with perspective on: per-event depth becomes z, so far stars are smaller, nearer the vanishing point and dimmer (fog, a little depth of field); every star is at its flat size and position when it crosses the playhead.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "stars",
+      "type": "hats",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "cell": "dot",
+        "dotSize": 4,
+        "scatter": 1,
+        "heightLow": 0.05,
+        "heightHigh": 0.95
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.7,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 8
+      },
+      "routings": [
+        {
+          "source": "random1",
+          "dest": "depth",
+          "amount": 1,
+          "level": "event",
+          "min": 0.15,
+          "max": 3,
+          "sourceParams": {
+            "scope": "event"
+          }
+        },
+        {
+          "source": "random1",
+          "dest": "size",
+          "amount": 1,
+          "level": "event",
+          "min": 0.3,
+          "max": 3,
+          "sourceParams": {
+            "scope": "event"
+          }
+        },
+        {
+          "source": "random1",
+          "dest": "brightness",
+          "amount": 1,
+          "level": "event",
+          "min": 0.3,
+          "max": 1.6,
+          "sourceParams": {
+            "scope": "event"
+          }
+        }
+      ]
+    },
+    {
+      "id": "kick",
+      "type": "kick",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "taiko",
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 2
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {},
+  "view3d": {
+    "perspective": true,
+    "perspAmount": 1.5,
+    "vanishX": 0.7,
+    "vanishY": 0.55,
+    "fog": 0.6,
+    "dof": 0.3
+  }
+}

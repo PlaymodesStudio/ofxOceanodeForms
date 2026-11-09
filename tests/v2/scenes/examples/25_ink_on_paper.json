@@ -1,0 +1,180 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "ink on paper",
+  "version": 1,
+  "notes": "Dark inks on a white background: the dark-ink palette, layers composited with multiply (and darken on the hats), read in dark-ink mode so darker ink is louder and the white paper stays silent. The layer blends in \"layers\" stay lighten for older readers; the \"paper\" object overrides them.",
+  "bpm": 90,
+  "seed": 1920,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "paper": {
+    "darkInk": true,
+    "background": [
+      1,
+      1,
+      1
+    ],
+    "layers": [
+      {
+        "reading": "darkInk",
+        "blend": "multiply"
+      },
+      {
+        "reading": "darkInk",
+        "blend": "multiply"
+      },
+      {
+        "reading": "darkInk",
+        "blend": "darken"
+      },
+      {
+        "reading": "darkInk",
+        "blend": "multiply"
+      }
+    ]
+  },
+  "instances": [
+    {
+      "id": "wash",
+      "type": "texture",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "cell": "cloud",
+        "bandLow": 0.1,
+        "bandHigh": 0.5,
+        "density": 0.5,
+        "colourRole": "shadow"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "pad",
+      "type": "chords",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 3,
+        "partials": 3,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x...",
+        "steps": 4
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "hats",
+      "type": "hats",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "line",
+      "type": "melody",
+      "layer": 3,
+      "follow": "chord",
+      "params": {
+        "thickness": 4,
+        "partials": 2
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.6,
+        "steps": 8,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

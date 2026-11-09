@@ -1,0 +1,22 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "spectral_drone_sweep",
+  "notes": "From the scene \"spectral drone\" (sweep).",
+  "phrase": {
+    "length": 32
+  },
+  "sequencer": {
+    "hits": 1,
+    "mode": "euclidean",
+    "steps": 2
+  },
+  "tags": [
+    "spectral drone"
+  ],
+  "type": "sweep",
+  "version": 1
+}

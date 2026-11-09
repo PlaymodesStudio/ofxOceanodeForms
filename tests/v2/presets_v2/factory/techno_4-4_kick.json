@@ -1,0 +1,22 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "techno_4-4_kick",
+  "notes": "From the scene \"techno 4-4\" (kick).",
+  "phrase": {
+    "length": 4
+  },
+  "sequencer": {
+    "mode": "pattern",
+    "pattern": "x...x...x...x...",
+    "steps": 16
+  },
+  "tags": [
+    "techno 4-4"
+  ],
+  "type": "kick",
+  "version": 1
+}

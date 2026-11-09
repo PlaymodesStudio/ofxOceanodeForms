@@ -1,0 +1,22 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "spectral_drone_dust",
+  "notes": "From the scene \"spectral drone\" (dust).",
+  "phrase": {
+    "length": 16
+  },
+  "sequencer": {
+    "density": 0.08,
+    "mode": "probability",
+    "steps": 16
+  },
+  "tags": [
+    "spectral drone"
+  ],
+  "type": "hats",
+  "version": 1
+}

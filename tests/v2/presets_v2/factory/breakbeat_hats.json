@@ -1,0 +1,22 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "breakbeat_hats",
+  "notes": "From the scene \"breakbeat\" (hats).",
+  "phrase": {
+    "length": 8
+  },
+  "sequencer": {
+    "density": 0.55,
+    "mode": "probability",
+    "steps": 16
+  },
+  "tags": [
+    "breakbeat"
+  ],
+  "type": "hats",
+  "version": 1
+}

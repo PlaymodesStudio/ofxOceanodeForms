@@ -1,0 +1,163 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "effect scopes: per-element echo, per-instance insert",
+  "version": 1,
+  "notes": "Effect scopes (5.12). Layer 1 holds a melody and chords. A Time FX echo with scope element and target mel throws three fading copies after each melody note only (the chords are not echoed). A Filter FX gate with scope instance and target chords chops the chords' own drawing; the melody on the same layer is untouched.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "mel",
+      "type": "melody",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 6,
+        "partials": 4,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x..x..x.",
+        "steps": 8,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "pad",
+      "type": "chords",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 8,
+        "partials": 3
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "chord",
+        "hold": true
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "echo",
+      "type": "timefx",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "effect": "echo",
+        "fxScope": "element",
+        "fxTarget": "mel",
+        "echoCount": 3,
+        "echoDecay": 0.55,
+        "echoSpacing": 0.33,
+        "slotBeats": 4
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "gate",
+      "type": "filterfx",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "effect": "gate",
+        "fxScope": "instance",
+        "fxTarget": "pad",
+        "amount": 1,
+        "gateRate": 0.25,
+        "gateDuty": 0.5
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

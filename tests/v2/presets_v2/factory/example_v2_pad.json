@@ -1,0 +1,33 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {
+    "bloom": 0.5,
+    "colourRole": "highlight",
+    "look": "additive",
+    "partials": 6,
+    "thickness": 10
+  },
+  "modulation": [],
+  "name": "example_v2_pad",
+  "notes": "From the scene \"example v2\" (pad).",
+  "phrase": {
+    "length": 16
+  },
+  "sequencer": {
+    "hold": true,
+    "level": 0.6,
+    "mode": "pattern",
+    "pattern": "x",
+    "pitchSource": "chord",
+    "steps": 1,
+    "voices": 4,
+    "voicing": "open"
+  },
+  "tags": [
+    "example v2"
+  ],
+  "type": "chords",
+  "version": 1
+}

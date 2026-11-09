@@ -1,0 +1,138 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "random phrase lengths",
+  "version": 1,
+  "notes": "Each instrument draws its next phrase length at random (hats 2-8 beats, bass 4-16). Variations arrive at unpredictable but on-grid moments; the kick stays fixed as the reference.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "kick",
+      "type": "kick",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "taiko",
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 4
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "hats",
+      "type": "hats",
+      "layer": 3,
+      "follow": "off",
+      "params": {
+        "cell": "tick"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.6,
+        "steps": 16
+      },
+      "phrase": {
+        "length": [
+          2,
+          8
+        ]
+      }
+    },
+    {
+      "id": "bass",
+      "type": "bass",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 14,
+        "partials": 3,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.45,
+        "pitchSource": "scale",
+        "octave": -1
+      },
+      "phrase": {
+        "length": [
+          4,
+          16
+        ]
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

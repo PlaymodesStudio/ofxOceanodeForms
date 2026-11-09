@@ -1,0 +1,193 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "per-layer random zoom",
+  "version": 1,
+  "notes": "Each layer redraws its zoom (beats across the screen) at random every 8 beats, with an easing. Same music, changing magnification: layers slide past each other at different speeds. Look, do not listen: the sound changes only because the image does.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "pad",
+      "type": "chords",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "look": "additive",
+        "thickness": 10,
+        "partials": 6,
+        "bloom": 0.6,
+        "colourRole": "neutral"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "chord",
+        "voices": 4,
+        "hold": true
+      },
+      "phrase": {
+        "length": 16
+      }
+    },
+    {
+      "id": "bass",
+      "type": "bass",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 14,
+        "partials": 3,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.45,
+        "pitchSource": "scale",
+        "octave": -1
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "kick",
+      "type": "kick",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "taiko",
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 4
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "hats",
+      "type": "hats",
+      "layer": 3,
+      "follow": "off",
+      "params": {
+        "cell": "tick"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.6,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 8
+      }
+    }
+  ],
+  "routings": [
+    {
+      "source": "random1",
+      "dest": "layer0.zoom",
+      "amount": 1,
+      "level": "layer",
+      "min": 4,
+      "max": 32,
+      "sourceParams": {
+        "scope": "beats",
+        "everyBeats": 8
+      }
+    },
+    {
+      "source": "random2",
+      "dest": "layer1.zoom",
+      "amount": 1,
+      "level": "layer",
+      "min": 4,
+      "max": 32,
+      "sourceParams": {
+        "scope": "beats",
+        "everyBeats": 8
+      }
+    },
+    {
+      "source": "random3",
+      "dest": "layer3.zoom",
+      "amount": 1,
+      "level": "layer",
+      "min": 2,
+      "max": 16,
+      "sourceParams": {
+        "scope": "beats",
+        "everyBeats": 8
+      }
+    }
+  ],
+  "macros": {}
+}

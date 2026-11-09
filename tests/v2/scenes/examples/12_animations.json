@@ -1,0 +1,244 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "animated tremolo, vibrato and musical gestures",
+  "version": 1,
+  "notes": "Animated routings move in real time: tremolo (square LFO on level), vibrato (pitchFine sine), a scoop into each note (drawn rise on pitchFine), a pump on the pad (brightness ducks every beat), a wah on partial brightness, and twinkling stars (random brightness, beats scope).",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "trem",
+      "type": "melody",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "thickness": 5,
+        "partials": 5,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 3,
+        "pitchSource": "chord",
+        "octave": 1,
+        "noteLength": 2
+      },
+      "phrase": {
+        "length": 4
+      },
+      "routings": [
+        {
+          "source": "lfo1",
+          "dest": "level",
+          "amount": 0.6,
+          "level": "layer",
+          "sourceParams": {
+            "shape": "square",
+            "rateBeats": 0.25
+          },
+          "render": "animated"
+        },
+        {
+          "source": "lfo2",
+          "dest": "pitchFine",
+          "amount": 0.25,
+          "level": "layer",
+          "sourceParams": {
+            "shape": "sine",
+            "rateBeats": 0.5,
+            "bipolar": true
+          },
+          "render": "animated"
+        }
+      ]
+    },
+    {
+      "id": "scoop",
+      "type": "bass",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 14,
+        "partials": 3,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 3,
+        "pitchSource": "chord",
+        "octave": -1
+      },
+      "phrase": {
+        "length": 4
+      },
+      "routings": [
+        {
+          "source": "noteEnv1",
+          "dest": "pitchFine",
+          "amount": 1,
+          "level": "event",
+          "min": -150,
+          "max": 0,
+          "sourceParams": {
+            "shape": "rise"
+          }
+        }
+      ]
+    },
+    {
+      "id": "pump",
+      "type": "chords",
+      "layer": 2,
+      "follow": "chord",
+      "params": {
+        "look": "additive",
+        "thickness": 10,
+        "partials": 6,
+        "bloom": 0.6,
+        "colourRole": "neutral",
+        "partialBright": 0
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "chord",
+        "hold": true
+      },
+      "phrase": {
+        "length": 16
+      },
+      "routings": [
+        {
+          "source": "lfo3",
+          "dest": "brightness",
+          "amount": 1,
+          "level": "layer",
+          "min": 0.3,
+          "max": 1,
+          "sourceParams": {
+            "shape": "saw",
+            "rateBeats": 1
+          },
+          "render": "animated"
+        },
+        {
+          "source": "lfo4",
+          "dest": "partialBright",
+          "amount": 1,
+          "level": "layer",
+          "min": -1,
+          "max": 1,
+          "sourceParams": {
+            "shape": "sine",
+            "rateBeats": 4
+          },
+          "render": "animated"
+        }
+      ]
+    },
+    {
+      "id": "twinkle",
+      "type": "hats",
+      "layer": 3,
+      "follow": "off",
+      "params": {
+        "cell": "dot",
+        "scatter": 1,
+        "heightLow": 0.6,
+        "heightHigh": 1
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 8
+      },
+      "routings": [
+        {
+          "source": "random1",
+          "dest": "brightness",
+          "amount": 1,
+          "level": "layer",
+          "min": 0.2,
+          "max": 1.8,
+          "sourceParams": {
+            "scope": "beats",
+            "everyBeats": 0.25
+          },
+          "render": "animated"
+        }
+      ]
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

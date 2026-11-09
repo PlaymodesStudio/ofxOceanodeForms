@@ -1,0 +1,158 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "layers as planes",
+  "version": 1,
+  "notes": "Three layers as planes at different depths (plane depth 0, 1.5, 3) in perspective; an LFO on layer 2's camera dollies that plane in and out (a layer-level routing), so the planes parallax against each other. At the playhead every plane is flat.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "near",
+      "type": "melody",
+      "layer": 0,
+      "params": {
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.6,
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "mid",
+      "type": "hats",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "cell": "dot",
+        "dotSize": 6,
+        "scatter": 1,
+        "heightLow": 0.1,
+        "heightHigh": 0.9
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.6,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "far",
+      "type": "bells",
+      "layer": 2,
+      "params": {
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "steps": 8
+      },
+      "phrase": {
+        "length": 8
+      }
+    }
+  ],
+  "routings": [
+    {
+      "source": "lfo1",
+      "dest": "layer2.camera",
+      "amount": 1,
+      "level": "layer",
+      "min": -1,
+      "max": 2.5,
+      "sourceParams": {
+        "shape": "sine", "rateBeats": 8
+      }
+    }
+  ],
+  "macros": {},
+  "view3d": {
+    "perspective": true,
+    "fog": 0.3,
+    "layers": [
+      {
+        "planeZ": 0
+      },
+      {
+        "planeZ": 1.5
+      },
+      {
+        "planeZ": 3
+      }
+    ]
+  }
+}

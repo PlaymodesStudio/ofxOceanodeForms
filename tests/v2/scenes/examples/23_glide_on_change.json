@@ -1,0 +1,192 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "glide on change",
+  "version": 1,
+  "notes": "Glide on change (5.16). The bass holds each note across the bar and ties into the next root (one line bending, all its partials with it), also over the 4/4 -> 7/8 section change and the minor -> major key change. The pad re-attacks each chord from the old voices with a 1-beat glide. The melody uses the next-note trigger (portamento). Jump the harmony in Perform: the bass note sounding at the playhead bends to the new root (transposition trigger), with the scene's retune 'ahead' for the notes planned ahead.",
+  "bpm": 84,
+  "seed": 2316,
+  "retune": "ahead",
+  "retuneBeats": 2,
+  "retuneCurve": "ease",
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ],
+        "lengthBeats": 16
+      },
+      {
+        "name": "B",
+        "meter": {
+          "num": 7,
+          "den": 8,
+          "grouping": [
+            2,
+            2,
+            3
+          ]
+        },
+        "scale": {
+          "name": "major",
+          "semis": [
+            0,
+            2,
+            4,
+            5,
+            7,
+            9,
+            11
+          ],
+          "tonic": 9
+        },
+        "progression": "I:2 IV:2",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 14
+          },
+          {
+            "degree": 3,
+            "length": 14
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "bass",
+      "type": "bass",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 14,
+        "partials": 4,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "root",
+        "octave": -1,
+        "legato": true,
+        "glideOn": true,
+        "glideMode": "tie",
+        "glideTime": 1.5,
+        "glideCurve": "sCurve",
+        "glideNote": false
+      },
+      "phrase": {
+        "length": 8,
+        "quant": "bars",
+        "restartAtSections": true
+      }
+    },
+    {
+      "id": "pad",
+      "type": "chords",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "colourRole": "neutral"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "chord",
+        "voices": 3,
+        "hold": true,
+        "glideOn": true,
+        "glideMode": "reattack",
+        "glideTime": 1,
+        "glideCurve": "ease",
+        "glideNote": false
+      },
+      "phrase": {
+        "length": 8,
+        "quant": "bars",
+        "restartAtSections": true
+      }
+    },
+    {
+      "id": "mel",
+      "type": "melody",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 5,
+        "pitchSource": "scale",
+        "scaleMode": "walk",
+        "octave": 1,
+        "glideOn": true,
+        "glideMode": "reattack",
+        "glideTime": 0.25,
+        "glideCurve": "exp",
+        "glideChord": false,
+        "glideRoot": false,
+        "glideKey": false,
+        "glideTranspose": false,
+        "glideDegree": false
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

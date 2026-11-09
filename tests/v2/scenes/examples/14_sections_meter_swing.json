@@ -1,0 +1,195 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "harmony sections, meter change and swing",
+  "version": 1,
+  "notes": "Section A: 4/4, swing 0.3, I VI IV V in A minor (16 beats). Section B: 7/8 grouped 2+2+3, straight, I V (two 7-beat bars each). Hats accent the group starts; the grid lines show the bar change.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4,
+          "swing": 0.3
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ],
+        "lengthBeats": 16
+      },
+      {
+        "name": "B",
+        "meter": {
+          "num": 7,
+          "den": 8,
+          "grouping": [
+            2,
+            2,
+            3
+          ]
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I:2 V:2",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 14
+          },
+          {
+            "degree": 4,
+            "length": 14
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "bass",
+      "type": "bass",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 14,
+        "partials": 3,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 3,
+        "pitchSource": "chord",
+        "octave": -1
+      },
+      "phrase": {
+        "length": 4,
+        "restartAtSections": true
+      }
+    },
+    {
+      "id": "hats",
+      "type": "hats",
+      "layer": 3,
+      "follow": "off",
+      "params": {
+        "cell": "tick"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.7
+      },
+      "phrase": {
+        "length": 4
+      },
+      "accent": 0.8
+    },
+    {
+      "id": "pad",
+      "type": "chords",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "look": "additive",
+        "thickness": 10,
+        "partials": 6,
+        "bloom": 0.6,
+        "colourRole": "neutral"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "chord",
+        "hold": true,
+        "voiceLeading": true
+      },
+      "phrase": {
+        "length": 16
+      }
+    },
+    {
+      "id": "kick",
+      "type": "kick",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "taiko",
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 3
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

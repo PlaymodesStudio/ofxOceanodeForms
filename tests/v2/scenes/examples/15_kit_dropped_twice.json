@@ -1,0 +1,147 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "a kit dropped twice",
+  "version": 1,
+  "notes": "The 'kit' (a kick plus a ghost snare that follows its gaps) is dropped into this scene twice by the test (dropKit): the second copy is renamed k_2 / ghost_2 and its Follow link points at k_2, so the two kits fill their own gaps independently.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "pad",
+      "type": "chords",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "look": "additive",
+        "thickness": 10,
+        "partials": 6,
+        "bloom": 0.6,
+        "colourRole": "neutral"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "chord",
+        "hold": true
+      },
+      "phrase": {
+        "length": 16
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {},
+  "kit": {
+    "format": "espectres.kit",
+    "formatVersion": 1,
+    "name": "kick+ghost",
+    "version": 1,
+    "tags": [
+      "drums"
+    ],
+    "notes": "kick with a ghost snare that fills the kick's gaps",
+    "instances": [
+      {
+        "id": "k",
+        "type": "kick",
+        "layer": 2,
+        "follow": "off",
+        "params": {
+          "cell": "taiko"
+        },
+        "seq": {
+          "mode": "probability",
+          "density": 0.5,
+          "steps": 8
+        },
+        "phrase": {
+          "length": 4
+        }
+      },
+      {
+        "id": "ghost",
+        "type": "snare",
+        "layer": 3,
+        "follow": "off",
+        "params": {
+          "cell": "speckle"
+        },
+        "seq": {
+          "mode": "follow",
+          "followId": "k",
+          "followMode": "skipped"
+        },
+        "phrase": {
+          "length": 4
+        }
+      }
+    ]
+  }
+}

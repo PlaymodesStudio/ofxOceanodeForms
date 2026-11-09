@@ -1,0 +1,29 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "breakbeat_bass",
+  "notes": "From the scene \"breakbeat\" (bass).",
+  "phrase": {
+    "length": [
+      8,
+      16
+    ],
+    "quant": "bars"
+  },
+  "sequencer": {
+    "density": 0.4,
+    "mode": "probability",
+    "octave": -1,
+    "pitchSource": "scale",
+    "range": 5,
+    "scaleMode": "riff"
+  },
+  "tags": [
+    "breakbeat"
+  ],
+  "type": "bass",
+  "version": 1
+}

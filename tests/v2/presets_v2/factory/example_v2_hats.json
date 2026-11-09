@@ -1,0 +1,42 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {
+    "cell": "dot",
+    "dotSize": 3,
+    "scatter": 0.6
+  },
+  "modulation": [
+    {
+      "amount": 1.0,
+      "curve": 1.0,
+      "dest": "depth",
+      "invert": false,
+      "level": "event",
+      "max": 3.0,
+      "min": 0.2,
+      "render": "drawn",
+      "smooth": 0.0,
+      "source": "random1",
+      "sourceParams": {
+        "scope": "event"
+      }
+    }
+  ],
+  "name": "example_v2_hats",
+  "notes": "From the scene \"example v2\" (hats).",
+  "phrase": {
+    "length": 8
+  },
+  "sequencer": {
+    "density": 0.6,
+    "mode": "probability",
+    "steps": 16
+  },
+  "tags": [
+    "example v2"
+  ],
+  "type": "hats",
+  "version": 1
+}

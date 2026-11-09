@@ -1,0 +1,143 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "swarm (converging paths)",
+  "version": 1,
+  "notes": "Hats whose path is random per event: angle and curve from two random sources (event scope), so each dot arrives from its own direction like a swarm, and still lands on the playhead at its pitch row exactly on its beat. The kick keeps the flat path. 3D is a display stage: the sound reads the flat score.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "swarm",
+      "type": "hats",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "cell": "dot",
+        "dotSize": 5,
+        "scatter": 1,
+        "heightLow": 0.05,
+        "heightHigh": 0.95,
+        "pathKind": "curve",
+        "pathSpeed": 1.3
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.8,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 8
+      },
+      "routings": [
+        {
+          "source": "random1",
+          "dest": "pathAngle",
+          "amount": 1,
+          "level": "event",
+          "min": -75,
+          "max": 75,
+          "sourceParams": {
+            "scope": "event"
+          }
+        },
+        {
+          "source": "random2",
+          "dest": "pathCurve",
+          "amount": 1,
+          "level": "event",
+          "min": -2.5,
+          "max": 2.5,
+          "sourceParams": {
+            "scope": "event"
+          }
+        }
+      ]
+    },
+    {
+      "id": "kick",
+      "type": "kick",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "taiko",
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 2
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {},
+  "view3d": {}
+}

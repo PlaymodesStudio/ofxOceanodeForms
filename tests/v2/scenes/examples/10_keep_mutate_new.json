@@ -1,0 +1,150 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "keep / mutate / new",
+  "version": 1,
+  "notes": "The same melody three times with different phrase variation: keep (identical every 4 beats), mutate (30% changes), new (fresh each phrase). Compare the three lanes phrase by phrase.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "keep",
+      "type": "melody",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "thickness": 5,
+        "partials": 5,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "pitchSource": "scale",
+        "octave": 1
+      },
+      "phrase": {
+        "length": 4,
+        "variation": {
+          "rhythm": "keep",
+          "pitch": "keep"
+        }
+      }
+    },
+    {
+      "id": "mutate",
+      "type": "melody",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 5,
+        "partials": 5,
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 4,
+        "variation": {
+          "rhythm": "mutate",
+          "pitch": "mutate",
+          "amount": 0.3
+        }
+      }
+    },
+    {
+      "id": "new",
+      "type": "melody",
+      "layer": 2,
+      "follow": "chord",
+      "params": {
+        "thickness": 5,
+        "partials": 5,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "pitchSource": "scale",
+        "octave": -1
+      },
+      "phrase": {
+        "length": 4,
+        "variation": {
+          "rhythm": "new",
+          "pitch": "new"
+        }
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

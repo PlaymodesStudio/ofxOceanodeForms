@@ -1,0 +1,134 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "polymetre",
+  "version": 1,
+  "notes": "Three patterns of 3, 5 and 4 steps loop independently of the 4/4 bar (patternLength), realigning every 60 steps. Listen for the accents sliding against the kick.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "kick",
+      "type": "kick",
+      "layer": 3,
+      "follow": "off",
+      "params": {
+        "cell": "taiko",
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 4
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "three",
+      "type": "hats",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "cell": "block",
+        "heightLow": 0.7,
+        "heightHigh": 0.85
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "X..",
+        "patternLength": 3,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 16
+      }
+    },
+    {
+      "id": "five",
+      "type": "bells",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x.x..",
+        "patternLength": 5,
+        "steps": 16,
+        "pitchSource": "chord"
+      },
+      "phrase": {
+        "length": 16
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

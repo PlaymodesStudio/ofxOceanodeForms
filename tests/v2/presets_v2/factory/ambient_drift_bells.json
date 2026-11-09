@@ -1,0 +1,32 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "ambient_drift_bells",
+  "notes": "From the scene \"ambient drift\" (bells).",
+  "phrase": {
+    "length": [
+      16,
+      32
+    ],
+    "quant": "bars",
+    "variation": {
+      "amount": 0.4,
+      "pitch": "mutate",
+      "rhythm": "new"
+    }
+  },
+  "sequencer": {
+    "density": 0.15,
+    "mode": "probability",
+    "pitchSource": "scale",
+    "range": 10
+  },
+  "tags": [
+    "ambient drift"
+  ],
+  "type": "bells",
+  "version": 1
+}

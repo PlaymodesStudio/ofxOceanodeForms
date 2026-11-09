@@ -1,0 +1,135 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "phrase lengths 4 / 6 / 16",
+  "version": 1,
+  "notes": "Three melodies vary at their own phrase boundaries: high every 4 beats, middle every 6, bass every 16. Listen for the high line changing every bar, the middle drifting against the bar, the bass repeating for four bars.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "every4",
+      "type": "melody",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "thickness": 5,
+        "partials": 5,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "pitchSource": "scale",
+        "octave": 1
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "every6",
+      "type": "arpeggio",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 6
+      }
+    },
+    {
+      "id": "every16",
+      "type": "bass",
+      "layer": 2,
+      "follow": "chord",
+      "params": {
+        "thickness": 14,
+        "partials": 3,
+        "colourRole": "bass"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.4,
+        "pitchSource": "scale",
+        "octave": -1
+      },
+      "phrase": {
+        "length": 16
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

@@ -1,0 +1,27 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "spectral_drone_drone",
+  "notes": "From the scene \"spectral drone\" (drone).",
+  "phrase": {
+    "length": 64
+  },
+  "sequencer": {
+    "hold": true,
+    "level": 0.7,
+    "mode": "pattern",
+    "pattern": "x",
+    "pitchSource": "chord",
+    "steps": 1,
+    "voices": 6,
+    "voicing": "open"
+  },
+  "tags": [
+    "spectral drone"
+  ],
+  "type": "chords",
+  "version": 1
+}

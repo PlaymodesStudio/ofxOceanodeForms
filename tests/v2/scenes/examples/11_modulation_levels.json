@@ -1,0 +1,213 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "modulation levels and macros",
+  "version": 1,
+  "notes": "The same LFO on thickness at four levels: event (each note gets one value), phrase (one value per phrase), layer (moves continuously), plus a scene macro that sweeps hat density and layer-0 zoom together. Macro 1 at 0.7.",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "ev",
+      "type": "melody",
+      "layer": 0,
+      "follow": "chord",
+      "params": {
+        "thickness": 5,
+        "partials": 5,
+        "colourRole": "highlight"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 6,
+        "pitchSource": "scale",
+        "octave": 1
+      },
+      "phrase": {
+        "length": 4
+      },
+      "routings": [
+        {
+          "source": "lfo1",
+          "dest": "thickness",
+          "amount": 1,
+          "level": "event",
+          "min": 2,
+          "max": 20,
+          "sourceParams": {
+            "shape": "sine",
+            "rateBeats": 4
+          }
+        }
+      ]
+    },
+    {
+      "id": "ph",
+      "type": "melody",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 5,
+        "partials": 5,
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "euclidean",
+        "hits": 6,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 4
+      },
+      "routings": [
+        {
+          "source": "lfo1",
+          "dest": "thickness",
+          "amount": 1,
+          "level": "phrase",
+          "min": 2,
+          "max": 20,
+          "sourceParams": {
+            "shape": "sine",
+            "rateBeats": 16
+          }
+        }
+      ]
+    },
+    {
+      "id": "ly",
+      "type": "texture",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "cloud",
+        "colourRole": "neutral"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 16
+      },
+      "routings": [
+        {
+          "source": "lfo2",
+          "dest": "bandHigh",
+          "amount": 1,
+          "level": "layer",
+          "min": 0.4,
+          "max": 0.95,
+          "sourceParams": {
+            "shape": "triangle",
+            "rateBeats": 8
+          }
+        }
+      ]
+    },
+    {
+      "id": "hats",
+      "type": "hats",
+      "layer": 3,
+      "follow": "off",
+      "params": {
+        "cell": "tick"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.6,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 8
+      }
+    }
+  ],
+  "routings": [
+    {
+      "source": "macro1",
+      "dest": "hats:seq.density",
+      "amount": 1,
+      "level": "event",
+      "min": 0.1,
+      "max": 1
+    },
+    {
+      "source": "macro1",
+      "dest": "layer0.zoom",
+      "amount": 1,
+      "level": "layer",
+      "min": 16,
+      "max": 6
+    }
+  ],
+  "macros": {
+    "macro1": 0.7
+  }
+}

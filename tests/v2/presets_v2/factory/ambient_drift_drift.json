@@ -1,0 +1,22 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "ambient_drift_drift",
+  "notes": "From the scene \"ambient drift\" (drift).",
+  "phrase": {
+    "length": 24
+  },
+  "sequencer": {
+    "density": 0.2,
+    "mode": "probability",
+    "steps": 8
+  },
+  "tags": [
+    "ambient drift"
+  ],
+  "type": "texture",
+  "version": 1
+}

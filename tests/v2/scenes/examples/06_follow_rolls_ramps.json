@@ -1,0 +1,134 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "follow, rolls and density ramps",
+  "version": 1,
+  "notes": "Snare plays exactly where the probability kick skips (Follow, skipped). Hats roll (20% chance, accelerating 4-stroke rolls) and thin out the start of each 8-beat phrase (density ramp).",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "kick",
+      "type": "kick",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "taiko",
+        "colourRole": "accent"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "snare",
+      "type": "snare",
+      "layer": 1,
+      "follow": "off",
+      "params": {
+        "cell": "noiseBand"
+      },
+      "seq": {
+        "mode": "follow",
+        "followId": "kick",
+        "followMode": "skipped"
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "hats",
+      "type": "hats",
+      "layer": 3,
+      "follow": "off",
+      "params": {
+        "cell": "tick"
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.8,
+        "steps": 16,
+        "rollChance": 20,
+        "rollStrokes": 4,
+        "rollShape": "accel",
+        "densityRamp": 0.8
+      },
+      "phrase": {
+        "length": 8
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

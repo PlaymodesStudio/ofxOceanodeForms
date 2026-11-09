@@ -1,0 +1,28 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "techno_4-4_stab",
+  "notes": "From the scene \"techno 4-4\" (stab).",
+  "phrase": {
+    "length": [
+      8,
+      16
+    ],
+    "quant": "bars"
+  },
+  "sequencer": {
+    "hits": 3,
+    "mode": "euclidean",
+    "pitchSource": "chord",
+    "steps": 8,
+    "voices": 3
+  },
+  "tags": [
+    "techno 4-4"
+  ],
+  "type": "chords",
+  "version": 1
+}

@@ -1,0 +1,153 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "blob presets: ghost, fish, microbe",
+  "version": 1,
+  "notes": "Blob masks (5.12). Layer 0: a nebula texture seen only through drifting ghosts (mask in, phrase scope: a new set each 8-beat phrase). Layer 1: a melody whose notes swim inside fish-shaped blobs, one per note (on events, element scope). Layer 2: hats through spiky microbes placed along a random zone at the top, wobbling as they travel (animated contour).",
+  "bpm": 100,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I VI IV V",
+        "steps": [
+          {
+            "degree": 0,
+            "length": 4
+          },
+          {
+            "degree": 5,
+            "length": 4
+          },
+          {
+            "degree": 3,
+            "length": 4
+          },
+          {
+            "degree": 4,
+            "length": 4
+          }
+        ]
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "neb",
+      "type": "texture",
+      "layer": 0,
+      "follow": "off",
+      "params": {
+        "cell": "nebula",
+        "bandLow": 0.05,
+        "bandHigh": 0.95,
+        "density": 0.8,
+        "blob": "ghost",
+        "blobCount": 5,
+        "blobScope": "phrase"
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1
+      },
+      "phrase": {
+        "length": 8
+      }
+    },
+    {
+      "id": "mel",
+      "type": "melody",
+      "layer": 1,
+      "follow": "chord",
+      "params": {
+        "thickness": 8,
+        "partials": 4,
+        "colourRole": "highlight",
+        "blob": "fish",
+        "blobPlacement": "events",
+        "blobScope": "element",
+        "blobScale": 0.7
+      },
+      "seq": {
+        "mode": "probability",
+        "density": 0.5,
+        "steps": 8,
+        "pitchSource": "scale"
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "hat",
+      "type": "hats",
+      "layer": 2,
+      "follow": "off",
+      "params": {
+        "cell": "speckle",
+        "heightLow": 0.6,
+        "heightHigh": 0.95,
+        "width": 0.5,
+        "decay": 1,
+        "blob": "microbe",
+        "blobPlacement": "zone",
+        "blobZoneLow": 0.65,
+        "blobZoneHigh": 0.9,
+        "blobCount": 8,
+        "blobWobble": 0.6,
+        "blobWobbleRate": 1
+      },
+      "seq": {
+        "mode": "pattern",
+        "pattern": "xxxx",
+        "steps": 8
+      },
+      "phrase": {
+        "length": 4
+      }
+    }
+  ],
+  "routings": [],
+  "macros": {}
+}

@@ -1,0 +1,25 @@
+{
+  "format": "espectres.instrument",
+  "formatVersion": 1,
+  "knobs": [],
+  "look": {},
+  "modulation": [],
+  "name": "techno_4-4_bass",
+  "notes": "From the scene \"techno 4-4\" (bass).",
+  "phrase": {
+    "length": 16
+  },
+  "sequencer": {
+    "hits": 5,
+    "mode": "euclidean",
+    "noteLength": 0.4,
+    "octave": -1,
+    "pitchSource": "chord",
+    "steps": 16
+  },
+  "tags": [
+    "techno 4-4"
+  ],
+  "type": "bass",
+  "version": 1
+}
