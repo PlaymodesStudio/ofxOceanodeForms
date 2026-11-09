@@ -70,6 +70,33 @@ everything playing). The top bar shows what is muted / soloed, with **clear**.
 - **Edit playing** (top of the Scenes tab's list) selects the scene under the header; Live's
   **Edit in Scenes tab** now also switches to the Scenes tab.
 
+## Noise mask length in bars (2026-11-07)
+
+The noise mask (process: mask, used by perlin clouds and other cloud instruments) had square cells
+sized in note rows, so along time a cell was a fixed number of pixels: its length in bars changed
+with the zoom (bars per page) and the note grid. **noise mask length (bars)** (`maskBars`, 0 = as
+before) sets the cell's length along time in bars, so the clouds change at the same musical rate at
+any zoom; its height stays **noise mask size (rows)**. Measured (perlin clouds, 4 / 8 / 16 bars per
+page): unset 1.89 / 1.16 / 0.74 cloud peaks per bar, length 1 bar 1.02 / 0.92 / 0.90. Pages
+without it are byte-identical to before. In `generators.json` and the embedded schemas
+(`make_schemas.py`); CPU and GPU paths. (The band filter's "unit: slice / bar" is unrelated.)
+
+## v2: partial chance, partial detune, octave jumps, scattered voicing, batched effect passes (2026-11-07)
+
+- Pitched looks: **Partial chance** (`partialChance`, 0..1, per note): each partial, fundamental included,
+  is drawn with this chance (v1's "random" / "thin" partial modes, 0.5 / 0.2). **Partial detune**
+  (`partialDetune`, up to 200 cents) is now a random flattening per partial, fixed per note (v1's partial
+  detune); it was a per-partial widening of the detune voices. CPU and GPU pick the same partials.
+- Sequencer: **Octave jump** (`octaveChance`, %): a pattern step plays an octave up, decided once per
+  phrase per step (v1 octaveUp). **Voicing "scattered"**: each chord voice a random degree of the octave.
+- Legacy mapping (v2Legacy.h): v1 detune rows -> 200 x cents (v1 draws at y +- detune, v2 voices at
+  +- detune / 2); v1 clearChance -> a `blank` effect with scope "earlier" listed before the instrument,
+  following its hits; octaveUp, scattered and partial modes mapped as above. Scenes regenerated in
+  tests/v2/scenes/legacy. Details: ESPECTRES_2027/notes/v2_legacy_report.md.
+- GL renderer: layer-bus and "earlier" effect events are drawn in **batched passes** (one full-screen
+  pass per run of non-overlapping slots, gains may overlap) instead of one pass per event: DUBTECH
+  229 -> 14-20 passes per frame. Details: ESPECTRES_2027/notes/v2_performance.md.
+
 ## Usage
 
 ```cpp
@@ -128,9 +155,42 @@ in the data folder; their schema comes from `generators.json`).
 Code: `formsGenerators.h` (schema, presets, `resolve`), with presets and preview routing in
 `formsEngine.h` and the tab in `formsEditor.h`.
 
+## Cover (Forms GL Box)
+
+Instruments have a **cover** tab alongside pattern, pitch and chord. Stack presets also have
+**Cover (whole instrument)**, shared by their chosen child shapes; their inline generators
+retain their own cover tabs. Scene and Live layer properties have **Cover (this layer)**.
+Instrument Cover uses just that instrument's silhouette, including its processes, per-bar
+clipping and cell gain. Layer Cover uses the whole layer after its blur / trail. Both are off
+by default and saved with the instrument preset or scene respectively.
+
+- **Grow right:** extend the silhouette towards later beats only, without covering earlier pixels.
+- **Grow height:** enlarge the silhouette above and below, independently of rightward growth.
+- **Feather:** soften the edge vertically and towards the right; it never extends into the past.
+  Growth and feather use pixels at 1920 x 1080, scaled with the view/export resolution.
+- **Release:** extend it towards later beats, fading linearly over the given beat count.
+- Legacy blanking/solo blocks (for example **arp loop block**) also carry an automatic eraser
+  mask for their exact time window. Moving the instrument to a separate layer still erases the
+  layers below; this does not paint black or require enabling Cover. These masks have no grow,
+  feather or release and follow instrument gain, clipping, mute/solo and visual stack order.
+- **Amount:** strength of the ducking.
+- **Mode:** **eraser** makes the destination transparent; **black** makes the covered area opaque
+  black. Both suppress the destination's sound there.
+- **Acts on:** all layers below, the layer immediately below, or all other layers. Below follows
+  the visual stacking order, including reordered layers; the source never covers itself.
+
+Covers are prepared before any destinations are changed, so overlapping covers do not feed back
+into one another. Muted/unsoloed layers do not cover. Playback and sonification use the covered
+layer buffers; native still/video exports, separate layer exports, and panorama export use
+Cover too. Archived pages retain grayscale mask PNGs referenced by their sidecars, so Gallery
+replay keeps instrument Cover. Layer settings are read live from the scene (with the archived
+setting as fallback if the scene no longer exists). Layer Cover edits act immediately; instrument
+Cover edits follow the usual Immediate setting / next-page behavior.
+
 ## Layers and parallax (Phase 3)
 
-A scene can have up to 4 layers. The Scenes tab shows them as a **stack** (top of the stack first),
+A scene has no fixed layer-count limit; playback, per-layer effects, sonification and exports grow with it
+within available memory, GPU and audio-server resources. The Scenes tab shows them as a **stack** (top of the stack first),
 next to the **Scene** settings (BPM, palette, scale, notegrid, root note, harmony) that all layers
 share. Each layer row has its **opacity** slider and **up / down** arrows to change which layer is
 drawn on top; below the stack, the selected layer's **bars**, **blend** (lighten / add / normal),
@@ -141,7 +201,7 @@ Right-click a method's thumbnail to **Move to layer N** (or to a new layer): it 
 and group and takes the first free row of that layer.
 - **Layer 1** keeps the clock's timing exactly as before (GO, analog mode, sequence, repeats).
   Its scroller also counts the **beat under the header**: each image is bars x 4 beats.
-- **Layers 2..4** are placed in absolute beats. Every image is one view wide, so a layer with more
+- **Additional layers** are placed in absolute beats. Every image is one view wide, so a layer with more
   bars scrolls more slowly (parallax), and the header sits at the same beat in every layer: all
   layers cross each beat and bar line at the header together. Forms Box asks the renderer for
   them ahead of time (one image beyond the current one), only when no layer-1 request is waiting
@@ -290,12 +350,35 @@ Scale Out and the patch's voices; the scene's scale quantize can still pull the 
 Per layer: on, level, pan, stereo spread, reverb (x the scene's reverbAmt: each layer sends its
 own amount to the one reverb). Per partial: equal-loudness gain, a frozen stereo field
 (lows centred), and a kick-ducking depth (partials below "Duck below" are ducked, deepest at the
-bottom). The kick: detection on the kick layer's bottom strip (threshold, strip height, minimum
-gap), a sample per scene (Performance > "Kick sample file"; double-click a file in the tab for the
-scene at the header; empty = the scene's kick number), tune on top of the transpose, level. Then
+bottom) in frequency-selective mode. **Duck whole image** is on by default: the kick envelope
+reduces the entire image-sonification mix after its FX/reverb and before adding the kick, so the
+kick itself is unaffected. Depth and the scene's Side chain multiply its strength. Turn the
+switch off for the older low-frequency-only ducking. Ducking triggers even without a loaded sample.
+The kick: detection on the kick layer's bottom strip (threshold, strip height, minimum
+gap), a sample per scene (Performance > "Kick sample file" or Sonification > Samples).
+**Browse** opens the native file dialog for a WAV / AIFF from any folder. Selecting a file
+embeds its exact bytes in the scene JSON (Scenes: press Save; Sonification saves the selection
+immediately). Folder-list selections embed too. The source file is no longer needed: on load,
+the sample is restored under `samples/embedded/` for playback and audio export. Rename, duplicate
+and undo retain the sample; `(by number)` keeps legacy kick-number selection. Tune is added to
+the transpose, followed by the kick level. Then
 FX (LeakDC, long reverb of the layers' sends, EQ, the scene's compressor, high shelf,
 lowpass, the scene's spectrum gain) and master (session fade, optional scene L/R auto-balance,
 limiter, Volume). Only the kick remains of the extra voices (no 808, supersaw, nebula).
+
+**Scenes → Performance → Kick synthesis → Kick source** selects **Sample** or **Synth**.
+Synth is generated at audio rate in SuperCollider: a falling sine body plus click, optional
+filtered noise and drive. Start/end pitch, decay, click, noise and drive are saved per scene.
+The default is still Sample. Both sources use the same image detection, tuning and ducking.
+Mark the layer containing the kick image with **kick**; with none marked, layer 1 is used.
+For kick-image brightness, **hits → cell → Volume (above 1 saturates)** ranges from 0 to 4.
+Kick sweeps respect this control; 1 preserves their previous rendering and higher values boost intensity.
+The marker and Kick detect now apply live, without waiting for another image. Updated compiled
+FormsKick / FormsMaster definitions are shipped; restart the app/server to load them.
+
+Gate and beat repeat now use the actual musical beat under the playhead, including Speed and
+Pause, rather than separate BPM timers. Gate subdivisions start on their two-bar window, and
+repeat offsets retain fractional pixels instead of rounding each beat length up.
 Fixed from the 1920 patch: the pitch mapping (above), the scale grid follows the real root (it had
 pitch class 3 hard-coded), the kick's ducking lasts a number of beats (it ran on a fixed 120 BPM).
 
@@ -377,11 +460,35 @@ The Post-processing tab has two sides, split by a line marked "sound reads here"
   image count, renormalized, so nothing comes from outside and edges keep their brightness) and
   **Trail** (a tail behind what moves, to its right, fading exponentially like a reverb; length in
   beats, the same for every layer whatever its speed; Trail level = how bright it starts).
+  **Perlin mask** follows the layer's musical position, with amount, width in beats, height as a
+  fraction of the image, contrast, threshold (0 = soft), inversion and seed. **Mask blur** applies
+  a Gaussian blur after the threshold, softening the mask without smearing the layer's image;
+  0 px disables it. **Animated** reveals
+  evolution speed in noise units per beat; playback pauses freeze evolution. Colour and alpha
+  are masked together after blur/trail, before covers and sonification. These controls are saved
+  with the patch, default off, and grow with the scene's layer count.
+  Each scene layer also has an **Effect preset** dropdown: any effect-only instrument or stack
+  applies after all that layer's drawing instruments. **Edit effect** opens its preset parameters;
+  **None** removes it. The selection is saved with the scene. Enable **Immediate** to redraw
+  existing pages; otherwise it applies to newly rendered pages.
+  Scene layer **volume** ranges from 0 to 2: below 1 it retains the existing opacity behavior;
+  above 1 it boosts premultiplied colour and coverage up to saturation, before the effects and
+  sonification. The boost is applied per image, so adjacent scenes retain their own volumes.
 - **After the sound** (the final image only): stretch, colour, opacity, levels, header line.
+  **Post → Image → Stretch blend** chooses Replace (the original appearance), Add, Lighten,
+  Screen, Multiply or Darken. These combine the stretched header column with the scrolling
+  image underneath, only left of the playhead, before opacity and levels. Background coverage
+  follows the same mode. The setting is saved with the patch and frozen for video exports;
+  sonification is unchanged, and still exports continue to omit pixel stretch.
   Value and the header opacity also scale the sound (as in the patch).
 
 Right-click any window control: **Set value** (type and Enter: a number, true / false, or text),
 then publish / timeline / MIDI.
+
+Echo delays are quantized to whole grid steps, with dotted and sub-step divisions supported.
+Every repeat is positioned from its unrounded musical delay, then rounded to a pixel separately,
+avoiding accumulated rounding error at non-integral pixels per step. This applies to existing
+presets when rendered again; already archived PNGs retain their original pixels.
 
 ## Reverb per layer, page repetition, bus compressor (2026-11-06)
 
@@ -441,7 +548,13 @@ something to act on.
 
 ## Audition and immediate modes (Forms GL Box, 2026-11-07)
 
-Two switches in the Instruments tab, before Same seed, both off by default (Forms GL Box only):
+**Auto GO: ON/OFF** is at the top of the Forms GL Box window and above the node preview.
+It is saved with the patch (default: on). Off stops automatic requests for fresh image seeds
+on every layer while playback continues; images already queued can still arrive. **GO**,
+**New PNG**, and **Render next now** remain available for manual requests. The initial Prime
+images still render when starting a session. The Sequence timer cannot override this switch.
+
+Audition (Instruments tab, LIVE EDIT) and Immediate (top bar), both off by default (Forms GL Box only):
 - **Audition:** the edited instrument's preview (the preview scene's frame; effects-only instruments
   over the GL underlay) plays under the header, alone on the stage: the other layers are silent and
   hidden while it is on, and the page loops with the clock so the header keeps crossing it. The
@@ -449,13 +562,21 @@ Two switches in the Instruments tab, before Same seed, both off by default (Form
   render in flight; the latest edit wins); it keeps its own seed, so only the edited parameter
   changes, and the user's preview seed is untouched. Switching it on draws a new seed. Off: the
   stage goes back to the playback, which kept running underneath.
-- **Immediate:** an edit to an instrument redraws every page on the stage and waiting (every copy
-  of a repeated page) that uses it, and swaps each in place: the images change without jumping. Only
-  the changed parameters take new values; every other value the page drew stays (a change of
-  structure, such as stack layers, linked picks, per-bar or the generator, draws that instrument's
-  items anew, others untouched). A change to a scene's palette or scale redraws that scene's
-  pages. A redrawn page overwrites its PNG and sidecar (when archiving; queued after the old ones).
-  One batch at a time; edits during a batch are applied together when it ends.
+- **Immediate** (top bar, saved with the patch; 2026-11-07 a general setting): every edit goes
+  straight into the composition. The pages on stage and waiting (every copy of a repeated page) are
+  drawn again and swapped in place, for: an instrument's parameters (only the changed parameters take
+  new values; a change of structure draws that instrument's items anew), a scene's palette, scale and
+  note grid, and its layers' instrument cells (chances, adding / removing instruments, solo flags:
+  each instrument's chance before and after, a stable roll per page and instrument, so raising a
+  chance only adds it, lowering only removes it, and the rest of the page stays as drawn; added ones
+  are drawn on top). Redrawn pages overwrite their PNG and sidecar. One batch at a time; edits
+  during a batch are applied when it ends (the latest wins). Instrument edits are tracked from
+  both Scenes and Instruments, including nested stack editors; the Scenes instrument editor
+  has the same Immediate switch. Save is only needed to keep the edit on disk.
+  Acting at once anyway: BPM, root,
+  opacity, blend, post-processing, sound, mute / solo. From the next page only: harmony (a shared
+  timeline: layer 1's chords per bar, which the other layers follow), bars, repeat, and a layer's
+  group / page chances.
 - `formsLiveEdit.h` holds the patching (headless); `tests/formsGL/test_live_edit.cpp` checks it on
   a page of every scene: only the edited instrument's edited key changes, the patched request
   renders, a structural edit leaves the other items identical, the scene patch changes the palette
@@ -463,6 +584,42 @@ Two switches in the Instruments tab, before Same seed, both off by default (Form
   edit replaces all of its items, including those of the presets it plays, and nothing else.
 - Not covered: harmony or tempo edits of a scene (they would change the page's timing); an inner
   preset edited while a stack overrides that same parameter loses the stack's value in its pages.
+
+## Forms GL Box scene exports
+
+The **Export** tab redraws the scene's frozen layer recipes at the requested Width / Height
+(up to the GPU limit, 16384 maximum), including layer opacity, order, blend, blur, trail,
+colour, background, paper view and edge feathers. Still images omit the playhead and pixel stretch,
+while retaining the image processing and edge feathers. Every export saves an 8-bit PNG and a
+16-bit-per-channel RGBA TIFF (`.tif`). Separate transparent layers also save both formats.
+Still-image compositing, blur, trail, post-processing and feathers use RGBA32F intermediates,
+with direct 16-bit readback for TIFF; the PNG stays 8-bit. The generator raster remains 8-bit,
+so the TIFF preserves added precision from compositing and effects rather than claiming
+16-bit precision in the original generator raster.
+The export takes the pages currently under the playhead; wait until all layers belong to the
+same scene before exporting. Live playback keeps running while the export uses its own clock.
+
+Every export appends `_s<number>` to its filename and saves a JSON recipe beside the PNG and TIFF.
+**Recall export seed** in the Export tab retrieves the original PNG from
+`<Forms>/exports/seeds/` (the matching 16-bit TIFF is retained there too), including after instruments, scenes or presets have changed.
+Keep that library to preserve seed recall. The companion JSON freezes resolved recipes and
+export settings; **Export recalled recipe** redraws that snapshot at the selected dimensions.
+An export seed identifies the complete snapshot, including all of its layers' generator seeds.
+
+**Sonification** saves a stereo 48 kHz float WAV using the Forms SynthDefs. **Video with audio**
+saves a constant 60 fps H.264 MP4 (CRF 14, slow preset, High profile) with embedded
+320 kbps AAC and keeps the companion lossless WAV. Video fits inside
+1920 × 1080 with the same aspect ratio (1080 × 1080 for square images, even codec dimensions).
+The playhead stays at one-quarter width while each layer scrolls left at its own bar rate;
+stretch and feathers use the same post-processing shaders as Output. The common loop is the
+least common multiple of the active layers' bar counts, played at the captured BPM.
+
+Video frames and audio control columns are captured together at 60 fps, after layer effects;
+rendering speed does not affect timing. NRT audio uses those exact timestamped controls, and
+its limiter lookahead is removed before embedding. Audio/video export needs SuperCollider
+(the app's bundled server or the installed application), compiled Forms SynthDefs, and FFmpeg
+for MP4. Progress and failures appear in the Export tab; `.media.log` retains encoder/server
+messages beside the export. Export dimensions and format choices are saved with the patch.
 
 ## Tests of the player and the editor (headless)
 
@@ -521,12 +678,16 @@ are bit-identical before and after, also drawn in parallel.
   limits how many layer-1 images are in flight; raise it to use more workers.
 - **In memory:** the pixels go to the scrollers (and the header preview) directly as textures; no
   PNG is written and read back before an image can play.
+- **Playback handoff:** image and cover-mask textures upload on workers. The scrolling thread
+  polls their fences without waiting and accepts at most two completed renders per frame.
+  Normal render requests travel in memory; workers persist their JSON. Session timeline records
+  are queued to the archive thread rather than opening files when pages reach the playhead.
 - **Archive images** (Node tab, saved with the patch, on by default): the PNG and sidecar are
   written afterwards by an archive thread (sidecar `result.queueMs`, `result.archiveMs`). Off:
   nothing is written (Gallery, replay, panorama and prints need the files). Editor previews and
   thumbnails are always written first, since the editor reads them.
 - **Timings** (Node tab): waiting for a worker, drawing, texture upload, archive (and its queue),
-  asked -> ready.
+  asked -> ready, plus main-thread player / request / delivery times and their peaks.
 - **Drawing:** round points use a per-width coverage table with inside / outside shortcuts, the
   straight-alpha conversion a lookup table, the spectral cell's envelope is computed once per
   column: about 19% less CPU, same pixels.
