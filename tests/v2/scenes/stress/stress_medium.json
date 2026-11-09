@@ -1,0 +1,724 @@
+{
+ "format": "espectres.scene",
+ "formatVersion": 1,
+ "name": "stress medium",
+ "version": 1,
+ "notes": "Performance stress scene (medium): 16 instances, 140 bpm, 2-beat phrases, hat starfields with per-event depth 0.2-3, 24-partial pads with 3 detune voices, arps with rolls, textures, animated tremolo / vibrato / scoop / pump, cover-below on chords, melodies and kicks, 4 layers at different zooms. Generated for bench_v2.",
+ "bpm": 140,
+ "seed": 2027,
+ "harmony": {
+  "sections": [
+   {
+    "name": "A",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "scale": {
+     "name": "natural minor",
+     "semis": [
+      0,
+      2,
+      3,
+      5,
+      7,
+      8,
+      10
+     ],
+     "tonic": 9
+    },
+    "progression": "I VI IV V",
+    "steps": [
+     {
+      "degree": 0,
+      "length": 2
+     },
+     {
+      "degree": 5,
+      "length": 2
+     },
+     {
+      "degree": 3,
+      "length": 2
+     },
+     {
+      "degree": 4,
+      "length": 2
+     }
+    ]
+   }
+  ]
+ },
+ "layers": [
+  {
+   "zoomBeats": 32,
+   "blend": "lighten",
+   "gain": 1
+  },
+  {
+   "zoomBeats": 16,
+   "blend": "lighten",
+   "gain": 1
+  },
+  {
+   "zoomBeats": 8,
+   "blend": "lighten",
+   "gain": 1
+  },
+  {
+   "zoomBeats": 4,
+   "blend": "lighten",
+   "gain": 1
+  }
+ ],
+ "instances": [
+  {
+   "id": "stars0",
+   "type": "hats",
+   "layer": 0,
+   "follow": "off",
+   "params": {
+    "cell": "dot",
+    "dotSize": 4,
+    "scatter": 1,
+    "heightLow": 0.02,
+    "heightHigh": 0.98
+   },
+   "seq": {
+    "mode": "probability",
+    "density": 0.9,
+    "steps": 32
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "random1",
+     "dest": "depth",
+     "amount": 1,
+     "level": "event",
+     "min": 0.2,
+     "max": 3,
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "source": "random1",
+     "dest": "size",
+     "amount": 1,
+     "level": "event",
+     "min": 0.3,
+     "max": 3,
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "source": "random1",
+     "dest": "brightness",
+     "amount": 1,
+     "level": "event",
+     "min": 0.3,
+     "max": 1.6,
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ]
+  },
+  {
+   "id": "stars1",
+   "type": "hats",
+   "layer": 0,
+   "follow": "off",
+   "params": {
+    "cell": "dot",
+    "dotSize": 4,
+    "scatter": 1,
+    "heightLow": 0.02,
+    "heightHigh": 0.98
+   },
+   "seq": {
+    "mode": "probability",
+    "density": 0.9,
+    "steps": 32
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "random1",
+     "dest": "depth",
+     "amount": 1,
+     "level": "event",
+     "min": 0.2,
+     "max": 3,
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "source": "random1",
+     "dest": "size",
+     "amount": 1,
+     "level": "event",
+     "min": 0.3,
+     "max": 3,
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "source": "random1",
+     "dest": "brightness",
+     "amount": 1,
+     "level": "event",
+     "min": 0.3,
+     "max": 1.6,
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ]
+  },
+  {
+   "id": "stars2",
+   "type": "hats",
+   "layer": 0,
+   "follow": "off",
+   "params": {
+    "cell": "dot",
+    "dotSize": 4,
+    "scatter": 1,
+    "heightLow": 0.02,
+    "heightHigh": 0.98
+   },
+   "seq": {
+    "mode": "probability",
+    "density": 0.9,
+    "steps": 32
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "random1",
+     "dest": "depth",
+     "amount": 1,
+     "level": "event",
+     "min": 0.2,
+     "max": 3,
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "source": "random1",
+     "dest": "size",
+     "amount": 1,
+     "level": "event",
+     "min": 0.3,
+     "max": 3,
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "source": "random1",
+     "dest": "brightness",
+     "amount": 1,
+     "level": "event",
+     "min": 0.3,
+     "max": 1.6,
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ]
+  },
+  {
+   "id": "stars3",
+   "type": "hats",
+   "layer": 0,
+   "follow": "off",
+   "params": {
+    "cell": "dot",
+    "dotSize": 4,
+    "scatter": 1,
+    "heightLow": 0.02,
+    "heightHigh": 0.98
+   },
+   "seq": {
+    "mode": "probability",
+    "density": 0.9,
+    "steps": 32
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "random1",
+     "dest": "depth",
+     "amount": 1,
+     "level": "event",
+     "min": 0.2,
+     "max": 3,
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "source": "random1",
+     "dest": "size",
+     "amount": 1,
+     "level": "event",
+     "min": 0.3,
+     "max": 3,
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "source": "random1",
+     "dest": "brightness",
+     "amount": 1,
+     "level": "event",
+     "min": 0.3,
+     "max": 1.6,
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ]
+  },
+  {
+   "id": "pad0",
+   "type": "chords",
+   "layer": 1,
+   "follow": "chord",
+   "params": {
+    "look": "additive",
+    "thickness": 10,
+    "partials": 24,
+    "partialCount": 1,
+    "detune": 12,
+    "detuneVoices": 3,
+    "bloom": 0.8,
+    "colourRole": "neutral"
+   },
+   "seq": {
+    "mode": "pattern",
+    "pattern": "x",
+    "steps": 1,
+    "pitchSource": "chord",
+    "voices": 4,
+    "hold": true
+   },
+   "phrase": {
+    "length": 4
+   },
+   "routings": [
+    {
+     "source": "lfo1",
+     "dest": "brightness",
+     "amount": 1,
+     "level": "layer",
+     "min": 0.3,
+     "max": 1,
+     "sourceParams": {
+      "shape": "saw",
+      "rateBeats": 1
+     },
+     "render": "animated"
+    },
+    {
+     "source": "lfo2",
+     "dest": "partialBright",
+     "amount": 1,
+     "level": "layer",
+     "min": -1,
+     "max": 1,
+     "sourceParams": {
+      "shape": "sine",
+      "rateBeats": 4
+     },
+     "render": "animated"
+    }
+   ]
+  },
+  {
+   "id": "strum0",
+   "type": "chords",
+   "layer": 1,
+   "follow": "chord",
+   "params": {
+    "thickness": 6,
+    "partials": 16,
+    "detune": 8,
+    "detuneVoices": 3,
+    "colourRole": "bass",
+    "coverEnable": true,
+    "coverDilate": 4,
+    "coverRelease": 0.25
+   },
+   "seq": {
+    "mode": "pattern",
+    "pattern": "x.x.x.xx",
+    "steps": 8,
+    "pitchSource": "chord",
+    "voices": 4,
+    "strum": 0.1
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "noteEnv1",
+     "dest": "pitchFine",
+     "amount": 1,
+     "level": "event",
+     "min": -150,
+     "max": 0,
+     "sourceParams": {
+      "shape": "rise"
+     }
+    }
+   ]
+  },
+  {
+   "id": "strum1",
+   "type": "chords",
+   "layer": 1,
+   "follow": "chord",
+   "params": {
+    "thickness": 6,
+    "partials": 16,
+    "detune": 8,
+    "detuneVoices": 3,
+    "colourRole": "bass",
+    "coverEnable": false,
+    "coverDilate": 4,
+    "coverRelease": 0.25
+   },
+   "seq": {
+    "mode": "pattern",
+    "pattern": "x.x.x.xx",
+    "steps": 8,
+    "pitchSource": "chord",
+    "voices": 4,
+    "strum": 0.1
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "noteEnv1",
+     "dest": "pitchFine",
+     "amount": 1,
+     "level": "event",
+     "min": -150,
+     "max": 0,
+     "sourceParams": {
+      "shape": "rise"
+     }
+    }
+   ]
+  },
+  {
+   "id": "mel0",
+   "type": "melody",
+   "layer": 2,
+   "follow": "chord",
+   "params": {
+    "thickness": 5,
+    "partials": 12,
+    "detuneVoices": 3,
+    "detune": 6,
+    "colourRole": "highlight",
+    "coverEnable": true,
+    "coverDilate": 6,
+    "coverFeather": 6,
+    "coverRelease": 0.5
+   },
+   "seq": {
+    "mode": "euclidean",
+    "hits": 5,
+    "pitchSource": "chord",
+    "octave": 1,
+    "noteLength": 2
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "lfo1",
+     "dest": "level",
+     "amount": 0.6,
+     "level": "layer",
+     "sourceParams": {
+      "shape": "square",
+      "rateBeats": 0.25
+     },
+     "render": "animated"
+    },
+    {
+     "source": "lfo2",
+     "dest": "pitchFine",
+     "amount": 0.25,
+     "level": "layer",
+     "sourceParams": {
+      "shape": "sine",
+      "rateBeats": 0.5,
+      "bipolar": true
+     },
+     "render": "animated"
+    }
+   ]
+  },
+  {
+   "id": "mel1",
+   "type": "melody",
+   "layer": 2,
+   "follow": "chord",
+   "params": {
+    "thickness": 5,
+    "partials": 12,
+    "detuneVoices": 3,
+    "detune": 6,
+    "colourRole": "highlight",
+    "coverEnable": true,
+    "coverDilate": 6,
+    "coverFeather": 6,
+    "coverRelease": 0.5
+   },
+   "seq": {
+    "mode": "euclidean",
+    "hits": 5,
+    "pitchSource": "chord",
+    "octave": 1,
+    "noteLength": 2
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "lfo1",
+     "dest": "level",
+     "amount": 0.6,
+     "level": "layer",
+     "sourceParams": {
+      "shape": "square",
+      "rateBeats": 0.25
+     },
+     "render": "animated"
+    },
+    {
+     "source": "lfo2",
+     "dest": "pitchFine",
+     "amount": 0.25,
+     "level": "layer",
+     "sourceParams": {
+      "shape": "sine",
+      "rateBeats": 0.5,
+      "bipolar": true
+     },
+     "render": "animated"
+    }
+   ]
+  },
+  {
+   "id": "arp0",
+   "type": "arpeggio",
+   "layer": 2,
+   "follow": "chord",
+   "params": {
+    "partials": 12,
+    "colourRole": "highlight"
+   },
+   "seq": {
+    "mode": "euclidean",
+    "hits": 12,
+    "steps": 16,
+    "pitchSource": "chord",
+    "voices": 4,
+    "notesPerStep": 2,
+    "order": "up",
+    "octave": 1,
+    "rollChance": 30,
+    "rollStrokes": 4,
+    "rollShape": "accel"
+   },
+   "phrase": {
+    "length": 2
+   }
+  },
+  {
+   "id": "arp1",
+   "type": "arpeggio",
+   "layer": 2,
+   "follow": "chord",
+   "params": {
+    "partials": 12,
+    "colourRole": "highlight"
+   },
+   "seq": {
+    "mode": "euclidean",
+    "hits": 12,
+    "steps": 16,
+    "pitchSource": "chord",
+    "voices": 4,
+    "notesPerStep": 2,
+    "order": "up",
+    "octave": 1,
+    "rollChance": 30,
+    "rollStrokes": 4,
+    "rollShape": "accel"
+   },
+   "phrase": {
+    "length": 2
+   }
+  },
+  {
+   "id": "tex0",
+   "type": "texture",
+   "layer": 3,
+   "follow": "off",
+   "params": {
+    "cell": "nebula",
+    "bandLow": 0.0,
+    "bandHigh": 0.5,
+    "density": 0.7
+   },
+   "seq": {
+    "mode": "pattern",
+    "pattern": "x.x.",
+    "steps": 4
+   },
+   "phrase": {
+    "length": 2
+   }
+  },
+  {
+   "id": "tex1",
+   "type": "texture",
+   "layer": 3,
+   "follow": "off",
+   "params": {
+    "cell": "grain",
+    "bandLow": 0.1,
+    "bandHigh": 0.6,
+    "density": 0.7
+   },
+   "seq": {
+    "mode": "pattern",
+    "pattern": "x.x.",
+    "steps": 4
+   },
+   "phrase": {
+    "length": 2
+   }
+  },
+  {
+   "id": "hats0",
+   "type": "hats",
+   "layer": 3,
+   "follow": "off",
+   "params": {
+    "cell": "tick"
+   },
+   "seq": {
+    "mode": "probability",
+    "density": 0.8,
+    "steps": 16,
+    "rollChance": 30,
+    "rollStrokes": 4,
+    "rollShape": "accel",
+    "densityRamp": 0.8
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "random1",
+     "dest": "brightness",
+     "amount": 1,
+     "level": "layer",
+     "min": 0.2,
+     "max": 1.8,
+     "sourceParams": {
+      "scope": "beats",
+      "everyBeats": 0.25
+     },
+     "render": "animated"
+    }
+   ]
+  },
+  {
+   "id": "hats1",
+   "type": "hats",
+   "layer": 3,
+   "follow": "off",
+   "params": {
+    "cell": "tick"
+   },
+   "seq": {
+    "mode": "probability",
+    "density": 0.8,
+    "steps": 16,
+    "rollChance": 30,
+    "rollStrokes": 4,
+    "rollShape": "accel",
+    "densityRamp": 0.8
+   },
+   "phrase": {
+    "length": 2
+   },
+   "routings": [
+    {
+     "source": "random1",
+     "dest": "brightness",
+     "amount": 1,
+     "level": "layer",
+     "min": 0.2,
+     "max": 1.8,
+     "sourceParams": {
+      "scope": "beats",
+      "everyBeats": 0.25
+     },
+     "render": "animated"
+    }
+   ]
+  },
+  {
+   "id": "kick0",
+   "type": "kick",
+   "layer": 3,
+   "follow": "off",
+   "params": {
+    "cell": "taiko",
+    "colourRole": "accent",
+    "coverEnable": true,
+    "coverDilate": 4
+   },
+   "seq": {
+    "mode": "euclidean",
+    "hits": 4
+   },
+   "phrase": {
+    "length": 2
+   }
+  }
+ ],
+ "routings": [],
+ "macros": {}
+}
