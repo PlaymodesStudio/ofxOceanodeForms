@@ -41,6 +41,13 @@ inline const std::vector<PerfParam>& perfParams(){
         {"kickSelect", "Kick sample", "Sound", 'i', 0, 40, 11, 0, true},
         // the kick sample by file name (Sonification tab's kick folder); "" = by number (kickSelect)
         {"kickSample", "Kick sample file", "Sound", 's', 0, 0, "", 0, false},
+        {"kickSynth", "Kick source", "Kick synthesis", 'i', 0, 1, 0, 0, false},
+        {"kickPitchStart", "Start pitch (Hz)", "Kick synthesis", 'f', 20, 1000, 160, 0, false},
+        {"kickPitchEnd", "End pitch (Hz)", "Kick synthesis", 'f', 20, 300, 48, 0, false},
+        {"kickDecay", "Decay (seconds)", "Kick synthesis", 'f', 0.02f, 3, 0.45f, 0, false},
+        {"kickClick", "Click", "Kick synthesis", 'f', 0, 1, 0.3f, 0, false},
+        {"kickNoise", "Noise", "Kick synthesis", 'f', 0, 1, 0, 0, false},
+        {"kickDrive", "Drive", "Kick synthesis", 'f', 0, 1, 0.1f, 0, false},
         {"scaleQuant", "Scale quantize", "Sound", 'f', 0, 1, 0, 0, true},
         // stereo (Macro_11)
         {"LRDryWet", "L/R amount", "Stereo", 'f', 0, 1, 0, 0.9462f, true},

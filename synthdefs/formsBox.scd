@@ -51,7 +51,7 @@ SynthDef(\FormsBank512, {
 // FormsKick: stereo one-shot (two mono buffers) + the kick duck envelope.
 // ---------------------------------------------------------------------------
 SynthDef(\FormsKick, {
-	var trig, rate, bl, br, sig, env;
+	var trig, rate, bl, br, sig, env, time, attack, bodyEnv, frequency, phase, noise, body, drive;
 	trig = \t_trig.tr(0);
 	rate = \rate.kr(1);
 	bl = \bufl.kr(0);
@@ -60,11 +60,29 @@ SynthDef(\FormsKick, {
 		PlayBuf.ar(1, bl, rate * BufRateScale.kr(bl), trig, 0, 0, 0),
 		PlayBuf.ar(1, br, rate * BufRateScale.kr(br), trig, 0, 0, 0)
 	];
+	// V2-style synthetic kick: falling sine body, short click, filtered noise and drive.
+	// Runs on the server at audio rate and needs no sample or rendered image.
+	time = Sweep.ar(trig, 1);
+	attack = (time / 0.00025).clip(0, 1);
+	bodyEnv = attack * exp(-6.9 * time / \synthdecay.kr(0.45).clip(0.02, 3));
+	frequency = (\synthend.kr(48).clip(20, 300) +
+		((\synthstart.kr(160).clip(20, 1000) - \synthend.kr(48)) * exp(time / -0.035))) * rate;
+	phase = Phasor.ar(trig, frequency * SampleDur.ir, 0, 1);
+	noise = WhiteNoise.ar;
+	body = ((1 - \synthnoise.kr(0).clip(0, 1)) * sin(phase * 2pi) * bodyEnv)
+		+ (\synthnoise.kr(0).clip(0, 1) * BPF.ar(noise, 1500, 0.7) * 2 * bodyEnv)
+		+ (\synthclick.kr(0.3).clip(0, 1) * attack * exp(time / -0.001) * (0.5 + (0.5 * noise)));
+	drive = 1 + (\synthdrive.kr(0.1).clip(0, 1) * 8);
+	body = Select.ar(\synthdrive.kr(0.1) > 0, [body, tanh(body * drive) / tanh(drive)]);
+	sig = Select.ar(\source.kr(0).clip(0, 1), [sig, [body, body]]);
 	// 1 right after a trigger, then a fast-then-slow decay to 0 over duckdecay s
 	env = EnvGen.kr(Env([0, 1, 0], [0, \duckdecay.kr(1)], \duckcurve.kr(-4)), trig);
 	Out.kr(\duckbus.kr(0), env);
 	// PlayBuf starts playing when the synth is created: stay silent until the first trigger
 	sig = sig * (PulseCount.kr(trig) > 0);
+	// The same performance gate as image sonification, applied to the running
+	// sample/synth output (not only to new triggers). A 1 ms edge avoids clicks.
+	sig = sig * Lag.ar(K2A.ar(\gate.kr(1).clip(0, 1)), 0.001);
 	Out.ar(\out.kr(0), Sanitize.ar(sig * \amp.kr(0.15)));
 }).writeDefFile(dir);
 
@@ -131,7 +149,9 @@ SynthDef(\FormsFX, {
 SynthDef(\FormsMaster, {
 	var sig, key, pk, rms, lvl, over, slope, xk, gr, grs, gain;
 	var thr, ratio, knee, att, rel, makeup, auto, rmsAmt, mix, on, range = 40;
-	sig = In.ar(\in.kr(0), 2) + (In.ar(\kickin.kr(0), 2) * \kickgain.kr(1.5, 1/30));
+	// Duck the image mix AFTER its reverb, BEFORE adding the kick. The kick is never ducked.
+	sig = In.ar(\in.kr(0), 2) * (1 - (Sanitize.kr(In.kr(\duckbus.kr(0))).clip(0, 1) * \duckdepth.kr(0).clip(0, 1)));
+	sig = sig + (In.ar(\kickin.kr(0), 2) * \kickgain.kr(1.5, 1/30));
 	sig = Sanitize.ar(sig);
 
 	thr    = \bcthr.kr(-18, 0.05);

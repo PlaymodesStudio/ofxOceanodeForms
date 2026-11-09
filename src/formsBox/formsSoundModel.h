@@ -29,7 +29,7 @@
 namespace forms {
 
 constexpr int SOUND_PARTIALS = 512;
-constexpr int SOUND_LAYERS = 4;
+constexpr int SOUND_LAYERS = 4; // initial allocation for legacy patches; storage grows dynamically
 
 // Per-layer settings (Sonification tab)
 struct SoundLayer {
@@ -43,7 +43,7 @@ struct SoundLayer {
 // Global settings (Sonification tab; the ones marked "scene" can also come from the scene)
 struct SoundSettings {
     bool on = true;
-    SoundLayer layers[SOUND_LAYERS];
+    std::vector<SoundLayer> layers = std::vector<SoundLayer>(SOUND_LAYERS);
     float bankGain = 0.0216f;         // the bank sum's gain (16/1080 rescaled to 512 partials)
     float detune = 0.0746f;           // semitones, right bank
     float loudnessBlend = 0.2f;       // 0 flat .. 1 the full equal-loudness curve
@@ -55,6 +55,7 @@ struct SoundSettings {
     float duckShape = 0.6f;           // exponent of the depth curve
     float duckBeats = 2;              // the envelope's length in beats (1 s at 120 BPM, as before)
     float duckCurve = -4;             // envelope curvature
+    bool duckFullBand = true;         // duck the full image mix, including its reverb
     // kick
     bool kickOn = true;
     float kickThreshold = 0.5f;       // mean brightness of the strip that fires a kick
@@ -181,7 +182,7 @@ inline float valueNoise(float x, uint32_t seed){
 inline void partialGains(const std::vector<float>& pitch, int layer, const SoundSettings& s, std::vector<float>& gl, std::vector<float>& gr){
     int n = (int)pitch.size();
     gl.assign(n, 0); gr.assign(n, 0);
-    const SoundLayer& L = s.layers[std::max(0, std::min(SOUND_LAYERS - 1, layer))];
+    const SoundLayer& L = s.layers[std::max(0, std::min((int)s.layers.size() - 1, layer))];
     float bl = std::min(1.0f, 1 - L.pan), br = std::min(1.0f, 1 + L.pan);
     for(int i = 0; i < n; i++){
         float field = valueNoise(i * 8.0f / n, 0x5eed + layer * 7919) * 2 - 1;          // -1..1
@@ -204,6 +205,14 @@ inline std::vector<float> duckWeights(const std::vector<float>& pitch, const Sou
         w[i] = s.duckDepth * std::pow(t, std::max(0.05f, s.duckShape));
     }
     return w;
+}
+inline std::vector<float> imageDuckWeights(const std::vector<float>& pitch,const SoundSettings& s){
+    return s.duckFullBand?std::vector<float>(pitch.size(),0):duckWeights(pitch,s);
+}
+inline float duckEnvelope(double elapsed,double duration,float curve){
+    if(elapsed<0 || duration<=0 || elapsed>=duration)return 0;
+    double x=elapsed/duration;
+    return (float)(std::fabs(curve)<1e-5?1-x:1-std::expm1(curve*x)/std::expm1(curve));
 }
 
 // Amplitudes from a column of RGBA pixels (row 0 = top), times `mul`: each partial the brightest
@@ -280,6 +289,23 @@ inline int wavChannels(const std::string& path){
     }
     std::fclose(f);
     return ch;
+}
+inline int audioChannels(const std::string& path){
+    if(int channels=wavChannels(path)) return channels;
+    FILE* file=std::fopen(path.c_str(),"rb");if(!file)return 0;
+    unsigned char header[12];int channels=0;
+    if(std::fread(header,1,12,file)==12 && !std::memcmp(header,"FORM",4) &&
+       (!std::memcmp(header+8,"AIFF",4)||!std::memcmp(header+8,"AIFC",4))){
+        unsigned char chunk[8];
+        while(std::fread(chunk,1,8,file)==8){
+            uint32_t size=((uint32_t)chunk[4]<<24)|((uint32_t)chunk[5]<<16)|((uint32_t)chunk[6]<<8)|chunk[7];
+            if(!std::memcmp(chunk,"COMM",4)){
+                unsigned char ch[2];if(std::fread(ch,1,2,file)==2)channels=(ch[0]<<8)|ch[1];break;
+            }
+            if(std::fseek(file,(long)size+(size&1),SEEK_CUR))break;
+        }
+    }
+    std::fclose(file);return channels;
 }
 
 } // namespace forms

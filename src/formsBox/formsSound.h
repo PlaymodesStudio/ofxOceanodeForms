@@ -10,7 +10,7 @@
 //
 //  Per server, one group at the head of the graph:
 //      FormsKick  → kick bus (audio, stereo) + duck bus (control: the ducking envelope)
-//      FormsBank512 x 4 layers (ampbus: 512 control buses each, written with /c_setn every frame)
+//      FormsBank512 per layer (ampbus: 512 control buses each, written with /c_setn every frame)
 //                 → mix bus (dry) + wet bus (each layer's reverb send, equal power), audio stereo
 //      FormsFX    mix bus + reverb(wet bus) → fx bus (LeakDC, long reverb, EQ, compressor, high shelf, RLPF, gain)
 //      FormsMaster fx bus + kick bus → the node's output bus (bus compressor, fade, L/R, limiter, volume)
@@ -49,12 +49,17 @@ struct SoundFrame {
         int arraysVersion = 0;               // bumped when pitch / gains / duck weights change
         float level = 1;
         float send = 0;                      // reverb send 0..1 (equal power: 1 = all to the reverb)
-    } layers[SOUND_LAYERS];
+    };
+    std::vector<Layer> layers = std::vector<Layer>(SOUND_LAYERS);
     float bend = 0, detune = 0.0746f, bankGain = 0.0216f, lag = 1.0f / 30;
     // kick
     int kickCount = 0;                       // bumped for every kick to play
     int kickSample = 0;                      // index in the kick list
     float kickRate = 1, kickAmp = 0.15f, kickGain = 1.5f, duckDecay = 1, duckCurve = -4;
+    float kickGate=1;
+    bool kickSynth=false;
+    float kickStart=160,kickEnd=48,kickDecay=.45f,kickClick=.3f,kickNoise=0,kickDrive=.1f;
+    float imageDuckDepth=0;
     // fx / master
     float comp = 0, fxGain = 1.5f;
     float fade = 1, lgain = 1, rgain = 1, volume = 1;
@@ -95,6 +100,11 @@ public:
         for(auto& [server, st] : states) freeBuffers(server, st);   // reloaded on the next send
     }
     const std::vector<std::string>& kicks() const { return kickFiles; }
+    int addKickFile(const std::string& path){
+        auto it=std::find(kickFiles.begin(),kickFiles.end(),path);
+        if(it!=kickFiles.end()) return (int)(it-kickFiles.begin());
+        kickFiles.push_back(path);return (int)kickFiles.size()-1;
+    }
 
     // the SynthDef folder: the addon's synthdefs/CompiledSynthdefs/Forms
     std::string requiredSynthdefFolder() const override { return synthdefFolder(); }
@@ -123,6 +133,26 @@ public:
         if(!definitionsReady(server)){ st.pendingCreate = true; return; }
         build(server);
     }
+    // Grow the graph only when needed. Existing banks keep playing while new ones are inserted
+    // before the shared effects bus. The server's bus allocator remains the resource limit.
+    void setLayerCount(size_t count){
+        if(count<=layerCount) return;
+        layerCount=count;
+        for(auto& [server,st]:states){
+            size_t old=st.banks.size();
+            st.banks.resize(count,nullptr); st.ampBus.resize(count,nullptr); st.sent.layers.resize(count);
+            if(!st.group || !st.fx) continue;
+            ensureBuses(server,st);
+            for(size_t l=old;l<count;++l){
+                if(!st.ampBus[l]){ ofLogError("Forms Box") << "Cannot allocate sound buses for layer " << l+1; continue; }
+                auto* b=new ofxSCSynth("FormsBank512",server);
+                b->set("out",st.mixBus->index); b->set("wetout",st.wetBus->index); b->set("send",0.0);
+                b->set("ampbus",st.ampBus[l]->index); b->set("duckbus",st.duckBus->index);
+                b->createAndRun(2,st.fx->nodeID,false);
+                st.banks[l]=b;
+            }
+        }
+    }
     // per frame: builds a graph that was waiting for its SynthDefs
     void poll(){
         for(auto& [server, st] : states)
@@ -139,6 +169,7 @@ private:
     void build(ofxSCServer* server){
         auto& st = states[server];
         st.pendingCreate = false;
+        st.banks.resize(layerCount,nullptr); st.ampBus.resize(layerCount,nullptr); st.sent.layers.resize(layerCount);
         ensureBuses(server, st);
         bool buses = st.mixBus && st.wetBus && st.fxBus && st.kickBus && st.duckBus;
         for(auto* b : st.ampBus) buses = buses && b;
@@ -149,7 +180,7 @@ private:
         st.kick->set("out", st.kickBus ? st.kickBus->index : 0);
         st.kick->set("duckbus", st.duckBus ? st.duckBus->index : 0);
         st.kick->createAndRun(1, st.group->nodeID, true);
-        for(int l = 0; l < SOUND_LAYERS; l++){
+        for(int l = 0; l < (int)st.banks.size(); l++){
             auto* b = new ofxSCSynth("FormsBank512", server);
             b->set("out", st.mixBus ? st.mixBus->index : 0);
             b->set("wetout", st.wetBus ? st.wetBus->index : 0);
@@ -168,11 +199,12 @@ private:
         st.master = new ofxSCSynth("FormsMaster", server);
         st.master->set("in", st.fxBus ? st.fxBus->index : 0);
         st.master->set("kickin", st.kickBus ? st.kickBus->index : 0);
+        st.master->set("duckbus",st.duckBus?st.duckBus->index:0);
         st.master->set("out", st.outBus >= 0 ? st.outBus : 0);
         st.master->set("grbus", st.grBus ? st.grBus->index : -1);
         for(auto& [k, v] : masterExtra) st.master->set(k, (double)v);
         st.master->createAndRun(1, st.group->nodeID, true);
-        st.sent = Sent();                              // everything is sent again
+        st.sent = Sent(); st.sent.layers.resize(st.banks.size());                              // everything is sent again
         st.createdAt = ofGetElapsedTimef();
     }
 
@@ -205,10 +237,11 @@ public:
     }
     void setInputBus(ofxSCServer*, scNode*, int) override {}
     void resetInputBusses(ofxSCServer*, int) override {}
-    void resendParametersForNRT() override { for(auto& [s, st] : states) st.sent = Sent(); }
+    void resendParametersForNRT() override { for(auto& [s, st] : states){ st.sent = Sent(); st.sent.layers.resize(st.banks.size()); } }
 
     // ---- per frame
     void send(const SoundFrame& f){
+        setLayerCount(f.layers.size());
         for(auto& [server, st] : states){
             if(!st.group || !st.master) continue;
             loadBuffers(server, st);
@@ -216,7 +249,8 @@ public:
             ofxOscMessage m; m.setAddress("/c_setn");
             int args = 0;
             auto flush = [&](){ if(args){ server->sendMsg(m); m.clear(); m.setAddress("/c_setn"); args = 0; } };
-            for(int l = 0; l < SOUND_LAYERS; l++){
+            for(int l = 0; l < (int)st.banks.size(); l++){
+                if(l>=(int)f.layers.size() || !st.banks[l]) continue;
                 auto& L = f.layers[l];
                 auto& S = st.sent.layers[l];
                 bool run = L.active && L.level > 0 && !L.amps.empty();
@@ -241,7 +275,8 @@ public:
             }
             flush();
             // arrays (pitches, gains, duck weights) when they change
-            for(int l = 0; l < SOUND_LAYERS; l++){
+            for(int l = 0; l < (int)st.banks.size(); l++){
+                if(l>=(int)f.layers.size() || !st.banks[l]) continue;
                 auto& L = f.layers[l];
                 auto& S = st.sent.layers[l];
                 if(L.arraysVersion != S.arraysVersion && (int)L.pitch.size() == SOUND_PARTIALS){
@@ -259,17 +294,29 @@ public:
                 setIf(st.banks[l], S.lag, "lag", f.lag);
             }
             // kick
-            setIf(st.kick, st.sent.kickAmp, "amp", f.kickAmp);
+            int sample=f.kickSample;
+            bool validSample=sample>=0 && sample<(int)st.buffers.size() && st.buffers[sample].first;
+            setIf(st.kick, st.sent.kickAmp, "amp",(f.kickSynth||validSample)?f.kickAmp:0);
+            setIf(st.kick,st.sent.kickGate,"gate",f.kickGate);
+            setIf(st.kick,st.sent.kickSource,"source",f.kickSynth?1.f:0.f);
+            setIf(st.kick,st.sent.kickStart,"synthstart",f.kickStart);
+            setIf(st.kick,st.sent.kickEnd,"synthend",f.kickEnd);
+            setIf(st.kick,st.sent.kickDecay,"synthdecay",f.kickDecay);
+            setIf(st.kick,st.sent.kickClick,"synthclick",f.kickClick);
+            setIf(st.kick,st.sent.kickNoise,"synthnoise",f.kickNoise);
+            setIf(st.kick,st.sent.kickDrive,"synthdrive",f.kickDrive);
+            setIf(st.master,st.sent.imageDuckDepth,"duckdepth",f.imageDuckDepth);
             setIf(st.kick, st.sent.duckDecay, "duckdecay", f.duckDecay);
             setIf(st.kick, st.sent.duckCurve, "duckcurve", f.duckCurve);
             if(f.kickCount != st.sent.kickCount){
                 bool first = st.sent.kickCount < 0;
                 st.sent.kickCount = f.kickCount;
-                int k = f.kickSample;
-                if(!first && k >= 0 && k < (int)st.buffers.size() && st.buffers[k].first){
-                    st.kick->set("bufl", st.buffers[k].first->index);
-                    st.kick->set("bufr", (st.buffers[k].second ? st.buffers[k].second : st.buffers[k].first)->index);
+                if(!first){
+                    auto left=validSample?st.buffers[sample].first:st.silentKick;
+                    auto right=validSample&&st.buffers[sample].second?st.buffers[sample].second:left;
+                    if(left){st.kick->set("bufl",left->index);st.kick->set("bufr",right->index);}
                     st.kick->set("rate", f.kickRate);
+                    // Ducking is driven by the kick event, even if no sample is loaded.
                     st.kick->set("t_trig", 1.0);
                 }
             }
@@ -309,15 +356,18 @@ public:
 
 private:
     struct Sent {
-        struct L { int arraysVersion = -1; float level = NAN, send = NAN, bend = NAN, detune = NAN, gain = NAN, lag = NAN; bool running = false, ampsNonZero = true; float offAt = -1; } layers[SOUND_LAYERS];
+        struct L { int arraysVersion = -1; float level = NAN, send = NAN, bend = NAN, detune = NAN, gain = NAN, lag = NAN; bool running = false, ampsNonZero = true; float offAt = -1; };
+        std::vector<L> layers = std::vector<L>(SOUND_LAYERS);
         int kickCount = -1;
         float kickAmp = NAN, duckDecay = NAN, duckCurve = NAN, comp = NAN, fxGain = NAN;
         float kickGain = NAN, fade = NAN, lgain = NAN, rgain = NAN, volume = NAN, limit = NAN;
+        float kickGate=NAN;
+        float kickSource=NAN,kickStart=NAN,kickEnd=NAN,kickDecay=NAN,kickClick=NAN,kickNoise=NAN,kickDrive=NAN,imageDuckDepth=NAN;
     };
     struct State {
         ofxSCGroup* group = nullptr;
         ofxSCSynth* kick = nullptr;
-        ofxSCSynth* banks[SOUND_LAYERS] = {};
+        std::vector<ofxSCSynth*> banks = std::vector<ofxSCSynth*>(SOUND_LAYERS,nullptr);
         ofxSCSynth* fx = nullptr;
         ofxSCSynth* master = nullptr;
         ofxSCBus* mixBus = nullptr;
@@ -326,8 +376,9 @@ private:
         ofxSCBus* kickBus = nullptr;
         ofxSCBus* duckBus = nullptr;
         ofxSCBus* grBus = nullptr;           // the bus compressor's gain reduction (dB)
-        ofxSCBus* ampBus[SOUND_LAYERS] = {};
+        std::vector<ofxSCBus*> ampBus = std::vector<ofxSCBus*>(SOUND_LAYERS,nullptr);
         std::vector<std::pair<ofxSCBuffer*, ofxSCBuffer*>> buffers;   // per kick file: left, right
+        ofxSCBuffer* silentKick=nullptr;
         uint32_t bufferGeneration = 0;
         int outBus = -1;
         bool pendingCreate = false;   // waiting for the SynthDefs
@@ -340,6 +391,7 @@ private:
     std::vector<std::string> kickFiles;
     std::map<std::string, float> fxExtra, masterExtra;
     bool required = false;
+    size_t layerCount = SOUND_LAYERS;
 
     static void setIf(ofxSCSynth* s, float& last, const char* key, float v){
         if(!s || last == v) return;
@@ -383,6 +435,10 @@ private:
         // the buses stay (reused by the next build); freed with the engine
     }
     void freeBuffers(ofxSCServer* server, State& st){
+        if(st.silentKick){
+            if(server->getAllocationGeneration()==st.bufferGeneration)st.silentKick->free();
+            delete st.silentKick;st.silentKick=nullptr;
+        }
         if(server->getAllocationGeneration() != st.bufferGeneration){   // numbers from before a restart
             for(auto& [l, r] : st.buffers){ delete l; delete r; }
             st.buffers.clear();
@@ -399,11 +455,18 @@ private:
             // the server restarted: the old numbers are gone
             for(auto& [l, r] : st.buffers){ delete l; delete r; }
             st.buffers.clear();
+            delete st.silentKick;st.silentKick=nullptr;
             st.bufferGeneration = server->getAllocationGeneration();
         }
-        if(!st.buffers.empty() || kickFiles.empty()) return;
-        for(auto& path : kickFiles){
-            int ch = wavChannels(path);
+        if(!st.silentKick){
+            st.silentKick=new ofxSCBuffer(1,1,server);
+            if(st.silentKick->index>=0)st.silentKick->alloc();
+            else {delete st.silentKick;st.silentKick=nullptr;}
+        }
+        // Imported samples append without freeing or reloading the folder's buffers.
+        for(size_t i=st.buffers.size();i<kickFiles.size();++i){
+            const auto& path=kickFiles[i];
+            int ch = audioChannels(path);
             auto* l = new ofxSCBuffer(0, 1, server);
             if(l->index < 0){ delete l; break; }
             l->readChannel(path, {0});

@@ -52,7 +52,7 @@ Guards:
 
 ## FormsKick
 
-A stereo one-shot sample (two mono buffers) plus the duck envelope. The sample is silent until the
+A stereo one-shot sample (two mono buffers) or synthesized kick, plus the duck envelope. The source is silent until the
 first trigger, because `PlayBuf` would otherwise play once when the synth is created.
 
 | control     | default | meaning |
@@ -63,13 +63,27 @@ first trigger, because `PlayBuf` would otherwise play once when the synth is cre
 | `t_trig`    | 0       | trigger: restarts both PlayBufs and the duck envelope |
 | `rate`      | 1       | speed (multiplied by `BufRateScale`) |
 | `amp`       | 0.15    | sample gain |
+| `gate`      | 1       | performance gate for sample and synth output, with a 1 ms edge; reopening resumes the running tail |
 | `duckbus`   | 0       | control bus written with `Out.kr`: the duck envelope |
 | `duckdecay` | 1       | duck decay in seconds. C++ sets it from the BPM (2 beats). |
 | `duckcurve` | -4      | curve of the decay: fast at first, then slow |
+| `source` | 0 | 0 sample, 1 synthesized kick |
+| `synthstart` / `synthend` | 160 / 48 | initial / final sine-body frequency in Hz, before rate transposition |
+| `synthdecay` | 0.45 | seconds to approximately -60 dB |
+| `synthclick` / `synthnoise` / `synthdrive` | 0.3 / 0 / 0.1 | attack click, filtered noise blend, saturation |
 
 The duck envelope is `Env([0,1,0], [0, duckdecay], duckcurve)`. It is 1 right after a trigger and 0
 after `duckdecay`. Add FormsKick before the banks so that their `In.kr` reads the value of the same
 block.
+
+FormsMaster also accepts `duckbus` (default 0) and `duckdepth` (default 0). It attenuates only
+the image input, after FormsFX, before adding `kickin`. This ducks the reverb too and leaves the
+kick untouched. Forms Box's full-image duck mode sets bank duck weights to zero to avoid applying
+the envelope twice. Frequency-selective mode retains the bank weights and sets master duckdepth 0.
+
+`test_kick_synthesis_duck.scd <changed-def-dir> <bank-def-dir> <output-dir>` renders offline
+kick, decay and ducking checks; `python3 check_kick_synthesis_duck.py <output-dir>` measures
+the WAVs, including sample/synth gate silence and tail recovery, missing-sample ducking, recovery and exact kick immunity.
 
 ## FormsFX
 
