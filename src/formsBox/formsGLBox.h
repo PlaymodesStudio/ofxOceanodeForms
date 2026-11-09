@@ -24,6 +24,8 @@
 #include "../formsGL/formsGLFont.h"
 #include "../formsGL/formsGLGpu.h"
 #include "formsLiveEdit.h"
+#include "formsGLExportMedia.h"
+#include <future>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -38,6 +40,9 @@ public:
     explicit formsGLBox(std::vector<serverManager*> servers) : formsBox(std::string("Forms GL Box"), std::move(servers)) { describe(); }
 #endif
     ~formsGLBox() override {
+        glVideoWriter.reset();
+        if(exportRender.valid()) exportRender.wait();
+        if(exportMedia.valid()) exportMedia.wait();
         {
             std::lock_guard<std::mutex> lk(m);
             quit = true;
@@ -53,7 +58,13 @@ public:
     }
 
     void setup() override {
+        texturePool = formsgl::SharedTexturePool::create(CGLGetCurrentContext(),
+                        ofGetUsingArbTex() ? GL_TEXTURE_RECTANGLE_ARB : GL_TEXTURE_2D);
         formsBox::setup();
+        engine.requestSink=[this](const forms::fs::path& path,forms::json request){
+            stagedRequests[path.string()]=std::move(request);
+        };
+        editor.drawExportTab = [this](){ drawGLExportTab(); };
         editor.makeThumbnails = [this](){ makeThumbnailsGL(); };
         editor.auditionSwitch = &auditionOn;
         editor.immediateSwitch = &immediateOn;
@@ -68,6 +79,8 @@ public:
                 ImGui::TextDisabled("ms (last / mean): wait %.0f / %.0f   draw %.0f / %.0f   upload %.1f / %.1f   archive %.0f / %.0f (%d queued)   asked -> ready %.0f / %.0f",
                                     st.queue.last, st.queue.mean, st.render.last, st.render.mean, st.upload.last, st.upload.mean,
                                     st.archive.last, st.archive.mean, st.archiveBacklog, st.total.last, st.total.mean);
+                ImGui::TextDisabled("Main thread ms (last / peak): player %.1f / %.1f   requests %.1f / %.1f   delivery %.1f / %.1f",
+                                    st.player.last,st.player.peak,st.request.last,st.request.peak,st.delivery.last,st.delivery.peak);
             }
             forms::savedWithPatchNote();
             ImGui::SameLine();
@@ -79,10 +92,15 @@ public:
             if(archiveErrors > 0){ std::lock_guard<std::mutex> lk(am); ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "archive errors %d: %s", archiveErrors.load(), lastArchiveError.c_str()); }
             if(thumbsAsked) ImGui::Text("thumbnails %d / %d", thumbsDone, thumbsAsked);
             bool g = useGpu.load();
-            if(ImGui::Checkbox("GPU for big images", &g)) useGpu = g;
-            if(ImGui::IsItemHovered()) ImGui::SetTooltip("The noise mask on images of 4 million pixels or more (prints) on the GPU.\n"
-                                                         "Measured on this Mac: no faster than all the CPU cores, and a few pixels differ by a level,\n"
-                                                         "so it is off; live images always stay on the CPU, exact.");
+            if(ImGui::Checkbox("GPU texture streaming", &g)) useGpu = g;
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Full-resolution texture uploads on worker GL contexts.\n"
+                                                         "Finished GPU textures enter the scrollers without an upload on the UI thread.\n"
+                                                         "Native pixels, filtering and texture coordinates are preserved.");
+            bool kicks = gpuKicks.load();
+            if(ImGui::Checkbox("GPU kick rasterization (exact)", &kicks)) gpuKicks = kicks;
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Uses the byte-exact integer kick shader when GPU streaming is enabled.\n"
+                                                         "Off by default: the parallel CPU kick renderer benchmarks faster on this Mac.\n"
+                                                         "GPU texture streaming works with either drawing backend.");
             if(!gpuError.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "GPU: %s", gpuError.c_str());
             ImGui::TextDisabled("Generators: %s, every process.%s", portedList().c_str(), font ? "" : " Font not found: letters are left out.");
             if(!lastWhyNot.empty()) ImGui::TextDisabled("last: %s", lastWhyNot.c_str());
@@ -92,25 +110,46 @@ public:
 
     void presetSave(ofJson& j) override {
         formsBox::presetSave(j);
-        j["formsGLGpu"] = useGpu.load();
+        j["formsGLExport"]={{"width",exportWidth},{"height",exportHeight},{"audio",glExportAudio},{"video",glExportVideo},{"layers",glExportSeparate}};
+        j["formsGLExactGpu"] = useGpu.load();
+        j["formsGLExactGpuKicks"] = gpuKicks.load();
         j["formsGLArchive"] = archive.load();
+        j["formsGLImmediate"] = immediateOn;
     }
     void presetRecallAfterSettingParameters(ofJson& j) override {
         formsBox::presetRecallAfterSettingParameters(j);
-        if(j.contains("formsGLGpu") && j["formsGLGpu"].is_boolean()) useGpu = j["formsGLGpu"].get<bool>();
+        if(j.contains("formsGLExport") && j["formsGLExport"].is_object()){
+            auto& e=j["formsGLExport"]; exportWidth=ofClamp(e.value("width",1920),16,16384); exportHeight=ofClamp(e.value("height",1080),16,16384);
+            glExportAudio=e.value("audio",false); glExportVideo=e.value("video",false); glExportSeparate=e.value("layers",false);
+        }
+        if(j.contains("formsGLExactGpu") && j["formsGLExactGpu"].is_boolean()) useGpu = j["formsGLExactGpu"].get<bool>();
+        if(j.contains("formsGLExactGpuKicks") && j["formsGLExactGpuKicks"].is_boolean()) gpuKicks = j["formsGLExactGpuKicks"].get<bool>();
         if(j.contains("formsGLArchive") && j["formsGLArchive"].is_boolean()) archive = j["formsGLArchive"].get<bool>();
+        if(j.contains("formsGLImmediate") && j["formsGLImmediate"].is_boolean()) immediateOn = j["formsGLImmediate"].get<bool>();
     }
 
     void update(ofEventArgs& a) override {
+        if(texturePool) texturePool->drain();
         loadFont();
-        formsBox::update(a);
+        { forms::StageTimer timer(forms::pipelineStats().player); formsBox::update(a); }
+        forms::StageTimer deliveryTimer(forms::pipelineStats().delivery);
         // finished renders: to the engine, on the main thread, in the order they were asked for
         std::deque<Done> ready;
         {
             std::lock_guard<std::mutex> lk(m);
-            while(true){
+            while(ready.size()<2){ // don't deliver an entire worker backlog in one scrolling frame
                 auto f = doneBySeq.find(nextDeliver);
                 if(f == doneBySeq.end()) break;
+                if(f->second.texture){
+                    try { if(!f->second.texture->ready()) break; }
+                    catch(const std::exception& e){ f->second.error = e.what(); f->second.texture.reset(); }
+                }
+                bool masksReady=true;
+                for(auto& mask:f->second.coverTextures) if(mask){
+                    try { if(!mask->ready()){ masksReady=false; break; } }
+                    catch(const std::exception& e){ f->second.error=e.what(); break; }
+                }
+                if(!masksReady) break;
                 ready.push_back(std::move(f->second));
                 doneBySeq.erase(f);
                 nextDeliver++;
@@ -123,6 +162,8 @@ public:
             forms::pipelineStats().archiveBacklog = (int)archiveJobs.size();
         }
         for(auto& d : ready){
+            if(d.error.empty()) for(size_t i=0;i<d.covers.size();++i)
+                if(i<d.coverTextures.size() && d.coverTextures[i]) d.covers[i].texture=attachTexture(d.coverTextures[i]);
             if(d.kind == KIND_AUDITION){ auditionDelivered(d); continue; }
             if(d.kind == KIND_IMMEDIATE || d.kind == KIND_FILTER){ immediateDelivered(d); continue; }
             if(d.recipe && d.error.empty()) keepRecipe(d.id, d.recipe);
@@ -135,20 +176,32 @@ public:
             }
             if(d.error.empty()){
                 if(d.queueMs >= 0){ forms::pipelineStats().queue.add(d.queueMs); forms::pipelineStats().render.add(d.renderMs); }
-                if(d.rgba) engine.onReady(d.id, d.png, d.json, d.rgba, d.w, d.h);
-                else engine.onReady(d.id, d.png, d.json);
+                auto pendingImage = engine.pending.find(d.id);
+                if(pendingImage != engine.pending.end()){
+                    pendingImage->second->texture = attachTexture(d.texture);
+                    pendingImage->second->covers = d.covers;
+                    pendingImage->second->stageRgba = d.texture ? nullptr : d.stageRgba;
+                    pendingImage->second->stageW = d.stageW;
+                    pendingImage->second->stageH = d.stageH;
+                    pendingImage->second->pw = d.w;
+                    pendingImage->second->ph = d.h;
+                }
+                // The live schedule retains the GPU texture; CPU pixels can leave after archiving.
+                engine.onReady(d.id, d.png, d.json);
                 // drawn with an older mute / solo: drawn again (in place) with the current one
                 if(d.filterGen != filterGen && d.recipe){ formsgl::json q = *d.recipe; q.erase("result"); submitImmediate(q, KIND_FILTER); }
             }else engine.onError(d.id, "Forms GL Box: " + d.error);
         }
         watchEdits();
+        pollGLExport();
     }
 
     // ---------------------------------------------------------------- audition / immediate
 
     // audition: the auditioned page alone on the stage, looping with the clock under the header
     bool auditionStage() override {
-        if(!auditionOn || !auditionImg || !auditionTex.isAllocated() || !scroller.fbo.isAllocated()) return false;
+        if(!auditionOn || !auditionImg || (!auditionImg->texture && !auditionTex.isAllocated()) || !scroller.fbo.isAllocated()) return false;
+        ofTexture& texture = auditionImg->texture ? *auditionImg->texture : auditionTex.getTexture();
         ofFbo& f = scroller.fbo;
         float w = f.getWidth(), h = f.getHeight(), ph = clock.phase;
         f.begin();
@@ -157,8 +210,8 @@ public:
         ofEnableAlphaBlending();
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // straight alpha -> premultiplied, as the scroller
         ofSetColor(255);
-        auditionTex.draw(-ph * w, 0, w, h);
-        auditionTex.draw((1 - ph) * w, 0, w, h);
+        texture.draw(-ph * w, 0, w, h);
+        texture.draw((1 - ph) * w, 0, w, h);
         ofPopStyle();
         f.end();
         return true;
@@ -166,12 +219,20 @@ public:
     std::shared_ptr<forms::Image> auditionImage() override { return auditionImg; }
 
 protected:
+    void recordTimeline(const forms::fs::path& path,const forms::json& record) override {
+        ArchiveJob job; job.appendPath=path.string(); job.appendLine=record.dump()+"\n";
+        { std::lock_guard<std::mutex> lock(am); archiveJobs.push_back(std::move(job)); }
+        startThreads(); acv.notify_one();
+    }
     void send(const std::string& path) override {
         if(path.empty()) return;
         loadSchemas();
         formsgl::json req;
         bool parsed = false;
-        try {
+        auto staged=stagedRequests.find(path);
+        bool deferred=staged!=stagedRequests.end();
+        if(deferred){ req=std::move(staged->second); stagedRequests.erase(staged); parsed=true; }
+        else try {
             std::ifstream in(path);
             if(in){ in >> req; parsed = true; }
         } catch(...) {}
@@ -197,6 +258,7 @@ protected:
         }
         Job j;
         j.req = req;
+        if(deferred) j.requestPath=path;
         j.font = font;
         j.outDir = outputDir(req.value("session", std::string()));
         submitFiltered(std::move(j));
@@ -204,21 +266,49 @@ protected:
 
 private:
     enum { KIND_PAGE = 0, KIND_AUDITION = 2, KIND_IMMEDIATE = 3, KIND_FILTER = 4 };
-    struct Job { formsgl::json req; std::string outDir; std::shared_ptr<const formsgl::Sketch::GlyphFont> font; std::string thumbRef, thumbPath;
+    std::map<std::string,forms::json> stagedRequests;
+    struct Job { formsgl::json req; std::string outDir,requestPath; std::shared_ptr<const formsgl::Sketch::GlyphFont> font; std::string thumbRef, thumbPath;
                  uint64_t seq = 0; std::chrono::steady_clock::time_point asked; int kind = KIND_PAGE;
                  std::shared_ptr<formsgl::json> original;   // the whole recipe when `req` is drawn without muted instruments
                  uint64_t filterGen = 0; };
-    struct Done { std::string id, png, json, error, thumbRef;
-                  std::shared_ptr<const std::vector<uint8_t>> rgba; int w = 0, h = 0; double queueMs = -1, renderMs = 0;
+    struct Done { std::vector<formscover::Mask> covers; std::string id, png, json, error, thumbRef;
+                  std::vector<std::shared_ptr<formsgl::SharedTexture>> coverTextures;
+                  std::shared_ptr<formsgl::SharedTexture> texture;
+                  std::shared_ptr<const std::vector<uint8_t>> rgba, stageRgba; int w = 0, h = 0, stageW = 0, stageH = 0; double queueMs = -1, renderMs = 0;
                   int kind = 0; std::shared_ptr<formsgl::json> recipe; uint64_t filterGen = 0; };
+
+    #include "formsGLExport.h"
 
     // ---- the recipes of recent pages (in memory: the files may not be written), for immediate mode
     std::map<std::string, std::shared_ptr<formsgl::json>> recipes;
     std::deque<std::string> recipeOrder;
     void keepRecipe(const std::string& id, std::shared_ptr<formsgl::json> r){
+        // A render submitted before a rename may finish afterwards. Use the current
+        // image identity when keeping its recipe for subsequent immediate edits.
+        auto pages = stagePages();
+        auto pending = engine.pending.find(id);
+        if(pending != engine.pending.end()) pages.push_back(pending->second);
+        for(auto& im : pages) if(im && im->id == id && r && r->value("scene", std::string()) != im->scene){
+            r = std::make_shared<formsgl::json>(*r);
+            (*r)["scene"] = im->scene;
+            break;
+        }
         if(!recipes.count(id)) recipeOrder.push_back(id);
         recipes[id] = std::move(r);
         while(recipeOrder.size() > 400){ recipes.erase(recipeOrder.front()); recipeOrder.pop_front(); }
+    }
+    void sceneWasRenamed(const std::string& from, const std::string& to) override {
+        for(auto& [id, recipe] : recipes) if(recipe && recipe->value("scene", std::string()) == from){
+            recipe = std::make_shared<formsgl::json>(*recipe);
+            (*recipe)["scene"] = to;
+        }
+        auto it = sceneApplied.find(from);
+        if(it != sceneApplied.end()){
+            auto state = it->second; state["name"] = to;
+            sceneApplied.erase(it); sceneApplied[to] = std::move(state);
+        }
+        if(auditionScene == from) auditionScene = to;
+        if(auditionImg && auditionImg->scene == from) auditionImg->scene = to;
     }
     // the pages on the stage and waiting (every copy of a repeated page)
     std::vector<std::shared_ptr<forms::Image>> stagePages(){
@@ -235,8 +325,8 @@ private:
     // ---- watching the edits
     bool auditionOn = false, immediateOn = false, auditionWas = false;
     std::string watchRef, watchDump;
-    forms::Preset appliedPreset;                 // the instrument as the pages on stage show it
-    std::map<std::string, std::string> sceneLook; // scene -> its palette + scale, as last applied
+    forms::PresetEditTracker presetEdits;
+    std::map<std::string, forms::json> sceneApplied; // scene on stage -> the version its pages show
     void watchEdits(){
         std::string ref = editor.selectedPresetRef();
         auto it = engine.presets.find(ref);
@@ -248,28 +338,45 @@ private:
         if(it != engine.presets.end()){
             std::string dump = forms::json(it->second).dump();
             if(ref != watchRef){
-                watchRef = ref; watchDump = dump; appliedPreset = it->second;
+                watchRef = ref; watchDump = dump;
                 if(auditionOn) requestAudition();
             }else if(dump != watchDump){
                 watchDump = dump;
                 if(auditionOn) requestAudition();
-                if(immediateOn) immediateFor(ref);
-                else appliedPreset = it->second;
             }
         }
-        // scenes: a palette or scale change redraws that scene's pages (immediate mode)
-        for(auto& [name, sc] : engine.scenes){
-            std::string look = sc.palette + "|" + sc.scale;
-            auto f = sceneLook.find(name);
-            if(f == sceneLook.end()){ sceneLook[name] = look; continue; }
-            if(f->second != look){
-                f->second = look;
-                if(immediateOn) immediateScene(name);
-            }
+        forms::Preset beforePreset,afterPreset;
+        if(presetEdits.next(engine.presets,immediateOn,immediateInFlight>0,beforePreset,afterPreset))
+            immediateFor(beforePreset,afterPreset);
+        // scenes on stage: an edit of what a page is drawn with (palette, scale, note grid, a layer's
+        // instrument cells) redraws that scene's pages in place (immediate mode). While a batch is in
+        // flight the edit waits (tried every frame), so the latest one wins.
+        std::set<std::string> onStage;
+        for(auto& im : stagePages()) if(im) onStage.insert(im->scene);
+        for(auto it = sceneApplied.begin(); it != sceneApplied.end();) it = onStage.count(it->first) ? std::next(it) : sceneApplied.erase(it);
+        for(auto& name : onStage){
+            auto sit = engine.scenes.find(name);
+            if(sit == engine.scenes.end()) continue;
+            // Audio assets are shared immutable bytes, not an image-render setting.
+            // Never copy a sample's base64 payload into the per-frame edit snapshot.
+            forms::Scene editState=sit->second; editState.kickSample.reset();
+            forms::json now = editState;
+            { auto es = engine.effectiveScale(sit->second); now["_globalPitch"] = {{"notes", es.notes}, {"root", engine.effectiveRoot(sit->second)}}; }   // a Global Pitch change counts as a scene edit
+            auto f = sceneApplied.find(name);
+            if(f == sceneApplied.end()){ sceneApplied[name] = now; continue; }
+            if(f->second == now) continue;
+            if(!immediateOn){ f->second = now; continue; }
+            if(immediateInFlight > 0){ if(!immediateWaitNoted){ immediateWaitNoted = true; engine.note("immediate: " + name + " edited while a redraw is in flight; drawn again when it lands"); } continue; }
+            immediateWaitNoted = false;
+            forms::Scene before;
+            try { before = f->second.get<forms::Scene>(); } catch(...) { f->second = now; continue; }
+            immediateSceneEdit(name, before, sit->second);
+            f->second = now;
         }
     }
 
     // ---- audition
+    std::shared_ptr<formsgl::json> auditionRecipe;
     std::shared_ptr<forms::Image> auditionImg;
     ofImage auditionTex;
     bool auditionBusy = false, auditionDirty = false, auditionSeedSet = false;
@@ -311,8 +418,10 @@ private:
     }
     void auditionDelivered(Done& d){
         auditionBusy = false;
-        if(d.error.empty() && d.rgba && auditionOn){
-            auditionTex.setFromPixels(d.rgba->data(), d.w, d.h, OF_IMAGE_COLOR_ALPHA);
+        if(d.error.empty() && (d.rgba || d.texture) && auditionOn){
+            const auto& stage = d.stageRgba ? d.stageRgba : d.rgba;
+            int sw = d.stageRgba ? d.stageW : d.w, sh = d.stageRgba ? d.stageH : d.h;
+            if(!d.texture) auditionTex.setFromPixels(stage->data(), sw, sh, OF_IMAGE_COLOR_ALPHA);
             auto img = std::make_shared<forms::Image>();
             const formsgl::json& q = *d.recipe;
             img->id = q.value("id", std::string()); img->scene = q.value("scene", std::string());
@@ -321,7 +430,9 @@ private:
             for(auto& n : q.value("scaleNotes", formsgl::json::array())) img->scaleNotes.push_back((float)n.get<double>());
             img->palette = q.value("paletteName", std::string()); img->scale = q.value("scaleName", std::string());
             img->blend = "lighten"; img->gain = 1; img->preview = true;
-            img->rgba = d.rgba; img->pw = d.w; img->ph = d.h;
+            img->texture = attachTexture(d.texture);
+            img->stageRgba = d.texture ? nullptr : d.stageRgba; img->stageW = d.stageW; img->stageH = d.stageH; img->pw = d.w; img->ph = d.h;
+            auditionRecipe = d.recipe;
             auditionImg = img;
         }else if(!d.error.empty()) engine.note("audition: " + d.error);
         if(auditionDirty){ auditionDirty = false; requestAudition(); }
@@ -329,8 +440,7 @@ private:
 
     // ---- immediate mode: the pages that use an edited instrument (or a scene) drawn again in place
     int immediateInFlight = 0;
-    bool immediateDirty = false;
-    std::set<std::string> immediateScenesDirty;
+    bool immediateWaitNoted = false;
     void submitImmediate(const formsgl::json& req, int kind = KIND_IMMEDIATE){
         Job j; j.req = req; j.font = font; j.kind = kind;
         j.outDir = outputDir(req.value("session", std::string()));
@@ -384,12 +494,8 @@ private:
         }
         if(n) engine.note("mute / solo: " + std::to_string(n) + " pages drawn again");
     }
-    void immediateFor(const std::string& ref){
-        if(immediateInFlight > 0){ immediateDirty = true; return; }   // the next batch takes the latest edit
-        auto it = engine.presets.find(ref);
-        if(it == engine.presets.end()) return;
-        forms::Preset before = appliedPreset, after = it->second;
-        appliedPreset = after;
+    void immediateFor(const forms::Preset& before,const forms::Preset& after){
+        const std::string ref=after.ref();
         std::set<std::string> refs = forms::itemRefs(engine, before), done;   // a stack: also the presets it plays
         for(auto& r : forms::itemRefs(engine, after)) refs.insert(r);
         int n = 0;
@@ -398,15 +504,22 @@ private:
             auto rc = recipes.find(im->id);
             if(rc == recipes.end() || !forms::usesPreset(*rc->second, refs)) continue;
             unsigned seed = (unsigned)im->seed ^ (unsigned)std::hash<std::string>()(ref);
-            submitImmediate(forms::patchForPreset(engine, *rc->second, before, after, seed));
+            auto req=*rc->second;auto sit=engine.scenes.find(im->scene);int li=req.value("layer",1)-1;
+            if(sit!=engine.scenes.end() && li>=0 && li<(int)sit->second.layers.size()){
+                formsgl::json regular=formsgl::json::array();
+                for(auto& item:req.value("items",formsgl::json::array()))if(!item.value("layerEffect",false))regular.push_back(item);
+                req["items"]=std::move(regular);
+                if(forms::usesPreset(req,refs))req=forms::patchForPreset(engine,req,before,after,seed);
+                engine.applyLayerEffect(req,sit->second.layers[li],req.value("seed",0u));
+            }else req=forms::patchForPreset(engine,req,before,after,seed);
+            submitImmediate(req);
             n++;
         }
         if(n) engine.note("immediate: " + std::to_string(n) + " pages with " + ref + " drawn again");
     }
-    void immediateScene(const std::string& name){
-        if(immediateInFlight > 0){ immediateScenesDirty.insert(name); return; }
-        auto sit = engine.scenes.find(name);
-        if(sit == engine.scenes.end()) return;
+    // a scene's pages on stage after an edit: its look (palette, scale, note grid) and, per page, its
+    // layer's instruments (patchSelection: only what the cell edit changes)
+    void immediateSceneEdit(const std::string& name, const forms::Scene& before, const forms::Scene& after){
         std::set<std::string> done;
         int n = 0;
         for(auto& im : stagePages()){
@@ -414,25 +527,43 @@ private:
             auto rc = recipes.find(im->id);
             if(rc == recipes.end()) continue;
             formsgl::json req = *rc->second;
-            if(!forms::patchForScene(engine, req, sit->second)) continue;
+            req.erase("result");
+            bool changed = forms::patchForScene(engine, req, after);
+            int li = req.value("layer", 1) - 1;
+            if(li >= 0 && li < (int)before.layers.size() && li < (int)after.layers.size() && !after.layers[li].fixed.is_object()){
+                formsgl::json sel = forms::patchSelection(engine, req, before.layers[li], after.layers[li], req.value("seed", 0u), li);
+                if(sel["items"] != req["items"]){ req = sel; changed = true; }
+            }
+            if(li>=0 && li<(int)after.layers.size()){
+                // Also move an existing layer effect back to the end after cell additions.
+                auto oldItems=req["items"];
+                engine.applyLayerEffect(req,after.layers[li],req.value("seed",0u));
+                if(oldItems!=req["items"])changed=true;
+            }
+            if(!changed) continue;
             submitImmediate(req);
             n++;
         }
-        if(n) engine.note("immediate: " + std::to_string(n) + " pages of " + name + " drawn again (palette / scale)");
+        if(n) engine.note("immediate: " + std::to_string(n) + " pages of " + name + " drawn again");
     }
     void immediateDelivered(Done& d){
         immediateInFlight = std::max(0, immediateInFlight - 1);
-        if(d.error.empty() && d.rgba){
+        if(d.error.empty() && (d.rgba || d.texture)){
             keepRecipe(d.id, d.recipe);
             const formsgl::json& q = *d.recipe;
             std::vector<float> notes;
             for(auto& n : q.value("scaleNotes", formsgl::json::array())) notes.push_back((float)n.get<double>());
             std::string png;
+            auto texture = attachTexture(d.texture);
             for(auto& im : stagePages()){
                 if(im->id != d.id) continue;
-                im->rgba = d.rgba; im->pw = d.w; im->ph = d.h;
+                im->rgba.reset(); im->pw = d.w; im->ph = d.h;
+                im->texture = texture;
+                im->covers = d.covers;
+                im->stageRgba = d.texture ? nullptr : d.stageRgba; im->stageW = d.stageW; im->stageH = d.stageH;
                 if(!notes.empty()) im->scaleNotes = notes;
                 im->palette = q.value("paletteName", im->palette); im->scale = q.value("scaleName", im->scale);
+                im->notegrid = q.value("notegrid", im->notegrid);
                 png = im->png;
             }
             if(!png.empty()){
@@ -442,9 +573,6 @@ private:
         }else if(!d.error.empty()) engine.note("immediate " + d.id + ": " + d.error);
         if(immediateInFlight == 0){
             if(filterDirty){ filterDirty = false; redrawForFilter(); }
-            if(immediateDirty){ immediateDirty = false; immediateFor(watchRef); }
-            auto sc = immediateScenesDirty; immediateScenesDirty.clear();
-            for(auto& nm : sc) immediateScene(nm);
         }
     }
 
@@ -534,7 +662,9 @@ private:
         return !ec;
     }
     std::shared_ptr<const formsgl::Sketch::GlyphFont> font;
-    std::atomic<bool> useGpu{false};
+    std::atomic<bool> useGpu{true};
+    std::atomic<bool> gpuKicks{false}; // exact shader retained; CPU wins the measured live workload
+    std::shared_ptr<formsgl::SharedTexturePool> texturePool;
     std::string gpuError;
     // the sketch's font (letters), read on the main thread: glyph outlines at size 1 (em)
     void loadFont(){
@@ -551,9 +681,10 @@ private:
     uint64_t nextSeq = 0, nextDeliver = 0;
     std::vector<std::thread> workersPool;
     std::vector<std::unique_ptr<formsgl::GpuEffectsCGL>> gpus;   // one per worker (its own GL context)
+    std::mutex largeRenderMutex; // keep multiple print-size canvases from exhausting RAM together
     bool quit = false;
     // the archive: PNG + sidecar written after the image is handed over
-    struct ArchiveJob { std::shared_ptr<const std::vector<uint8_t>> rgba; int w = 0, h = 0; formsgl::json sidecar; std::string png, json, dir, base; };
+    struct ArchiveJob { std::vector<formscover::Mask> covers; std::shared_ptr<const std::vector<uint8_t>> rgba; int w = 0, h = 0; formsgl::json sidecar; std::string png, json, dir, base,appendPath,appendLine; };
     std::mutex am;
     std::condition_variable acv;
     std::deque<ArchiveJob> archiveJobs;
@@ -572,7 +703,9 @@ private:
                       "harmony, and draws it (the ESPECTRES_2027 renderer in C++, on background threads). Its "
                       "built-in player scrolls the images (Output) at the BPM of the image under the header and "
                       "moves the header; the actual* outputs are the values of the image under the header; it "
-                      "post-processes and sonifies. Show opens the window. Data: bin/data/Forms (inspector: Renderer).";
+                      "post-processes and sonifies. Show opens the window. Data: bin/data/Forms (inspector: Renderer). "
+                      "Follows a Global Pitch node when the patch has one: Scale (with its root and Shift) replaces the scene's scale "
+                      "for the next pages (at once with Immediate mode), Transpose bends the sound (Mod 12, Low Scale, Negative and Detune are not followed).";
     }
     static std::string portedList(){
         std::string s;
@@ -621,7 +754,10 @@ private:
             std::string jid;
             try { jid = j.req.value("id", std::string()); } catch(...) {}
             // nothing may escape a worker thread (it would end the app): any failure is an error for that image
-            try { d = render(j, sch, wi); }
+            try {
+                if(!j.requestPath.empty()) forms::writeJsonAtomic(j.requestPath,j.original?*j.original:j.req);
+                d = render(j, sch, wi);
+            }
             catch(std::exception& e){ d = Done(); d.id = jid; d.thumbRef = j.thumbRef; d.kind = j.kind; d.error = std::string("render failed: ") + e.what(); errorsHere++; }
             catch(...){ d = Done(); d.id = jid; d.thumbRef = j.thumbRef; d.kind = j.kind; d.error = "render failed"; errorsHere++; }
             if(d.error.empty() && d.thumbRef.empty()) d.queueMs = waited;
@@ -635,6 +771,12 @@ private:
     // writes one archived image: PNG then sidecar, each through a temporary name
     static bool writeArchive(const ArchiveJob& a, double& ms, std::string& err){
         auto t0 = std::chrono::steady_clock::now();
+        if(!a.appendPath.empty()){
+            forms::fs::create_directories(forms::fs::path(a.appendPath).parent_path());
+            std::ofstream file(a.appendPath,std::ios::app);
+            if(!file || !(file<<a.appendLine)){err="cannot append session timeline";return false;}
+            return true;
+        }
         std::error_code ec;
         std::filesystem::create_directories(a.dir, ec);
         std::filesystem::path pngTmp = std::filesystem::path(a.dir) / ("." + a.base + ".tmp.png"), jsonTmp = std::filesystem::path(a.dir) / ("." + a.base + ".tmp.json");
@@ -642,6 +784,15 @@ private:
         px.setFromPixels(a.rgba->data(), a.w, a.h, OF_PIXELS_RGBA);
         if(!ofSaveImage(px, pngTmp.string())){ err = "cannot write " + pngTmp.string(); return false; }
         double pngMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        for(size_t i=0;i<a.covers.size();++i){
+            auto& mask=a.covers[i]; if(!mask.alpha) continue;
+            ofPixels pixels; pixels.setFromPixels(mask.alpha->data(),mask.w,mask.h,OF_PIXELS_GRAY);
+            std::string name=a.base+"_cover"+std::to_string(i)+".png";
+            auto tmp=std::filesystem::path(a.dir)/("."+name+".tmp.png");
+            if(!ofSaveImage(pixels,tmp.string())){err="cannot write cover mask";return false;}
+            std::filesystem::rename(tmp,std::filesystem::path(a.dir)/name,ec);
+            if(ec){err="cannot publish cover mask: "+ec.message();return false;}
+        }
         formsgl::json side = a.sidecar;
         side["result"]["archiveMs"] = (int)std::lround(pngMs);
         {
@@ -668,8 +819,8 @@ private:
             bool ok = false;
             try { ok = writeArchive(a, ms, err); } catch(std::exception& e){ err = e.what(); } catch(...){ err = "archive failed"; }
             std::lock_guard<std::mutex> lk(am);
-            if(ok) archiveTimes.push_back(ms);
-            else { archiveErrors++; lastArchiveError = a.base + ": " + err; }
+            if(ok && a.appendPath.empty()) archiveTimes.push_back(ms);
+            else if(!ok){ archiveErrors++; lastArchiveError = a.base + ": " + err; }
         }
     }
     std::atomic<int> archiveErrors{0};
@@ -680,23 +831,36 @@ private:
         auto& req = j.req;
         d.id = req.value("id", std::string());
         if(!sch){ d.error = "no parameter schemas"; errorsHere++; return d; }
-        formsgl::Sketch sk(*sch);
-        sk.font = j.font;
-        if(useGpu){
-            auto& g = gpus[wi];
-            if(!g){
-                g = std::make_unique<formsgl::GpuEffectsCGL>();
-                if(!g->ok()){ std::lock_guard<std::mutex> lk(m); gpuError = g->error; }
+        size_t requestPixels = (size_t)1920 * 1080;
+        try {
+            auto size = req.value("size", std::vector<int>{1920, 1080});
+            if(size.size() == 2 && size[0] > 0 && size[1] > 0) requestPixels = (size_t)size[0] * size[1];
+        }catch(...){}
+        std::unique_lock<std::mutex> largeLock(largeRenderMutex, std::defer_lock);
+        if(requestPixels >= (size_t)64 * 1024 * 1024) largeLock.lock();
+        formsgl::RenderResult r;
+        {
+            formsgl::Sketch sk(*sch);
+            sk.font = j.font;
+            if(useGpu){
+                auto& g = gpus[wi];
+                if(!g){
+                    g = std::make_unique<formsgl::GpuEffectsCGL>(texturePool ? texturePool->context() : nullptr);
+                    if(!g->ok()){ std::lock_guard<std::mutex> lk(m); gpuError = g->error; }
+                }
+                if(g && g->ok()){ g->enableExactRaster = gpuKicks.load(); sk.gpu = g.get(); }
             }
-            if(g && g->ok()) sk.gpu = g.get();
-        }
-        formsgl::RenderResult r = sk.render(req);
+            r = sk.render(req);
+        } // release the CPU canvas before uploading/archiving its RGBA output
+        d.covers = std::move(r.covers);
         d.kind = j.kind;
         d.filterGen = j.filterGen;
         if(j.kind == KIND_AUDITION){
             if(!r.error.empty()){ d.error = r.error; return d; }
             d.recipe = std::make_shared<formsgl::json>(req);
             d.rgba = std::make_shared<const std::vector<uint8_t>>(std::move(r.rgba)); d.w = r.w; d.h = r.h;
+            prepareTexture(d, wi);
+            if(d.texture) d.rgba.reset(); // release the large CPU buffer on this worker
             return d;
         }
         if(!j.thumbRef.empty()){
@@ -718,10 +882,21 @@ private:
                              {"renderer", "FormsGL"}, {"rendererVersion", "phase7-1"}, {"codeHash", "formsgl"},
                              {"queueMs", (int)std::lround(std::max(0.0, waited))}, {"items", r.itemResults}};
         if(j.kind == KIND_IMMEDIATE) res["redrawn"] = true;   // drawn again after an edit (immediate mode)
+        if(!d.covers.empty()){
+            res["coverMasks"]=formsgl::json::array();
+            for(size_t i=0;i<d.covers.size();++i){
+                auto metadata=formscover::write(d.covers[i].settings);
+                metadata["png"]=base+"_cover"+std::to_string(i)+".png";
+                res["coverMasks"].push_back(metadata);
+            }
+        }
         req["result"] = res;
         d.recipe = j.original ? j.original : std::make_shared<formsgl::json>(req);   // the whole recipe (mute / solo)
         auto pixels = std::make_shared<const std::vector<uint8_t>>(std::move(r.rgba));
+        d.rgba = pixels; d.w = r.w; d.h = r.h;
+        d.renderMs = r.renderMs + prepareTexture(d, wi);
         ArchiveJob a;
+        a.covers = d.covers;
         a.rgba = pixels; a.w = r.w; a.h = r.h; a.sidecar = req; a.png = png.string(); a.json = json.string(); a.dir = j.outDir; a.base = base;
         bool preview = req.contains("preview");
         if(preview){
@@ -737,10 +912,49 @@ private:
         }
         d.png = png.string();
         d.json = json.string();
-        d.rgba = pixels; d.w = r.w; d.h = r.h;
-        d.renderMs = r.renderMs;
         if(j.kind != KIND_IMMEDIATE && j.kind != KIND_FILTER) drawnHere++;
-        lastMs = r.renderMs;
+        lastMs = d.renderMs;
+        if(d.texture) d.rgba.reset(); // only the archive worker retains CPU pixels, when needed
         return d;
+    }
+
+    static std::shared_ptr<ofTexture> attachTexture(const std::shared_ptr<formsgl::SharedTexture>& resource){
+        if(!resource) return {};
+        auto texture = std::shared_ptr<ofTexture>(new ofTexture, [resource](ofTexture* t){ delete t; });
+        texture->setUseExternalTextureID(resource->id);
+        auto& data = texture->getTextureData();
+        data.textureTarget = resource->target; data.glInternalFormat = resource->internalFormat;
+        data.width = data.tex_w = resource->w; data.height = data.tex_h = resource->h;
+        data.tex_t = resource->target == GL_TEXTURE_2D ? 1 : resource->w;
+        data.tex_u = resource->target == GL_TEXTURE_2D ? 1 : resource->h;
+        data.bFlipTexture = false;
+        return texture;
+    }
+
+    double prepareTexture(Done& d, int wi){
+        auto t0 = std::chrono::steady_clock::now();
+        if(!d.rgba || d.w < 1 || d.h < 1) return 0;
+        d.stageW = d.w; d.stageH = d.h;
+        if(texturePool){
+            // Upload on the worker even when GPU drawing is disabled: this only
+            // transfers the exact CPU pixels, it does not change their rendering.
+            auto& gpu=gpus[wi];
+            if(!gpu) gpu=std::make_unique<formsgl::GpuEffectsCGL>(texturePool->context());
+            if(gpu->ok()){
+                d.texture=gpu->upload(*d.rgba,d.w,d.h,texturePool);
+                d.coverTextures.resize(d.covers.size());
+                for(size_t i=0;i<d.covers.size();++i){
+                    auto& mask=d.covers[i];
+                    if(mask.alpha) d.coverTextures[i]=gpu->upload(*mask.alpha,mask.w,mask.h,texturePool,GL_RED);
+                }
+            }
+            if(!d.texture){
+                std::lock_guard<std::mutex> lock(m);
+                gpuError = gpu->error;
+            }
+        }
+        // Exact CPU fallback: preserve native pixels as well. Never downsample a projection page.
+        if(!d.texture) d.stageRgba = d.rgba;
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     }
 };
