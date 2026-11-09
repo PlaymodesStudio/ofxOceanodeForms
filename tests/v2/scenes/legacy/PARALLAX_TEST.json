@@ -1,0 +1,233 @@
+{
+ "bpm": 95.0,
+ "colours": {
+  "accent": "#FFA800",
+  "bass": "#1C77AC",
+  "highlight": "#3B8BEB",
+  "neutral": "#FAC51C",
+  "shadow": "#0F2862"
+ },
+ "format": "espectres.scene",
+ "formatVersion": 1,
+ "harmony": {
+  "override": {
+   "hold": false,
+   "jumpDegree": -1000
+  },
+  "sections": [
+   {
+    "lengthBeats": 0.0,
+    "meter": {
+     "den": 4,
+     "grouping": [],
+     "num": 4,
+     "swing": 0.0
+    },
+    "name": "A",
+    "rules": {
+     "cadenceDegree": 0,
+     "stepBeats": 4.0,
+     "table": [],
+     "tension": 0.3
+    },
+    "scale": {
+     "name": "japanese",
+     "semis": [
+      0,
+      1,
+      5,
+      7,
+      10
+     ],
+     "tonic": 3,
+     "tuning": {
+      "cents": [],
+      "periodCents": 1200.0
+     }
+    },
+    "source": "typed",
+    "steps": [
+     {
+      "colour": "triad",
+      "degree": 0,
+      "length": 32.0
+     }
+    ]
+   }
+  ]
+ },
+ "instances": [
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "bar_line_top",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/bar line top",
+    "version": 1
+   },
+   "params": {
+    "cell": "block",
+    "colourRole": "neutral",
+    "decay": 0.0625,
+    "heightHigh": 1.0,
+    "heightLow": 0.66,
+    "level": 1.0,
+    "scatter": 0.0,
+    "width": 0.0625
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/bar line top",
+   "routings": [],
+   "seq": {
+    "hits": 1,
+    "mode": "euclidean",
+    "rotation": 0,
+    "steps": 64
+   },
+   "swing": -1.0,
+   "type": "hats"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "bar_line_middle",
+   "layer": 1,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/bar line middle",
+    "version": 1
+   },
+   "params": {
+    "bandHigh": 0.66,
+    "bandLow": 0.33,
+    "bandShape": 0.0,
+    "cell": "block",
+    "colourRole": "neutral",
+    "contrast": 4.0,
+    "decay": 0.0625,
+    "grain": 0.0,
+    "grainSize": 19.99999970197678,
+    "level": 1.0,
+    "width": 0.0625
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 24.0
+   },
+   "preset": "legacy hits/bar line middle",
+   "routings": [],
+   "seq": {
+    "hits": 1,
+    "mode": "euclidean",
+    "rotation": 0,
+    "steps": 64
+   },
+   "swing": -1.0,
+   "type": "snare"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "bar_line_bottom",
+   "layer": 2,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/bar line bottom",
+    "version": 1
+   },
+   "params": {
+    "bandHigh": 0.33,
+    "bandLow": 0.0,
+    "bandShape": 0.0,
+    "cell": "block",
+    "colourRole": "neutral",
+    "contrast": 4.0,
+    "decay": 0.0625,
+    "grain": 0.0,
+    "grainSize": 19.99999970197678,
+    "level": 1.0,
+    "width": 0.0625
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 16.0
+   },
+   "preset": "legacy hits/bar line bottom",
+   "routings": [],
+   "seq": {
+    "hits": 1,
+    "mode": "euclidean",
+    "rotation": 0,
+    "steps": 64
+   },
+   "swing": -1.0,
+   "type": "snare"
+  }
+ ],
+ "layers": [
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 24.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 16.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  }
+ ],
+ "legacy": {
+  "approx": [],
+  "colourRoles": {
+   "accent": "#FFA800",
+   "bass": "#1C77AC",
+   "highlight": "#3B8BEB",
+   "neutral": "#FAC51C",
+   "shadow": "#0F2862"
+  },
+  "confidence": 0.9,
+  "dropped": [
+   "performance",
+   "compat",
+   "snapshot",
+   "notegrid"
+  ],
+  "palette": "blue yellow",
+  "source": "v1 scene PARALLAX_TEST",
+  "unmapped": [],
+  "v1Root": 27,
+  "v1Scale": "japanese"
+ },
+ "macros": {},
+ "name": "PARALLAX_TEST",
+ "routings": [],
+ "seed": 2750764425,
+ "version": 1
+}

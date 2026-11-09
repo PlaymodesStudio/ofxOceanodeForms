@@ -1,0 +1,252 @@
+{
+ "bpm": 160.0,
+ "colours": {
+  "accent": "#FF0000",
+  "bass": "#FFA600",
+  "highlight": "#245BFF",
+  "neutral": "#FFF0D4",
+  "shadow": "#FFFFFF"
+ },
+ "format": "espectres.scene",
+ "formatVersion": 1,
+ "harmony": {
+  "override": {
+   "hold": false,
+   "jumpDegree": -1000
+  },
+  "sections": [
+   {
+    "lengthBeats": 0.0,
+    "meter": {
+     "den": 4,
+     "grouping": [],
+     "num": 4,
+     "swing": 0.0
+    },
+    "name": "A",
+    "rules": {
+     "cadenceDegree": 0,
+     "stepBeats": 4.0,
+     "table": [],
+     "tension": 0.3
+    },
+    "scale": {
+     "name": "japanese",
+     "semis": [
+      0,
+      1,
+      5,
+      7,
+      10
+     ],
+     "tonic": 3,
+     "tuning": {
+      "cents": [],
+      "periodCents": 1200.0
+     }
+    },
+    "source": "typed",
+    "steps": [
+     {
+      "colour": "triad",
+      "degree": 0,
+      "length": 64.0
+     }
+    ]
+   }
+  ]
+ },
+ "instances": [
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "crossless_lines",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/crossless lines",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "neutral",
+    "filled": false,
+    "heightSize": 0.35415,
+    "rotation": 0.0,
+    "shape": "line",
+    "shapeLength": 12.749400000000001,
+    "strokeWidth": 11.799000000000001
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 64.0
+   },
+   "preset": "legacy shapes/crossless lines",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightSize",
+     "invert": false,
+     "level": "event",
+     "max": 0.625,
+     "min": 0.0833,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "density": 0.3046875,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "dash_lines",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/dash lines",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": false,
+    "heightSize": 0.89,
+    "rotation": 0.0,
+    "shape": "line",
+    "shapeLength": 16.0,
+    "strokeWidth": 10.8
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 64.0
+   },
+   "preset": "legacy shapes/dash lines",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "rotation",
+     "invert": false,
+     "level": "event",
+     "max": 90.0,
+     "min": -90.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "density": 0.0234375,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  }
+ ],
+ "layers": [
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 64.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 64.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 64.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 64.0
+  }
+ ],
+ "legacy": {
+  "approx": [
+   "crossless lines: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "dash lines: shape 'dashed line' drawn as line",
+   "dash lines: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights"
+  ],
+  "colourRoles": {
+   "accent": "#FF0000",
+   "bass": "#FFA600",
+   "highlight": "#245BFF",
+   "neutral": "#FFF0D4",
+   "shadow": "#FFFFFF"
+  },
+  "confidence": 0.923,
+  "dropped": [
+   "performance",
+   "compat",
+   "snapshot",
+   "notegrid"
+  ],
+  "palette": "bauhaus",
+  "source": "v1 scene TEST",
+  "unmapped": [
+   "dash lines: dash"
+  ],
+  "v1Root": 27,
+  "v1Scale": "japanese"
+ },
+ "macros": {},
+ "name": "TEST",
+ "routings": [],
+ "seed": 2119173687,
+ "version": 1
+}

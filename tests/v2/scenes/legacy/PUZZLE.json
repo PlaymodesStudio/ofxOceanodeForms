@@ -1,0 +1,3506 @@
+{
+ "bpm": 100.0,
+ "colours": {
+  "accent": "#FFFFFF",
+  "bass": "#FF0000",
+  "highlight": "#FFFFFF",
+  "neutral": "#FFFFFF",
+  "shadow": "#FF0000"
+ },
+ "format": "espectres.scene",
+ "formatVersion": 1,
+ "harmony": {
+  "override": {
+   "hold": false,
+   "jumpDegree": -1000
+  },
+  "sections": [
+   {
+    "lengthBeats": 0.0,
+    "meter": {
+     "den": 4,
+     "grouping": [],
+     "num": 4,
+     "swing": 0.0
+    },
+    "name": "A",
+    "rules": {
+     "cadenceDegree": 0,
+     "stepBeats": 4.0,
+     "table": [],
+     "tension": 0.3
+    },
+    "scale": {
+     "name": "m9",
+     "semis": [
+      0,
+      2,
+      3,
+      7,
+      10
+     ],
+     "tonic": 3,
+     "tuning": {
+      "cents": [],
+      "periodCents": 1200.0
+     }
+    },
+    "source": "typed",
+    "steps": [
+     {
+      "colour": "triad",
+      "degree": 0,
+      "length": 4.0
+     },
+     {
+      "colour": "triad",
+      "degree": 0,
+      "keyShift": 3,
+      "length": 4.0
+     },
+     {
+      "colour": "triad",
+      "degree": 0,
+      "keyShift": 7,
+      "length": 4.0
+     }
+    ]
+   }
+  ]
+ },
+ "instances": [
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "trill_loop",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/trill loop",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "accent",
+    "envPower": 1.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 2.0,
+    "partialDecay": 0.0,
+    "partialThin": 0.0,
+    "partials": 3,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 3.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/trill loop",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 5.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 5.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.octave",
+     "invert": false,
+     "level": "phrase",
+     "max": 0.0,
+     "min": -1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "advance": 2,
+    "hits": 2,
+    "mode": "euclidean",
+    "noteLength": 1.0,
+    "notesPerStep": 1,
+    "octave": -1,
+    "order": "up",
+    "patternLength": 2,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 16,
+    "voices": 3
+   },
+   "swing": -1.0,
+   "type": "arpeggio"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "high_trill_loop",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/high trill loop",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "accent",
+    "envPower": 1.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 2.0,
+    "partialDecay": 0.0,
+    "partialThin": 0.0,
+    "partials": 3,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 3.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/high trill loop",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 5.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 5.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.octave",
+     "invert": false,
+     "level": "phrase",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "advance": 2,
+    "hits": 2,
+    "mode": "euclidean",
+    "noteLength": 1.0,
+    "notesPerStep": 1,
+    "octave": 1,
+    "order": "up",
+    "patternLength": 2,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 16,
+    "voices": 8
+   },
+   "swing": -1.0,
+   "type": "arpeggio"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "counter_eight",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/counter eight",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 37.5,
+    "detuneVoices": 2,
+    "envPower": 1.25,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialChance": 0.9,
+    "partialCut": 0.5,
+    "partialDecay": 0.0,
+    "partialEnvPower": 11.5,
+    "partialThin": 0.0,
+    "partials": 13,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.5
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/counter eight",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 4.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 23.0,
+     "min": 3.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 50.0,
+     "min": 25.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv4",
+     "sourceParams": {
+      "points": [
+       1.0,
+       0.9375,
+       0.875,
+       0.8125,
+       0.75,
+       0.6875,
+       0.625,
+       0.5625,
+       0.5,
+       0.4375,
+       0.375,
+       0.3125,
+       0.25,
+       0.1875,
+       0.125,
+       0.0625,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 16.0,
+     "min": 3.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random5",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 8.0,
+     "min": 1.6,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random6",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialChance",
+     "invert": false,
+     "level": "phrase",
+     "max": 1.0,
+     "min": 0.5,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random7",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "density": 0.37,
+    "mode": "probability",
+    "noteLength": 4.8,
+    "octave": -1,
+    "octaveChance": 50.0,
+    "patternLength": 8,
+    "pitchSource": "chord",
+    "steps": 16,
+    "voices": 3,
+    "voicing": "close"
+   },
+   "swing": -1.0,
+   "type": "chords"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "white_page",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/sweep/white page",
+    "version": 1
+   },
+   "params": {
+    "bandShape": 0.0,
+    "bottomFrom": 0.0,
+    "bottomTo": 0.0,
+    "colourRole": "neutral",
+    "curve": 1.0,
+    "levelFrom": 1.0,
+    "levelTo": 1.0,
+    "shape": "free",
+    "softness": 0.0,
+    "topFrom": 1.0,
+    "topTo": 1.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy sweep/white page",
+   "routings": [],
+   "seq": {
+    "chance": 33.0,
+    "chanceScope": "phrase",
+    "level": 1.0,
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "sweep"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "band_pass_4th_band",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/band pass 4th",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "bandHigh": 0.572925,
+    "bandLow": 0.427075,
+    "effect": "band",
+    "feather": 0.25,
+    "fxScope": "earlier"
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/band pass 4th",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "bandLow",
+     "invert": false,
+     "level": "event",
+     "max": 0.927075,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "bandHigh",
+     "invert": false,
+     "level": "event",
+     "max": 1.0,
+     "min": 0.072925,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": "x",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "noise_filter_noise",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/noise filter",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "effect": "noise",
+    "fxScope": "earlier",
+    "maskInvert": true,
+    "noiseContrast": 4.5,
+    "noiseGain": 0.931000030040741,
+    "noiseScale": 0.8828571428571429,
+    "noiseThreshold": 0.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/noise filter",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "noiseScale",
+     "invert": false,
+     "level": "phrase",
+     "max": 1.0,
+     "min": 0.16,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "quarter_arp_loop",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/quarter arp loop",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "accent",
+    "envPower": 1.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 2.0,
+    "partialDecay": 0.0,
+    "partialEnvPower": 15.5,
+    "partialThin": 0.0,
+    "partials": 7,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/quarter arp loop",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 3.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 13.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv3",
+     "sourceParams": {
+      "points": [
+       1.0,
+       0.9375,
+       0.875,
+       0.8125,
+       0.75,
+       0.6875,
+       0.625,
+       0.5625,
+       0.5,
+       0.4375,
+       0.375,
+       0.3125,
+       0.25,
+       0.1875,
+       0.125,
+       0.0625,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 16.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random4",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 8.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random5",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.octave",
+     "invert": false,
+     "level": "phrase",
+     "max": 0.0,
+     "min": -1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random6",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "advance": 2,
+    "hits": 4,
+    "mode": "euclidean",
+    "noteLength": 5.0,
+    "notesPerStep": 1,
+    "octave": -1,
+    "order": "up",
+    "patternLength": 4,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 16,
+    "voices": 8
+   },
+   "swing": -1.0,
+   "type": "arpeggio"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "step_bass",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/step bass",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "neutral",
+    "envPower": 2.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 0.5,
+    "partialDecay": 0.0,
+    "partialEnvPower": 5.5,
+    "partialThin": 0.0,
+    "partials": 28,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 3.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/step bass",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 45.0,
+     "min": 10.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv2",
+     "sourceParams": {
+      "points": [
+       1.0,
+       0.9375,
+       0.875,
+       0.8125,
+       0.75,
+       0.6875,
+       0.625,
+       0.5625,
+       0.5,
+       0.4375,
+       0.375,
+       0.3125,
+       0.25,
+       0.1875,
+       0.125,
+       0.0625,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 10.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 8.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random4",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 25.0,
+    "hits": 16,
+    "mode": "euclidean",
+    "noteLength": 5.0,
+    "octave": -2,
+    "pitchSource": "root",
+    "rotation": 0,
+    "steps": 16
+   },
+   "swing": -1.0,
+   "type": "bass"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "counter_stabs",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/counter stabs",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 37.5,
+    "detuneVoices": 2,
+    "envPower": 1.25,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialChance": 0.9,
+    "partialCut": 0.5,
+    "partialDecay": 0.0,
+    "partialEnvPower": 11.5,
+    "partialThin": 0.0,
+    "partials": 13,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.5
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/counter stabs",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.patternLength",
+     "invert": false,
+     "level": "phrase",
+     "max": 17.0,
+     "min": 5.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 4.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 23.0,
+     "min": 3.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 50.0,
+     "min": 25.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random4",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv5",
+     "sourceParams": {
+      "points": [
+       1.0,
+       0.9375,
+       0.875,
+       0.8125,
+       0.75,
+       0.6875,
+       0.625,
+       0.5625,
+       0.5,
+       0.4375,
+       0.375,
+       0.3125,
+       0.25,
+       0.1875,
+       0.125,
+       0.0625,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 16.0,
+     "min": 3.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random6",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 8.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random7",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialChance",
+     "invert": false,
+     "level": "phrase",
+     "max": 1.0,
+     "min": 0.5,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random8",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "density": 0.37,
+    "mode": "probability",
+    "noteLength": 5.0,
+    "octave": -1,
+    "octaveChance": 50.0,
+    "patternLength": 11,
+    "pitchSource": "chord",
+    "steps": 16,
+    "voices": 3,
+    "voicing": "close"
+   },
+   "swing": -1.0,
+   "type": "chords"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "pickup_stabs_clear",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/pickup stabs",
+    "version": 1
+   },
+   "params": {
+    "effect": "blank",
+    "fxScope": "earlier"
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/pickup stabs",
+   "routings": [],
+   "seq": {
+    "chance": 100.0,
+    "followId": "pickup_stabs",
+    "followMode": "hits",
+    "mode": "follow",
+    "noteLength": 0.375,
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "pickup_stabs",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/pickup stabs",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 31.25,
+    "detuneVoices": 2,
+    "envPower": 2.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "additive",
+    "partialCut": 1.0,
+    "partialDecay": 0.0,
+    "partialThin": 0.0,
+    "partials": 34,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/pickup stabs",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 61.0,
+     "min": 6.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 50.0,
+     "min": 12.5,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 0.5,
+     "min": 0.25,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 15.0,
+    "hits": 4,
+    "mode": "euclidean",
+    "noteLength": 0.375,
+    "octave": -2,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 4,
+    "voices": 1,
+    "voicing": "close"
+   },
+   "swing": -1.0,
+   "type": "chords"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "big_saws",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/big saws",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 18.75,
+    "detuneVoices": 2,
+    "envPower": 0.3333333333333333,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 1.0,
+    "partialDecay": 0.0,
+    "partialEnvPower": 1.0,
+    "partialThin": 0.0,
+    "partials": 8,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 1.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/big saws",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 9.68421052631579,
+     "min": 6.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 25.0,
+     "min": 12.5,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv3",
+     "sourceParams": {
+      "points": [
+       1.0,
+       0.9375,
+       0.875,
+       0.8125,
+       0.75,
+       0.6875,
+       0.625,
+       0.5625,
+       0.5,
+       0.4375,
+       0.375,
+       0.3125,
+       0.25,
+       0.1875,
+       0.125,
+       0.0625,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 2.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random4",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "hits": 8,
+    "mode": "euclidean",
+    "noteLength": 1.5,
+    "octave": -1,
+    "octaveChance": 50.0,
+    "patternLength": 8,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 1,
+    "voices": 4,
+    "voicing": "close"
+   },
+   "swing": -1.0,
+   "type": "chords"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "anacrusis_chord",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/anacrusis chord",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 28.000000000000004,
+    "detuneVoices": 2,
+    "envPower": 2.5,
+    "envShape": "rise",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 1.0,
+    "partialDecay": 0.0,
+    "partialThin": 0.0,
+    "partials": 9,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.0,
+    "voiceFade": 0.5
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/anacrusis chord",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 3.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 14.666666666666666,
+     "min": 4.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 56.00000000000001,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "pitchFine",
+     "invert": false,
+     "level": "layer",
+     "max": 9.25,
+     "min": -9.25,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "lfo4",
+     "sourceParams": {
+      "rateBeats": 0.125,
+      "reset": "phrase",
+      "shape": "sine"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 1.0,
+     "min": 0.25,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random5",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 4.0,
+    "hits": 8,
+    "mode": "euclidean",
+    "noteLength": 0.625,
+    "octave": -1,
+    "patternLength": 8,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 1,
+    "voices": 8,
+    "voicing": "scattered"
+   },
+   "swing": -1.0,
+   "type": "chords"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "long_fm_bells",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/long fm bells",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 26.700000000000003,
+    "detuneVoices": 2,
+    "envPower": 0.5,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialChance": 0.35,
+    "partialCut": 1.0,
+    "partialDecay": 0.0,
+    "partialEnvPower": 16.0,
+    "partialThin": 0.0,
+    "partials": 41,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/long fm bells",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 3.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 79.0,
+     "min": 3.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 33.4,
+     "min": 20.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "pitchFine",
+     "invert": false,
+     "level": "layer",
+     "max": 9.25,
+     "min": -9.25,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "lfo4",
+     "sourceParams": {
+      "rateBeats": 0.20454545454545456,
+      "reset": "phrase",
+      "shape": "sine"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv5",
+     "sourceParams": {
+      "points": [
+       1.0,
+       0.9375,
+       0.875,
+       0.8125,
+       0.75,
+       0.6875,
+       0.625,
+       0.5625,
+       0.5,
+       0.4375,
+       0.375,
+       0.3125,
+       0.25,
+       0.1875,
+       0.125,
+       0.0625,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 16.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random6",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 6.0,
+     "min": 3.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random7",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialChance",
+     "invert": false,
+     "level": "phrase",
+     "max": 0.5,
+     "min": 0.2,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random8",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "hits": 8,
+    "mode": "euclidean",
+    "noteLength": 4.5,
+    "octave": -2,
+    "pitchSource": "scale",
+    "range": 5,
+    "rotation": 0,
+    "scaleMode": "random",
+    "steps": 8
+   },
+   "swing": -1.0,
+   "type": "bells"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "reverse_chord_page",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/reverse chord page",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 39.550000000000004,
+    "detuneVoices": 2,
+    "envPower": 1.0,
+    "envShape": "rise",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 1.5,
+    "partialDecay": 0.0,
+    "partialEnvPower": 3.0,
+    "partialThin": 0.0,
+    "partials": 23,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.0,
+    "voiceFade": 0.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/reverse chord page",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 3.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 33.33333333333333,
+     "min": 12.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 66.60000000000001,
+     "min": 12.5,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "pitchFine",
+     "invert": false,
+     "level": "layer",
+     "max": 9.25,
+     "min": -9.25,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "lfo4",
+     "sourceParams": {
+      "rateBeats": 0.5,
+      "reset": "phrase",
+      "shape": "sine"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv5",
+     "sourceParams": {
+      "points": [
+       0.0,
+       0.0625,
+       0.125,
+       0.1875,
+       0.25,
+       0.3125,
+       0.375,
+       0.4375,
+       0.5,
+       0.5625,
+       0.625,
+       0.6875,
+       0.75,
+       0.8125,
+       0.875,
+       0.9375,
+       1.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 4.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random6",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "hits": 1,
+    "mode": "euclidean",
+    "noteLength": 8.0,
+    "octave": -1,
+    "patternLength": 32,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 1,
+    "voices": 8,
+    "voicing": "scattered"
+   },
+   "swing": -1.0,
+   "type": "chords"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "filtered_chords",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/filtered chords",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 37.0,
+    "detuneVoices": 2,
+    "envPower": 2.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 0.0,
+    "partialDecay": 0.0,
+    "partialDetune": 25.0,
+    "partialThin": 0.0,
+    "partials": 15,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/filtered chords",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.steps",
+     "invert": false,
+     "level": "phrase",
+     "max": 16.0,
+     "min": 3.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 3.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 23.0,
+     "min": 7.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 56.00000000000001,
+     "min": 18.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random4",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialDetune",
+     "invert": false,
+     "level": "phrase",
+     "max": 50.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random5",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 2.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random6",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "hits": 1,
+    "mode": "euclidean",
+    "noteLength": 1.5,
+    "octave": 0,
+    "patternLength": 1,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 7,
+    "voices": 4,
+    "voicing": "close"
+   },
+   "swing": -1.0,
+   "type": "chords"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "filtered_chords_fx_band",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/filtered chords",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "bandHigh": 0.55,
+    "bandLow": 0.53,
+    "effect": "band",
+    "feather": 0.24,
+    "fxScope": "instance",
+    "fxTarget": "filtered_chords"
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/filtered chords",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "bandLow",
+     "invert": false,
+     "level": "event",
+     "max": 0.71,
+     "min": 0.35,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "bandHigh",
+     "invert": false,
+     "level": "event",
+     "max": 0.73,
+     "min": 0.37,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": "x",
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "perlin_chord",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/perlin chord",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "highlight",
+    "detune": 37.5,
+    "detuneVoices": 2,
+    "envPower": 1.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 1.0,
+    "partialDecay": 0.0,
+    "partialEnvPower": 3.0,
+    "partialThin": 0.0,
+    "partials": 22,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 2.0,
+    "voiceFade": 0.30000000000000004
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/perlin chord",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 3.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 38.0,
+     "min": 6.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "detune",
+     "invert": false,
+     "level": "phrase",
+     "max": 50.0,
+     "min": 25.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "pitchFine",
+     "invert": false,
+     "level": "layer",
+     "max": 9.25,
+     "min": -9.25,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "lfo4",
+     "sourceParams": {
+      "rateBeats": 1.6,
+      "reset": "phrase",
+      "shape": "sine"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv5",
+     "sourceParams": {
+      "points": [
+       0.0,
+       0.03806023374435663,
+       0.1464466094067262,
+       0.3086582838174551,
+       0.49999999999999994,
+       0.6913417161825448,
+       0.8535533905932737,
+       0.9619397662556434,
+       1.0,
+       0.9619397662556435,
+       0.8535533905932738,
+       0.6913417161825451,
+       0.5000000000000001,
+       0.30865828381745497,
+       0.14644660940672632,
+       0.03806023374435674,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 4.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random6",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "hits": 1,
+    "mode": "euclidean",
+    "noteLength": 8.0,
+    "octave": -1,
+    "patternLength": 32,
+    "pitchSource": "chord",
+    "rotation": 0,
+    "steps": 1,
+    "voices": 8,
+    "voicing": "scattered"
+   },
+   "swing": -1.0,
+   "type": "chords"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "perlin_chord_fx_noise",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/perlin chord",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "effect": "noise",
+    "fxScope": "instance",
+    "fxTarget": "perlin_chord",
+    "maskInvert": false,
+    "noiseContrast": 5.0,
+    "noiseGain": 0.931000030040741,
+    "noiseScale": 0.87,
+    "noiseThreshold": 0.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/perlin chord",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "noiseScale",
+     "invert": false,
+     "level": "phrase",
+     "max": 1.0,
+     "min": 0.24,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "perlin_chord_fx_page",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/perlin chord",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "effect": "page",
+    "fxScope": "instance",
+    "fxTarget": "perlin_chord",
+    "pagePower": 0.5
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/perlin chord",
+   "routings": [],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "quarter_bar_gate_blank",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/quarter bar gate",
+    "version": 1
+   },
+   "params": {
+    "effect": "blank",
+    "fxScope": "earlier",
+    "slotBeats": 1.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/quarter bar gate",
+   "routings": [],
+   "seq": {
+    "chance": 8.0,
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": "...x",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "kick_quarters",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/kick quarters",
+    "version": 1
+   },
+   "params": {
+    "bandShape": 1.0,
+    "cell": "taiko",
+    "colourRole": "neutral",
+    "contrast": 4.0,
+    "decay": 0.11764705882352941,
+    "grainSize": 19.99999970197678,
+    "heightHigh": 1.0,
+    "heightLow": 0.0,
+    "level": 1.0,
+    "sweep": 1.0,
+    "width": 2.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/kick quarters",
+   "routings": [],
+   "seq": {
+    "chance": 90.0,
+    "chanceScope": "phrase",
+    "hits": 4,
+    "mode": "euclidean",
+    "rotation": 0,
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "kick"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "quarter_sub",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/quarter sub",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "neutral",
+    "envPower": 4.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 1.0,
+    "partialDecay": 0.0,
+    "partialEnvPower": 5.5,
+    "partialThin": 0.0,
+    "partials": 6,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 3.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/quarter sub",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 7.0,
+     "min": 5.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv2",
+     "sourceParams": {
+      "points": [
+       1.0,
+       0.9375,
+       0.875,
+       0.8125,
+       0.75,
+       0.6875,
+       0.625,
+       0.5625,
+       0.5,
+       0.4375,
+       0.375,
+       0.3125,
+       0.25,
+       0.1875,
+       0.125,
+       0.0625,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 10.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "hits": 1,
+    "mode": "euclidean",
+    "noteLength": 2.0,
+    "octave": -2,
+    "patternLength": 1,
+    "pitchSource": "root",
+    "rotation": 0,
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "bass"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "complex_hats",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/complex hats",
+    "version": 1
+   },
+   "params": {
+    "cell": "line",
+    "colourRole": "accent",
+    "decay": 0.08375,
+    "heightHigh": 1.0,
+    "heightLow": 0.74,
+    "level": 0.6,
+    "scatter": 0.0,
+    "width": 0.1675
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/complex hats",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "width",
+     "invert": false,
+     "level": "event",
+     "max": 0.25,
+     "min": 0.075,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "hits": 16,
+    "mode": "euclidean",
+    "rotation": 0,
+    "steps": 16
+   },
+   "swing": -1.0,
+   "type": "hats"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "open_hats",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/open hats",
+    "version": 1
+   },
+   "params": {
+    "cell": "line",
+    "colourRole": "accent",
+    "decay": 0.21428571428571427,
+    "heightHigh": 1.0,
+    "heightLow": 0.74,
+    "level": 1.0,
+    "scatter": 0.0,
+    "width": 0.75
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/open hats",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "width",
+     "invert": false,
+     "level": "event",
+     "max": 1.0,
+     "min": 0.5,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "hits": 1,
+    "mode": "euclidean",
+    "patternLength": 4,
+    "rotation": 2,
+    "steps": 16
+   },
+   "swing": -1.0,
+   "type": "hats"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "last_snare_clear",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/last snare",
+    "version": 1
+   },
+   "params": {
+    "effect": "blank",
+    "fxScope": "earlier"
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/last snare",
+   "routings": [],
+   "seq": {
+    "chance": 100.0,
+    "followId": "last_snare",
+    "followMode": "hits",
+    "mode": "follow",
+    "noteLength": 2.0,
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "last_snare",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/last snare",
+    "version": 1
+   },
+   "params": {
+    "bandHigh": 0.9875,
+    "bandLow": 0.4325,
+    "bandShape": 1.0,
+    "cell": "noiseBand",
+    "colourRole": "neutral",
+    "contrast": 4.0,
+    "decay": 0.7,
+    "grain": 1.0,
+    "grainSize": 19.99999970197678,
+    "level": 1.0,
+    "width": 2.8
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/last snare",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "width",
+     "invert": false,
+     "level": "event",
+     "max": 4.0,
+     "min": 1.6,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "barMask": "0 0 0 0 0 0 0 1",
+    "chance": 25.0,
+    "chanceBeats": 4.0,
+    "chanceScope": "beats",
+    "hits": 1,
+    "mode": "euclidean",
+    "rotation": 1,
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "snare"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "ghost_snares",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/ghost snares",
+    "version": 1
+   },
+   "params": {
+    "bandHigh": 1.0,
+    "bandLow": 0.133,
+    "bandShape": 4.0,
+    "cell": "gradient",
+    "colourRole": "accent",
+    "contrast": 4.0,
+    "decay": 0.09375,
+    "grain": 0.0,
+    "grainSize": 19.99999970197678,
+    "level": 0.376,
+    "width": 0.375
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/ghost snares",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "width",
+     "invert": false,
+     "level": "event",
+     "max": 0.5,
+     "min": 0.25,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "height",
+     "invert": false,
+     "level": "event",
+     "max": 0.125,
+     "min": -0.125,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 45.0,
+    "mode": "probability",
+    "stepChances": [
+     0,
+     40,
+     10,
+     20,
+     0,
+     0,
+     10,
+     40,
+     0,
+     40,
+     20,
+     10,
+     0,
+     0,
+     10,
+     40
+    ],
+    "steps": 16
+   },
+   "swing": -1.0,
+   "type": "snare"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "diffuse_snare_clear",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/diffuse snare",
+    "version": 1
+   },
+   "params": {
+    "effect": "blank",
+    "fxScope": "earlier"
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/diffuse snare",
+   "routings": [],
+   "seq": {
+    "chance": 7.5,
+    "followId": "diffuse_snare",
+    "followMode": "hits",
+    "mode": "follow",
+    "noteLength": 1.0,
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "diffuse_snare",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/diffuse snare",
+    "version": 1
+   },
+   "params": {
+    "bandHigh": 0.9875,
+    "bandLow": 0.4325,
+    "bandShape": 1.0,
+    "cell": "noiseBand",
+    "colourRole": "neutral",
+    "contrast": 4.0,
+    "decay": 0.33325,
+    "grain": 1.0,
+    "grainSize": 19.99999970197678,
+    "level": 1.0,
+    "width": 1.333
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/diffuse snare",
+   "routings": [],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "hits": 2,
+    "mode": "euclidean",
+    "rotation": 1,
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "snare"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "bar_gate_blank",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/bar gate",
+    "version": 1
+   },
+   "params": {
+    "effect": "blank",
+    "fxScope": "earlier",
+    "slotBeats": 4.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/bar gate",
+   "routings": [],
+   "seq": {
+    "chance": 12.5,
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": "x",
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "arp_loop_block_clear",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/arp loop block",
+    "version": 1
+   },
+   "params": {
+    "effect": "blank",
+    "fxScope": "earlier"
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/arp loop block",
+   "routings": [],
+   "seq": {
+    "chance": 100.0,
+    "followId": "arp_loop_block",
+    "followMode": "hits",
+    "mode": "follow",
+    "noteLength": 8.0,
+    "steps": 16
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "arp_loop_block",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/arp loop block",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "accent",
+    "envPower": 1.0,
+    "envShape": "decay",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 1.5,
+    "partialDecay": 0.0,
+    "partialEnvPower": 15.5,
+    "partialThin": 0.0,
+    "partials": 12,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 5.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/arp loop block",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 8.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partials",
+     "invert": false,
+     "level": "event",
+     "max": 20.0,
+     "min": 3.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "brightness",
+     "invert": false,
+     "level": "layer",
+     "max": 1.0,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "noteEnv3",
+     "sourceParams": {
+      "points": [
+       1.0,
+       0.9375,
+       0.875,
+       0.8125,
+       0.75,
+       0.6875,
+       0.625,
+       0.5625,
+       0.5,
+       0.4375,
+       0.375,
+       0.3125,
+       0.25,
+       0.1875,
+       0.125,
+       0.0625,
+       0.0
+      ],
+      "shape": "drawn"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "partialEnvPower",
+     "invert": false,
+     "level": "phrase",
+     "max": 16.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random4",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 8.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random5",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.octave",
+     "invert": false,
+     "level": "phrase",
+     "max": 0.0,
+     "min": -1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random6",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "advance": 2,
+    "chance": 5.0,
+    "chanceBeats": 2.0,
+    "chanceScope": "beats",
+    "hits": 8,
+    "mode": "euclidean",
+    "noteLength": 5.0,
+    "notesPerStep": 1,
+    "octave": -1,
+    "order": "up",
+    "patternLength": 8,
+    "pitchSource": "chord",
+    "repMask": "even",
+    "rotation": 0,
+    "steps": 16,
+    "voices": 8
+   },
+   "swing": -1.0,
+   "type": "arpeggio"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "gate_abuse_gate",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/gate abuse",
+    "version": 1
+   },
+   "params": {
+    "amount": 0.7,
+    "effect": "gate",
+    "fxScope": "earlier",
+    "gateDuty": 0.75,
+    "gateRate": 0.5714285714285714
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/gate abuse",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "gateRate",
+     "invert": false,
+     "level": "phrase",
+     "max": 2.0,
+     "min": 0.3333333333333333,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": "x",
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "gate_abuse_freeze",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/gate abuse",
+    "version": 1
+   },
+   "params": {
+    "effect": "freeze",
+    "fxScope": "earlier",
+    "slotBeats": 2.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/gate abuse",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.noteLength",
+     "invert": false,
+     "level": "event",
+     "max": 1.0,
+     "min": 0.5,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 100.0,
+    "hits": 1,
+    "mode": "euclidean",
+    "noteLength": 1.0,
+    "reroll": true,
+    "rotation": 0,
+    "rotationList": [
+     0,
+     1
+    ],
+    "steps": 2
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "half_bar_palindrome_repeat",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/half bar palindrome",
+    "version": 1
+   },
+   "params": {
+    "effect": "repeat",
+    "fxScope": "earlier",
+    "repeats": 2,
+    "slotBeats": 4.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/half bar palindrome",
+   "routings": [],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": "x",
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "half_bar_palindrome_reverse",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/half bar palindrome",
+    "version": 1
+   },
+   "params": {
+    "effect": "reverse",
+    "fxScope": "earlier",
+    "slotBeats": 2.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/half bar palindrome",
+   "routings": [],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": "x",
+    "steps": 2
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "half_bar_gate_blank",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/half bar gate",
+    "version": 1
+   },
+   "params": {
+    "effect": "blank",
+    "fxScope": "earlier",
+    "slotBeats": 2.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/half bar gate",
+   "routings": [],
+   "seq": {
+    "chance": 25.0,
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": ".x",
+    "steps": 2
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "cartoon_repeats_repeat",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/effects/cartoon repeats",
+    "version": 1
+   },
+   "params": {
+    "effect": "repeat",
+    "fxScope": "earlier",
+    "repeats": 5,
+    "slotBeats": 1.5
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy effects/cartoon repeats",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "repeats",
+     "invert": false,
+     "level": "event",
+     "max": 8.0,
+     "min": 2.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 7.5,
+    "mode": "pattern",
+    "noteLength": 1.0,
+    "pattern": "x",
+    "steps": 3
+   },
+   "swing": -1.0,
+   "type": "timefx"
+  }
+ ],
+ "layers": [
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  }
+ ],
+ "legacy": {
+  "approx": [
+   "high trill loop: arp of 9 steps folded into 8 voices",
+   "counter eight: partial modes chosen per image become a per-image partial chance range",
+   "quarter arp loop: arp of 9 steps folded into 8 voices",
+   "counter stabs: partial modes chosen per image become a per-image partial chance range",
+   "long fm bells: partial modes chosen per image become a per-image partial chance range",
+   "arp loop block: arp of 10 steps folded into 8 voices",
+   "arp loop block clear: clear per repetition becomes a blank of one pattern length from each hit",
+   "gate abuse: gate shape 'fade out' drawn as a softened hard gate",
+   "gate abuse: freeze chains / grids become one hold per bar",
+   "half bar palindrome: reverse slot choice approximated by chance",
+   "cartoon repeats: repeat gate ignored"
+  ],
+  "colourRoles": {
+   "accent": "#FFFFFF",
+   "bass": "#FF0000",
+   "highlight": "#FFFFFF",
+   "neutral": "#FFFFFF",
+   "shadow": "#FF0000"
+  },
+  "confidence": 0.821,
+  "dropped": [
+   "performance",
+   "compat",
+   "snapshot",
+   "notegrid"
+  ],
+  "palette": "whitered",
+  "source": "v1 scene PUZZLE",
+  "unmapped": [
+   "scene: scale 'm9' notes above the octave folded into it",
+   "scene: random transposes per bar become a fixed cycle of key shifts",
+   "white page: band profile power",
+   "pickup stabs: anchor (pixel-level note drawing)",
+   "anacrusis chord: anchor (pixel-level note drawing)",
+   "complex hats: gradEnd (pixel-level cell drawing)",
+   "open hats: gradEnd (pixel-level cell drawing)",
+   "ghost snares: gradEnd (pixel-level cell drawing)",
+   "cell shuffle: cell copies (pixel cells)",
+   "stretch cells: cell copies (pixel cells)",
+   "stretch pitch cells: cell copies (pixel cells)",
+   "pitch mirror high: mirror (screen-space)",
+   "pitch mirror low: mirror (screen-space)",
+   "cartoon repeats: repeat pitch shift",
+   "random mirror 1: mirror (screen-space)",
+   "random mirror 2: mirror (screen-space)"
+  ],
+  "v1Root": 27,
+  "v1Scale": "m9"
+ },
+ "macros": {},
+ "name": "PUZZLE",
+ "routings": [],
+ "seed": 300425091,
+ "version": 1
+}

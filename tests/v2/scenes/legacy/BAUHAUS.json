@@ -1,0 +1,945 @@
+{
+ "bpm": 95.0,
+ "colours": {
+  "accent": "#FF0000",
+  "bass": "#FFA600",
+  "highlight": "#245BFF",
+  "neutral": "#FFF0D4",
+  "shadow": "#FFFFFF"
+ },
+ "format": "espectres.scene",
+ "formatVersion": 1,
+ "harmony": {
+  "override": {
+   "hold": false,
+   "jumpDegree": -1000
+  },
+  "sections": [
+   {
+    "lengthBeats": 0.0,
+    "meter": {
+     "den": 4,
+     "grouping": [],
+     "num": 4,
+     "swing": 0.0
+    },
+    "name": "A",
+    "rules": {
+     "cadenceDegree": 0,
+     "stepBeats": 4.0,
+     "table": [],
+     "tension": 0.3
+    },
+    "scale": {
+     "name": "m9",
+     "semis": [
+      0,
+      2,
+      3,
+      7,
+      10
+     ],
+     "tonic": 3,
+     "tuning": {
+      "cents": [],
+      "periodCents": 1200.0
+     }
+    },
+    "source": "typed",
+    "steps": [
+     {
+      "colour": "triad",
+      "degree": 0,
+      "length": 32.0
+     }
+    ]
+   }
+  ]
+ },
+ "instances": [
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "flat_strokes",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/flat strokes",
+    "version": 1
+   },
+   "params": {
+    "bandHigh": 0.52,
+    "bandLow": 0.5,
+    "cell": "noise",
+    "colourRole": "shadow",
+    "contrast": 1.0,
+    "density": 1.0,
+    "fade": 0.4,
+    "grainSize": 6.666666567325593,
+    "level": 0.7,
+    "softness": 0.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy hits/flat strokes",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "seq.density",
+     "invert": false,
+     "level": "phrase",
+     "max": 0.22,
+     "min": 0.09,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "level",
+     "invert": false,
+     "level": "phrase",
+     "max": 1.0,
+     "min": 0.4,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "height",
+     "invert": false,
+     "level": "event",
+     "max": 0.268,
+     "min": -0.268,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 20.0,
+    "chanceScope": "phrase",
+    "density": 0.155,
+    "mode": "probability",
+    "noteLength": 7.3500000000000005,
+    "patternLength": 32,
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "texture"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "loose_curves",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/loose curves",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": false,
+    "heightSize": 0.4215,
+    "rotation": 0.0,
+    "shape": "curve",
+    "shapeLength": 7.587,
+    "strokeWidth": 18.900000000000002
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/loose curves",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightSize",
+     "invert": false,
+     "level": "event",
+     "max": 0.593,
+     "min": 0.25,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 20.0,
+    "chanceScope": "phrase",
+    "density": 0.140625,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "add_triangles",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/add triangles",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": true,
+    "heightSize": 1.0,
+    "rotation": 0.0,
+    "shape": "triangle",
+    "shapeLength": 16.0,
+    "strokeWidth": 10.8
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/add triangles",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "density": 0.0546875,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "noisy_traces",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/noisy traces",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": false,
+    "heightSize": 0.34265,
+    "rotation": 0.0,
+    "shape": "line",
+    "shapeLength": 6.1677,
+    "strokeWidth": 37.800000000000004
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/noisy traces",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightSize",
+     "invert": false,
+     "level": "event",
+     "max": 0.6853,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 20.0,
+    "chanceScope": "phrase",
+    "density": 0.046875,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "add_circles",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/add circles",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": true,
+    "heightSize": 0.25,
+    "rotation": 0.0,
+    "shape": "ellipse",
+    "shapeLength": 4.5,
+    "strokeWidth": 10.8
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/add circles",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightSize",
+     "invert": false,
+     "level": "event",
+     "max": 0.5,
+     "min": 0.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 20.0,
+    "chanceScope": "phrase",
+    "density": 0.15625,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "dash_lines",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/dash lines",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": false,
+    "heightSize": 0.89,
+    "rotation": 0.0,
+    "shape": "line",
+    "shapeLength": 16.0,
+    "strokeWidth": 10.8
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/dash lines",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "rotation",
+     "invert": false,
+     "level": "event",
+     "max": 90.0,
+     "min": -90.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 20.0,
+    "chanceScope": "phrase",
+    "density": 0.046875,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "tilted_squares",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/tilted squares",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": true,
+    "heightSize": 0.28,
+    "rotation": 0.0,
+    "shape": "rect",
+    "shapeLength": 5.040000000000001,
+    "strokeWidth": 10.8
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/tilted squares",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightSize",
+     "invert": false,
+     "level": "event",
+     "max": 0.5,
+     "min": 0.06,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "rotation",
+     "invert": false,
+     "level": "event",
+     "max": 180.0,
+     "min": -180.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "density": 0.109375,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "scattered_letters",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/scattered letters",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": true,
+    "heightSize": 0.168655,
+    "rotation": 0.0,
+    "shape": "letter",
+    "shapeLength": 3.03579,
+    "strokeWidth": 10.8
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/scattered letters",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightSize",
+     "invert": false,
+     "level": "event",
+     "max": 0.27056,
+     "min": 0.06675,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "rotation",
+     "invert": false,
+     "level": "event",
+     "max": 180.0,
+     "min": -180.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 20.0,
+    "chanceScope": "phrase",
+    "density": 0.125,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "scale_dust",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/pulse/scale dust",
+    "version": 1
+   },
+   "params": {
+    "attack": 0.0,
+    "colourRole": "neutral",
+    "envPower": 0.0,
+    "envShape": "hold",
+    "level": 1.0,
+    "look": "note",
+    "partialCut": 0.0,
+    "partialDecay": 0.0,
+    "partialThin": 0.0,
+    "partials": 1,
+    "release": 0.0,
+    "softness": 0.1,
+    "thickness": 3.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy pulse/scale dust",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "thickness",
+     "invert": false,
+     "level": "phrase",
+     "max": 5.0,
+     "min": 1.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 68.0,
+    "hits": 16,
+    "mode": "euclidean",
+    "noteLength": 0.13,
+    "octave": 0,
+    "pitchSource": "scale",
+    "range": 5,
+    "rotation": 0,
+    "scaleMode": "random",
+    "steps": 16
+   },
+   "swing": -1.0,
+   "type": "bass"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "sine_strokes",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/sine strokes",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": false,
+    "heightSize": 0.278125,
+    "rotation": 0.0,
+    "shape": "curve",
+    "shapeLength": 5.00625,
+    "strokeWidth": 18.900000000000002
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/sine strokes",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightSize",
+     "invert": false,
+     "level": "event",
+     "max": 0.445,
+     "min": 0.11125,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "rotation",
+     "invert": false,
+     "level": "event",
+     "max": 45.0,
+     "min": -45.0,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random3",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 20.0,
+    "chanceScope": "phrase",
+    "density": 0.056640625,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "soft_blobs",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/shapes/soft blobs",
+    "version": 1
+   },
+   "params": {
+    "colourRole": "accent",
+    "filled": true,
+    "heightSize": 0.33335,
+    "rotation": 0.0,
+    "shape": "ellipse",
+    "shapeLength": 6.000299999999999,
+    "strokeWidth": 10.8
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy shapes/soft blobs",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightSize",
+     "invert": false,
+     "level": "event",
+     "max": 0.5,
+     "min": 0.1667,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "event"
+     }
+    },
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "heightCenter",
+     "invert": false,
+     "level": "event",
+     "max": 0.85,
+     "min": 0.15,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random2",
+     "sourceParams": {
+      "scope": "event"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 20.0,
+    "chanceScope": "phrase",
+    "density": 0.0625,
+    "mode": "probability",
+    "steps": 4
+   },
+   "swing": -1.0,
+   "type": "shapes"
+  }
+ ],
+ "layers": [
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  }
+ ],
+ "legacy": {
+  "approx": [
+   "loose curves: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "add triangles: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "noisy traces: shape 'trace' drawn as line",
+   "noisy traces: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "add circles: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "dash lines: shape 'dashed line' drawn as line",
+   "dash lines: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "tilted squares: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "scattered letters: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "sine strokes: shape 'sine' drawn as curve",
+   "sine strokes: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights",
+   "soft blobs: shape 'blob' drawn as ellipse",
+   "soft blobs: shape placement (candidates, overlap, margins) becomes a probability rhythm with random heights"
+  ],
+  "colourRoles": {
+   "accent": "#FF0000",
+   "bass": "#FFA600",
+   "highlight": "#245BFF",
+   "neutral": "#FFF0D4",
+   "shadow": "#FFFFFF"
+  },
+  "confidence": 0.929,
+  "dropped": [
+   "performance",
+   "compat",
+   "snapshot",
+   "notegrid"
+  ],
+  "palette": "bauhaus",
+  "source": "v1 scene BAUHAUS",
+  "unmapped": [
+   "scene: scale 'm9' notes above the octave folded into it",
+   "dash lines: dash",
+   "sine strokes: cycles",
+   "soft blobs: symmetryChance"
+  ],
+  "v1Root": 27,
+  "v1Scale": "m9"
+ },
+ "macros": {},
+ "name": "BAUHAUS",
+ "routings": [],
+ "seed": 1405045710,
+ "version": 1
+}

@@ -1,0 +1,111 @@
+{
+ "bpm": 120.0,
+ "colours": {
+  "accent": "#DAE4FF",
+  "bass": "#529FFF",
+  "highlight": "#BCD0FF",
+  "neutral": "#FFFFFF",
+  "shadow": "#1F3CFF"
+ },
+ "format": "espectres.scene",
+ "formatVersion": 1,
+ "harmony": {
+  "override": {
+   "hold": false,
+   "jumpDegree": -1000
+  },
+  "sections": [
+   {
+    "lengthBeats": 0.0,
+    "meter": {
+     "den": 4,
+     "grouping": [],
+     "num": 4,
+     "swing": 0.0
+    },
+    "name": "A",
+    "rules": {
+     "cadenceDegree": 0,
+     "stepBeats": 4.0,
+     "table": [],
+     "tension": 0.3
+    },
+    "scale": {
+     "name": "m9",
+     "semis": [
+      0,
+      2,
+      3,
+      7,
+      10
+     ],
+     "tonic": 3,
+     "tuning": {
+      "cents": [],
+      "periodCents": 1200.0
+     }
+    },
+    "source": "typed",
+    "steps": [
+     {
+      "colour": "triad",
+      "degree": 0,
+      "length": 16.0
+     }
+    ]
+   }
+  ]
+ },
+ "instances": [],
+ "layers": [
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 16.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 16.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 16.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 16.0
+  }
+ ],
+ "legacy": {
+  "approx": [],
+  "colourRoles": {
+   "accent": "#DAE4FF",
+   "bass": "#529FFF",
+   "highlight": "#BCD0FF",
+   "neutral": "#FFFFFF",
+   "shadow": "#1F3CFF"
+  },
+  "confidence": 0.0,
+  "dropped": [
+   "performance",
+   "compat",
+   "snapshot",
+   "notegrid"
+  ],
+  "palette": "whiteblue",
+  "source": "v1 scene BLACKOUT",
+  "unmapped": [
+   "scene: scale 'm9' notes above the octave folded into it"
+  ],
+  "v1Root": 27,
+  "v1Scale": "m9"
+ },
+ "macros": {},
+ "name": "BLACKOUT",
+ "routings": [],
+ "seed": 3356162750,
+ "version": 1
+}

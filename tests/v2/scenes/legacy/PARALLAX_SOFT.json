@@ -1,0 +1,486 @@
+{
+ "bpm": 95.0,
+ "colours": {
+  "accent": "#FFA800",
+  "bass": "#1C77AC",
+  "highlight": "#3B8BEB",
+  "neutral": "#FAC51C",
+  "shadow": "#0F2862"
+ },
+ "format": "espectres.scene",
+ "formatVersion": 1,
+ "harmony": {
+  "override": {
+   "hold": false,
+   "jumpDegree": -1000
+  },
+  "sections": [
+   {
+    "lengthBeats": 0.0,
+    "meter": {
+     "den": 4,
+     "grouping": [],
+     "num": 4,
+     "swing": 0.0
+    },
+    "name": "A",
+    "rules": {
+     "cadenceDegree": 0,
+     "stepBeats": 4.0,
+     "table": [],
+     "tension": 0.3
+    },
+    "scale": {
+     "name": "japanese",
+     "semis": [
+      0,
+      1,
+      5,
+      7,
+      10
+     ],
+     "tonic": 3,
+     "tuning": {
+      "cents": [],
+      "periodCents": 1200.0
+     }
+    },
+    "source": "typed",
+    "steps": [
+     {
+      "colour": "triad",
+      "degree": 0,
+      "length": 32.0
+     }
+    ]
+   }
+  ]
+ },
+ "instances": [
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "perlin_clouds_1",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/stack/perlin clouds",
+    "version": 1
+   },
+   "params": {
+    "bandShape": 0.0,
+    "bottomFrom": 0.0,
+    "bottomTo": 0.0,
+    "colourRole": "highlight",
+    "curve": 1.0,
+    "levelFrom": 1.0,
+    "levelTo": 1.0,
+    "shape": "free",
+    "softness": 0.0,
+    "topFrom": 1.0,
+    "topTo": 1.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy stack/perlin clouds",
+   "routings": [],
+   "seq": {
+    "level": 1.0,
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "sweep"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "perlin_clouds_1_fx_noise",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/stack/perlin clouds",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "effect": "noise",
+    "fxScope": "instance",
+    "fxTarget": "perlin_clouds_1",
+    "maskInvert": false,
+    "noiseContrast": 3.0,
+    "noiseGain": 0.738973192391904,
+    "noiseScale": 0.285,
+    "noiseThreshold": 0.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy stack/perlin clouds",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "noiseScale",
+     "invert": false,
+     "level": "phrase",
+     "max": 0.45,
+     "min": 0.12,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "perlin_clouds_2",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/stack/perlin clouds",
+    "version": 1
+   },
+   "params": {
+    "bandShape": 0.0,
+    "bottomFrom": 0.0,
+    "bottomTo": 0.0,
+    "colourRole": "highlight",
+    "curve": 1.0,
+    "levelFrom": 1.0,
+    "levelTo": 1.0,
+    "shape": "free",
+    "softness": 0.0,
+    "topFrom": 1.0,
+    "topTo": 1.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy stack/perlin clouds",
+   "routings": [],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "level": 1.0,
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "sweep"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "perlin_clouds_2_fx_noise",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/stack/perlin clouds",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "effect": "noise",
+    "fxScope": "instance",
+    "fxTarget": "perlin_clouds_2",
+    "maskInvert": false,
+    "noiseContrast": 3.0,
+    "noiseGain": 0.738973192391904,
+    "noiseScale": 0.285,
+    "noiseThreshold": 0.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy stack/perlin clouds",
+   "routings": [
+    {
+     "amount": 1.0,
+     "curve": 1.0,
+     "dest": "noiseScale",
+     "invert": false,
+     "level": "phrase",
+     "max": 0.45,
+     "min": 0.12,
+     "render": "drawn",
+     "smooth": 0.0,
+     "source": "random1",
+     "sourceParams": {
+      "scope": "phrase"
+     }
+    }
+   ],
+   "seq": {
+    "chance": 50.0,
+    "chanceScope": "phrase",
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "perlin_clouds_3_vignette",
+   "layer": 0,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/stack/perlin clouds",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "effect": "vignette",
+    "vignetteSize": 0.25
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 32.0
+   },
+   "preset": "legacy stack/perlin clouds",
+   "routings": [],
+   "seq": {
+    "mode": "pattern",
+    "noteLength": 8.0,
+    "pattern": "x.......",
+    "patternLength": 8,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "nebulae",
+   "layer": 1,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/nebulae",
+    "version": 1
+   },
+   "params": {
+    "bandHigh": 1.0,
+    "bandLow": 0.0,
+    "cell": "noise",
+    "colourRole": "shadow",
+    "contrast": 1.0,
+    "density": 1.0,
+    "fade": 0.4,
+    "grainSize": 12.121212121212123,
+    "level": 1.0,
+    "softness": 0.0
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 24.0
+   },
+   "preset": "legacy hits/nebulae",
+   "routings": [],
+   "seq": {
+    "hits": 8,
+    "mode": "euclidean",
+    "noteLength": 8.0,
+    "patternLength": 8,
+    "rests": [
+     5,
+     6,
+     7
+    ],
+    "rotation": 0,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "texture"
+  },
+  {
+   "accent": 0.0,
+   "follow": "chord",
+   "id": "nebulae_fx_vignette",
+   "layer": 1,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/hits/nebulae",
+    "version": 1
+   },
+   "params": {
+    "amount": 1.0,
+    "effect": "vignette",
+    "vignetteSize": 0.25
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 24.0
+   },
+   "preset": "legacy hits/nebulae",
+   "routings": [],
+   "seq": {
+    "mode": "pattern",
+    "noteLength": 6.0,
+    "pattern": "x.....",
+    "patternLength": 6,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "filterfx"
+  },
+  {
+   "accent": 0.0,
+   "follow": "off",
+   "id": "riser",
+   "layer": 2,
+   "locked": false,
+   "muted": false,
+   "origin": {
+    "knobs": [],
+    "linked": false,
+    "overrides": [],
+    "preset": "legacy/sweep/riser",
+    "version": 1
+   },
+   "params": {
+    "bandShape": 0.4,
+    "bottomFrom": 0.0,
+    "bottomTo": 0.5,
+    "colourRole": "neutral",
+    "curve": 2.0,
+    "levelFrom": 0.0,
+    "levelTo": 1.0,
+    "shape": "rise",
+    "softness": 0.0,
+    "topFrom": 0.07500000000000001,
+    "topTo": 0.8999999999999999
+   },
+   "pedalDegree": 0,
+   "phrase": {
+    "length": 16.0
+   },
+   "preset": "legacy sweep/riser",
+   "routings": [],
+   "seq": {
+    "level": 1.0,
+    "mode": "pattern",
+    "noteLength": 3.0,
+    "pattern": "x...",
+    "patternLength": 4,
+    "steps": 1
+   },
+   "swing": -1.0,
+   "type": "sweep"
+  }
+ ],
+ "layers": [
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  },
+  {
+   "blend": "add",
+   "gain": 1.0,
+   "zoomBeats": 24.0
+  },
+  {
+   "blend": "normal",
+   "gain": 0.7,
+   "zoomBeats": 16.0
+  },
+  {
+   "blend": "lighten",
+   "gain": 1.0,
+   "zoomBeats": 32.0
+  }
+ ],
+ "legacy": {
+  "approx": [
+   "nebulae: texture length capped at 8 steps",
+   "nebulae fx: process acts on the whole image (v2: its own layer bus)",
+   "riser: start chosen per image: earliest kept"
+  ],
+  "colourRoles": {
+   "accent": "#FFA800",
+   "bass": "#1C77AC",
+   "highlight": "#3B8BEB",
+   "neutral": "#FAC51C",
+   "shadow": "#0F2862"
+  },
+  "confidence": 0.902,
+  "dropped": [
+   "performance",
+   "compat",
+   "snapshot",
+   "notegrid"
+  ],
+  "palette": "blue yellow",
+  "source": "v1 scene PARALLAX_SOFT",
+  "unmapped": [
+   "perlin clouds 1: band profile power",
+   "perlin clouds 2: band profile power",
+   "riser: band profile power"
+  ],
+  "v1Root": 27,
+  "v1Scale": "japanese"
+ },
+ "macros": {},
+ "name": "PARALLAX_SOFT",
+ "routings": [],
+ "seed": 3362674105,
+ "version": 1
+}
