@@ -21,6 +21,7 @@ namespace forms {
 
 struct UndoState {
     std::map<std::string, std::pair<std::string, std::string>> scenes;   // name -> (bank, json dump)
+    std::map<std::string,std::shared_ptr<const formskick::Asset>> kickSamples;
     std::map<std::string, std::string> presets;                          // ref -> json dump
     std::string setlist, scales, palettes;
     bool operator==(const UndoState& o) const { return scenes == o.scenes && presets == o.presets && setlist == o.setlist && scales == o.scales && palettes == o.palettes; }
@@ -29,7 +30,14 @@ struct UndoState {
 
 inline UndoState captureState(const Engine& e){
     UndoState s;
-    for(auto& [n, sc] : e.scenes) s.scenes[n] = {sc.bank, json(sc).dump()};
+    for(auto& [n,sc]:e.scenes){
+        Scene light=sc; light.kickSample.reset(); json j=light;
+        if(sc.kickSample){
+            s.kickSamples[n]=sc.kickSample;
+            j["kickSampleAssetRef"]={{"id",sc.kickSample->id},{"name",sc.kickSample->name}};
+        }
+        s.scenes[n]={sc.bank,j.dump()};
+    }
     for(auto& [r, p] : e.presets) s.presets[r] = json(p).dump();
     s.setlist = json(e.setlist).dump();
     json sl = json::array();
@@ -108,6 +116,8 @@ private:
             if(f != from.scenes.end() && f->second == v) continue;
             Scene s;
             try { s = json::parse(v.second).get<Scene>(); } catch(...) { continue; }
+            auto sample=to.kickSamples.find(n);
+            if(sample!=to.kickSamples.end()) s.kickSample=sample->second;
             s.name = n; s.bank = v.first;
             bool appears = f == from.scenes.end();
             if(f != from.scenes.end() && f->second.first != v.first && e.scenes.count(n)){

@@ -8,6 +8,9 @@
 
 #pragma once
 
+#include "formsCover.h"
+#include "formsKickSample.h"
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -33,9 +36,12 @@ struct Cell {
     float prob = 0;     // 0..100
     int group = 0;      // index into LayerDef::groupProb
     bool solo = false;
+    float gain = 1;     // volume / opacity of this instrument in this scene (0..1); 1 = as drawn
 };
 
 struct LayerDef {
+    json cover = json::object(); // shared cover keys; disabled unless explicitly enabled
+    std::string effectPreset;         // effect-only instrument appended after this whole layer
     int bars = 8;                     // real bar count of each image
     int repeat = 1;                   // each image (page) plays this many times before a new one
     int everyN = 1;                   // stored by the Director, not used by its selection
@@ -52,6 +58,10 @@ struct LayerDef {
     json fixed;
 };
 // The layers of a scene from the bottom of the stack to the top
+inline int kickLayer(const std::vector<LayerDef>& layers){
+    for(int i=0;i<(int)layers.size();++i)if(layers[i].kick)return i;
+    return 0;
+}
 inline std::vector<int> stackOrder(const std::vector<LayerDef>& ls){
     std::vector<int> o(ls.size());
     for(size_t i = 0; i < o.size(); i++) o[i] = (int)i;
@@ -107,40 +117,47 @@ struct Scene {
     int snapshot = -1;                // Director slot this scene came from (drives Macro_8 in the patch)
     std::vector<float> degreeWeights = std::vector<float>(12, 0.0f);
     std::vector<float> transposeWeights = std::vector<float>(12, 0.0f);
+    int bassDegree = 0;               // scale degree the bass instruments add to the bar's degree (0 = the root)
     std::vector<LayerDef> layers;
     json performance = json::object();
-    // Compat flags, default = 1920 behaviour. harmonyFirstHalfOnly: roots/trans only for the first
-    // half of the bars, zeros after (the 1920 patch sent Director bars x2 to the renderer).
+    std::shared_ptr<const formskick::Asset> kickSample;
+    // Renderer compat flags, default = 1920 behaviour (fx1TransposeMeta, fx34LastHalfOnly, midRenderReseed)
     json compat = json::object();
 };
 
 inline void to_json(json& j, const Cell& c){
     j = json{{"item", c.item}, {"prob", c.prob}, {"group", c.group}};
     if(c.solo) j["solo"] = true;
+    if(c.gain != 1) j["gain"] = c.gain;   // only when set: scenes stay as they were
 }
 inline void from_json(const json& j, Cell& c){
     c.item = j.value("item", std::string());
     c.prob = j.value("prob", 0.0f);
     c.group = j.value("group", 0);
     c.solo = j.value("solo", false);
+    c.gain = std::clamp(j.value("gain", 1.0f), 0.0f, 1.0f);
 }
 inline void to_json(json& j, const LayerDef& l){
     j = json{{"bars", l.bars}, {"everyN", l.everyN}, {"globalProb", l.globalProb},
              {"groupProb", l.groupProb}, {"rows", l.rows}, {"blend", l.blend}, {"gain", l.gain},
              {"cells", l.cells}};
+    if(!l.effectPreset.empty()) j["effectPreset"]=l.effectPreset;
     if(l.kick) j["kick"] = true;
+    if(!l.cover.empty()) j["cover"] = l.cover;
     if(l.repeat > 1) j["repeat"] = l.repeat;
     if(l.z >= 0) j["z"] = l.z;
     if(l.fixed.is_object()) j["fixed"] = l.fixed;
 }
 inline void from_json(const json& j, LayerDef& l){
     l.bars = j.value("bars", 8);
+    l.cover = j.value("cover", json::object());
+    l.effectPreset=j.value("effectPreset",std::string());
     l.everyN = j.value("everyN", 1);
     l.globalProb = j.value("globalProb", 100.0f);
     l.groupProb = j.value("groupProb", std::vector<float>{1});
     l.rows = j.value("rows", 96);
     l.blend = j.value("blend", std::string("lighten"));
-    l.gain = j.value("gain", 1.0f);
+    l.gain = std::clamp(j.value("gain", 1.0f),0.f,2.f);
     l.kick = j.value("kick", false);
     l.repeat = std::max(1, std::min(16, j.value("repeat", 1)));
     l.z = j.value("z", -1);
@@ -152,6 +169,8 @@ inline void to_json(json& j, const Scene& s){
              {"notegrid", s.notegrid}, {"root", s.root}, {"snapshot", s.snapshot},
              {"degreeWeights", s.degreeWeights}, {"transposeWeights", s.transposeWeights},
              {"layers", s.layers}, {"performance", s.performance}, {"compat", s.compat}};
+    if(s.bassDegree) j["bassDegree"] = s.bassDegree;
+    if(s.kickSample) j["kickSampleAsset"]=formskick::serialize(*s.kickSample);
 }
 inline void from_json(const json& j, Scene& s){
     s.name = j.value("name", std::string());
@@ -163,9 +182,12 @@ inline void from_json(const json& j, Scene& s){
     s.snapshot = j.value("snapshot", -1);
     s.degreeWeights = j.value("degreeWeights", std::vector<float>(12, 0.0f));
     s.transposeWeights = j.value("transposeWeights", std::vector<float>(12, 0.0f));
+    s.bassDegree = std::clamp(j.value("bassDegree", 0), 0, 11);
     s.layers = j.value("layers", std::vector<LayerDef>());
     s.performance = j.value("performance", json::object());
+    s.kickSample=j.contains("kickSampleAsset")?formskick::read(j["kickSampleAsset"]):nullptr;
     s.compat = j.value("compat", json::object());
+    if(s.compat.is_object()) s.compat.erase("harmonyFirstHalfOnly");   // a removed feature: old scene files drop it when saved
 }
 
 struct SetlistEntry {
@@ -187,7 +209,8 @@ inline void from_json(const json& j, SetlistEntry& e){
 
 // probabilityDropdownList::generateOutput(): global roll, one roll per group, then one roll per
 // cell of an active group. Empty / "none" cells are skipped; solo isolates soloed cells.
-inline std::vector<std::string> selectItems(const LayerDef& l, Rng& rng){
+// gains (optional): each selected item's cell gain, in the same order
+inline std::vector<std::string> selectItems(const LayerDef& l, Rng& rng, std::vector<float>* gains = nullptr){
     std::vector<std::string> out;
     if(!(uniform(rng, 100) < l.globalProb)) return out;
 
@@ -205,6 +228,7 @@ inline std::vector<std::string> selectItems(const LayerDef& l, Rng& rng){
         bool groupActive = c.group >= (int)l.groupProb.size() || activeGroups[c.group];
         if(groupActive && uniform(rng, 100) < c.prob){
             out.push_back(c.item);
+            if(gains) gains->push_back(c.gain);
         }
     }
     return out;
@@ -227,8 +251,8 @@ inline int weightedIndex(const std::vector<float>& w, Rng& rng){
     return (int)w.size() - 1;
 }
 
-// One image's harmony: per bar a degree index (roots) and a transpose in semitones (trans).
-// With compat.harmonyFirstHalfOnly only the first half of the bars gets values, the rest stays 0.
+// One image's harmony: per bar a degree index (roots) and a transpose in semitones (trans), every
+// bar drawn from the scene's weights.
 struct Harmony {
     std::vector<int> roots, trans;
 };
@@ -236,8 +260,7 @@ inline Harmony makeHarmony(const Scene& s, int bars, Rng& rng){
     Harmony h;
     h.roots.assign(bars, 0);
     h.trans.assign(bars, 0);
-    int n = s.compat.value("harmonyFirstHalfOnly", false) ? bars / 2 : bars;
-    for(int i = 0; i < n; i++){
+    for(int i = 0; i < bars; i++){
         h.trans[i] = weightedIndex(s.transposeWeights, rng); // same call order as the Director
         h.roots[i] = weightedIndex(s.degreeWeights, rng);
     }
@@ -282,8 +305,7 @@ inline std::map<int, Scene> importDirector(const json& node){
         s.snapshot = slot;
         if(snap.contains("degreeWeights")) s.degreeWeights = snap["degreeWeights"].get<std::vector<float>>();
         if(snap.contains("transposeWeights")) s.transposeWeights = snap["transposeWeights"].get<std::vector<float>>();
-        s.compat = json{{"harmonyFirstHalfOnly", true}, {"fx1TransposeMeta", false},
-                        {"fx34LastHalfOnly", true}, {"midRenderReseed", true}};
+        s.compat = json{{"fx1TransposeMeta", false}, {"fx34LastHalfOnly", true}, {"midRenderReseed", true}};
 
         LayerDef l;
         l.bars = 2 * (int)numberOf(snap.value("bars", json(4)), 4);

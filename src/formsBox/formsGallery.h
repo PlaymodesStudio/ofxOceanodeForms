@@ -137,7 +137,7 @@ public:
             GallerySession s; s.name = e.path().filename().string();
             for(auto& f : fs::directory_iterator(e.path())){
                 auto n = f.path().filename().string();
-                if(f.path().extension() == ".png" && n.size() > 2 && n[0] == 'L') s.images++;
+                if(f.path().extension() == ".png" && n.size() > 2 && n[0] == 'L' && n.find("_cover")==std::string::npos) s.images++;
             }
             s.hasTimeline = fs::exists(e.path() / "timeline.jsonl");
             if(s.images > 0) sessions.push_back(s);
@@ -153,7 +153,7 @@ public:
         for(auto& f : fs::directory_iterator(d)){
             if(f.path().extension() != ".png") continue;
             std::string base = f.path().stem().string();   // L<layer>_<id>_s<seed>
-            if(base.size() < 4 || base[0] != 'L') continue;
+            if(base.size() < 4 || base[0] != 'L' || base.find("_cover") != std::string::npos) continue;
             GalleryImage im;
             im.png = f.path().string();
             im.json = (d / (base + ".json")).string();
@@ -191,6 +191,8 @@ public:
                 im->roots = j.value("roots", std::vector<int>()); im->trans = j.value("trans", std::vector<int>());
                 for(auto& v : j.value("scaleNotes", json::array())) im->scaleNotes.push_back(v.get<float>());
                 im->perf = j.value("performance", json::object());
+                im->layerCover = j.value("layerCover",json::object());
+                formscover::readMasks(im->covers,j,fs::path(jsonPath).parent_path().string());
                 return im;
             } catch(...) { return nullptr; }
         };

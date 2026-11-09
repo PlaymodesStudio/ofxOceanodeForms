@@ -21,6 +21,8 @@
 #include <sstream>
 #include <set>
 
+class ofTexture;
+
 namespace forms {
 
 namespace fs = std::filesystem;
@@ -28,9 +30,12 @@ namespace fs = std::filesystem;
 // One rendered (or pending) image and the musical values it was made with
 struct Image {
     std::string id, png, json, scene, palette, scale;
+    std::vector<formscover::Mask> covers;
+    nlohmann::json layerCover = nlohmann::json::object();
     int layer = 1, bars = 8, bpm = 120, notegrid = 100, snapshot = -1;
     unsigned seed = 0;
     std::vector<int> roots, trans;     // per bar: degree index, transpose in semitones
+    int root = -1;                     // the root (MIDI) the page was drawn against; -1 = its scene's root
     std::vector<float> scaleNotes;     // semitones of the scale (what Macro_3 output as actualScale)
     nlohmann::json perf = nlohmann::json::object();   // the scene's performance settings when it was requested
     bool preview = false;              // editor preview: shown in the editor, never scrolls in
@@ -54,15 +59,27 @@ struct Image {
     // being written, or not written at all when archiving is off). Shared by repeat copies.
     std::shared_ptr<const std::vector<uint8_t>> rgba;
     int pw = 0, ph = 0;
+    // CPU fallback for the live scrollers. Exact GPU mode instead retains a native-size texture.
+    std::shared_ptr<const std::vector<uint8_t>> stageRgba;
+    int stageW = 0, stageH = 0;
+    // Shared worker GL texture, published only after its upload fence signals.
+    std::shared_ptr<ofTexture> texture;
 };
 
 // Timings of the image pipeline (ms), for the System tab: last value and a running mean
 struct StageTime {
-    double last = 0, mean = 0; int n = 0;
-    void add(double ms){ last = ms; n++; mean = n == 1 ? ms : mean + (ms - mean) * (n < 50 ? 1.0 / n : 0.02); }
+    double last = 0, mean = 0, peak = 0; int n = 0;
+    void add(double ms){ last = ms; peak=std::max(peak,ms); n++; mean = n == 1 ? ms : mean + (ms - mean) * (n < 50 ? 1.0 / n : 0.02); }
+};
+struct StageTimer {
+    StageTime& stage;
+    std::chrono::steady_clock::time_point start=std::chrono::steady_clock::now();
+    explicit StageTimer(StageTime& s):stage(s){}
+    ~StageTimer(){stage.add(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count());}
 };
 struct PipelineStats {
     StageTime queue, render, archive, upload, total;   // waiting for a worker, drawing, PNG + sidecar, texture upload, asked -> on screen-ready
+    StageTime player,request,delivery;                 // main-thread work; peaks expose occasional stalls
     int archiveBacklog = 0;
 };
 inline PipelineStats& pipelineStats(){ static PipelineStats s; return s; }
@@ -90,7 +107,7 @@ struct Schedule {
         // Replace at Playhead off; the scroller / ring clears it when it has done so
         std::shared_ptr<Image> replaceNext;
     };
-    std::vector<Layer> layers = std::vector<Layer>(4);   // layer 1 + up to 3 extra (fixed: no reallocation)
+    std::deque<Layer> layers = std::deque<Layer>(4); // grows without invalidating layer references
     double headerBeat = 0;                          // absolute beat under the header (from layer 1)
     Layer& layer(int i){ if((int)layers.size() <= i) layers.resize(i + 1); return layers[i]; }
 };
@@ -129,10 +146,50 @@ public:
 
     // --- content
     std::map<std::string, Scene> scenes;   // by name
+    std::map<std::string,fs::path> embeddedKicks;
+    void prepareKick(const Scene& scene){
+        if(!scene.kickSample)return;
+        auto existing=embeddedKicks.find(scene.kickSample->id);
+        if(existing!=embeddedKicks.end() && fs::is_regular_file(existing->second))return;
+        embeddedKicks[scene.kickSample->id]=formskick::materialize(*scene.kickSample,rendererFolder/"samples"/"embedded");
+    }
+    fs::path kickFile(const Scene& scene) const {
+        if(!scene.kickSample) return {};
+        auto it=embeddedKicks.find(scene.kickSample->id);
+        return it==embeddedKicks.end()?fs::path():it->second;
+    }
+    void importKick(Scene& scene,const fs::path& path){
+        auto asset=formskick::importFile(path);
+        auto cached=formskick::materialize(*asset,rendererFolder/"samples"/"embedded");
+        embeddedKicks[asset->id]=cached;
+        scene.kickSample=std::move(asset);
+        scene.performance["kickSample"]=scene.kickSample->name;
+        scene.performance["kickSynth"]=0;
+    }
     std::vector<SetlistEntry> setlist;
     std::vector<ScaleDef> scaleLib;          // library/scales.json
+    // The patch's Global Pitch node, as the Forms node reads it each frame (nothing here depends on
+    // ofxOceanode): with scaleOn the scene's scale is replaced by these degrees on this root pitch
+    // class, shift moves every bar's degree along the scale; transpose is a bend of the sound
+    struct PitchFollow { bool scaleOn = false; std::vector<int> notes; int rootPc = 0; int shift = 0; bool transposeOn = false; float transpose = 0; };
+    PitchFollow pitchFollow;
+    // the scale a scene draws with: the Global Pitch scale when followed, else its own (name empty: none)
+    ScaleDef effectiveScale(const Scene& s) const {
+        if(pitchFollow.scaleOn && !pitchFollow.notes.empty()){ ScaleDef d; d.name = "Global Pitch"; d.notes = pitchFollow.notes; d.legacyIndex = -1; d.source = "Global Pitch"; return d; }
+        const ScaleDef* sd = findScale(s.scale);
+        return sd ? *sd : ScaleDef{"", {}, -1, ""};
+    }
+    // the root (MIDI) a scene sounds on: its own, moved to the Global Pitch root's pitch class when followed
+    int effectiveRoot(const Scene& s) const {
+        if(!pitchFollow.scaleOn) return s.root;
+        int d = ((pitchFollow.rootPc - s.root % 12) % 12 + 12) % 12;   // nearest; a tritone goes up
+        if(d > 6) d -= 12;
+        return std::max(0, std::min(127, s.root + d));
+    }
+    // Global Pitch Shift: every bar's degree moves along the scale (a diatonic transpose)
+    void applyPitchShift(std::vector<int>& roots) const { if(pitchFollow.scaleOn && pitchFollow.shift) for(auto& r : roots) r += pitchFollow.shift; }
     std::vector<PaletteDef> paletteLib;      // library/palettes.json
-    std::vector<std::pair<std::string, std::string>> methods;   // name, family: legacy methods, then presets ("gen/<gen>")
+    std::vector<std::pair<std::string, std::string>> methods;   // name, family: legacy methods ("legacy/h"...), then presets ("cat/<category>")
     std::vector<GenDef> gens;                // parameterised generators (generators.json)
     std::map<std::string, Preset> presets;   // instrument presets, by ref "<gen>/<name>"
     std::string previewPng, previewId, previewRef;   // last finished editor preview (and its preset)
@@ -281,6 +338,9 @@ public:
     fs::path presetsDir() const { return rendererFolder / "presets"; }
     fs::path presetPath(const Preset& p) const { return presetsDir() / safeFileName(p.gen) / (safeFileName(p.name) + ".json"); }
     fs::path sessionDir() const { return rendererFolder / "sessions" / session; }
+    // In-process renderers can hand the request directly to a worker. The external
+    // renderer and headless callers retain the normal file-based protocol.
+    std::function<void(const fs::path&,json)> requestSink;
 
     void note(const std::string& s){
         log.push_back(s);
@@ -337,6 +397,8 @@ public:
             for(auto& e : fs::directory_iterator(scenesDir()))
                 if(e.is_directory() && e.path().filename().string()[0] != '.') loadFolder(e.path(), e.path().filename().string());
         }
+        for(auto& [name,scene]:scenes) try{ prepareKick(scene); }
+            catch(const std::exception& e){note("kick sample in "+name+": "+e.what());}
         setlist.clear();
         if(fs::exists(setlistPath())){
             try { setlist = readJsonFile(setlistPath()).value("entries", std::vector<SetlistEntry>()); }
@@ -364,6 +426,13 @@ public:
                 for(auto& p : proc){ g.params.push_back(p); g.processKeys.push_back(p.key); }
             }
         }
+        // Cover is a host feature, shared by every drawable instrument.
+        auto coverDef = genDefFromJson({{"params", formscover::schema()}});
+        for(auto& g : gens) if(g.name != "effects")
+            for(auto& p : coverDef.params){
+                auto it=std::find_if(g.params.begin(),g.params.end(),[&](const ParamDef& old){return old.key==p.key;});
+                if(it==g.params.end()) g.params.push_back(p); else *it=p;
+            }
         loadPresets();
         if(gen.contains("canvas") && gen["canvas"].size() == 2){
             rendererCanvasW = gen["canvas"][0].get<int>();
@@ -449,7 +518,7 @@ public:
     // presets appear in the method lists after the legacy methods
     void refreshPresetMethods(){
         methods.erase(std::remove_if(methods.begin(), methods.end(), [](auto& m){ return isPresetRef(m.first); }), methods.end());
-        for(auto& [ref, p] : presets) methods.push_back({ref, "gen/" + p.gen});
+        for(auto& [ref, p] : presets) methods.push_back({ref, "cat/" + presetCategory(p)});
     }
 
     // A preset file, with its "process" blocks merged into "params" (how presets are kept in memory)
@@ -457,6 +526,13 @@ public:
         json j = readJsonFile(path);
         mergeProcess(j);
         if(j.contains("layers")) for(auto& l : j["layers"]) mergeProcess(l);
+        auto migrateCover=[](json& item){
+            if(!item.contains("params") || !item["params"].is_object()) return;
+            auto& p=item["params"];
+            if(p.contains("coverDilate") && !p.contains("coverGrowHeight")) p["coverGrowHeight"]=p["coverDilate"];
+        };
+        migrateCover(j);
+        if(j.contains("layers")) for(auto& l:j["layers"]) migrateCover(l);
         return j.get<Preset>();
     }
     // Files keep the process settings in "process"; in memory they sit in "params"
@@ -515,6 +591,7 @@ public:
         for(auto& [n, sc] : scenes){
             bool changed = false;
             for(auto& l : sc.layers) for(auto& c : l.cells) if(c.item == ref){ c.item = p.ref(); changed = true; }
+            for(auto& l:sc.layers)if(l.effectPreset==ref){l.effectPreset=p.ref();changed=true;}
             if(changed) saveScene(sc);
         }
         // stacks that play it as a layer follow too
@@ -558,7 +635,11 @@ public:
 
     // The group most scenes give this item's family (the 1920 scenes group methods by family)
     int groupForItem(const std::string& m) const {
-        auto fam = [](const std::string& x){ return x.rfind("fx", 0) == 0 ? std::string("fx") : x.substr(0, 1); };
+        // a legacy method's family letter; a preset's from its category (geometry counts as texture here)
+        auto fam = [this](const std::string& x){
+            if(isPresetRef(x)){ auto it = presets.find(x); std::string f = it != presets.end() ? categoryFamily(presetCategory(it->second)) : std::string("h"); return f == "g" ? std::string("t") : f; }
+            return x.rfind("fx", 0) == 0 ? std::string("fx") : x.substr(0, 1);
+        };
         std::string pre = fam(m);
         std::map<int, int> count;
         for(auto& [n, sc] : scenes) for(auto& l : sc.layers) for(auto& c : l.cells)
@@ -696,16 +777,42 @@ public:
 
     // --- scene and setlist editing
 
-    bool renameScene(const std::string& from, const std::string& to){
+    float imageOpacity(const Image& im) const {
+        auto it = scenes.find(im.scene);
+        int layer = std::max(0, im.layer - 1);
+        if(it != scenes.end() && layer < (int)it->second.layers.size()) return it->second.layers[layer].gain;
+        return im.gain;
+    }
+
+    // The player owns additional images (including the scroller's loading slot).
+    std::function<void(const std::string&, const std::string&)> sceneRenamed;
+
+    bool renameScene(std::string from, std::string to){
         if(to.empty() || scenes.count(to) || !scenes.count(from)) return false;
         Scene s = scenes[from];
-        fs::remove(scenePath(s));
+        auto oldPath = scenePath(s);
         s.name = to;
+        saveScene(s);
+        if(oldPath != scenePath(s)) fs::remove(oldPath);
         scenes.erase(from);
         scenes[to] = s;
-        saveScene(s);
         for(auto& e : setlist) if(e.scene == from) e.scene = to;
         if(manualScene == from) manualScene = to;
+        for(auto& pe : layer1Plan) if(pe.scene == from) pe.scene = to;
+        auto renameImage = [&](const std::shared_ptr<Image>& im){ if(im && im->scene == from) im->scene = to; };
+        for(auto& [id, im] : pending) renameImage(im);
+        for(auto& L : schedule->layers){
+            renameImage(L.header); renameImage(L.replaceNext);
+            for(auto& im : L.ready) renameImage(im);
+            for(auto& sl : L.slots) renameImage(sl.img);
+        }
+        renameImage(lastImage); renameImage(replayFirst);
+        for(auto& im : replayAll1) renameImage(im);
+        for(auto& im : replay1) renameImage(im);
+        for(auto& [l, q] : replayAllX) for(auto& im : q) renameImage(im);
+        for(auto& [l, q] : replayX) for(auto& im : q) renameImage(im);
+        if(previewSeedScene == from) previewSeedScene = to;
+        if(sceneRenamed) sceneRenamed(from, to);
         saveSetlist();
         return true;
     }
@@ -730,6 +837,7 @@ public:
             Scene probe; probe.name = name; probe.bank = bank;
             Scene s = readJsonFile(scenePath(probe)).get<Scene>();
             s.name = name; s.bank = bank;
+            prepareKick(s);
             scenes[name] = s;
         } catch(std::exception& e){ note("revert " + name + ": " + e.what()); }
     }
@@ -756,7 +864,7 @@ public:
         int n = 0;
         for(auto& [name, sc] : scenes){
             for(auto& l : sc.layers){
-                bool used = false;
+                bool used = l.effectPreset==method;
                 for(auto& c : l.cells) if(c.item == method && c.prob > 0) used = true;
                 if(used){ n++; break; }
             }
@@ -832,6 +940,7 @@ public:
     // layerIndex: 0 = layer 1 (the clock's timing); 1..3 = the extra layers (Phase 3), placed in
     // absolute beats at startBar (from requestLayer).
     std::string makeRequest(bool force = false, const std::string& sceneOverride = "", const Preset* previewItem = nullptr, int layerIndex = 0, int startBar = -1, const Scene* sceneFor = nullptr, int cutBar = -1){
+        StageTimer requestTimer(pipelineStats().request);
         if(session.empty()) newSession();
         if(layerIndex == 0) lastRequestRepeat = 1;
         if(replaying && !previewItem && sceneOverride.empty() && layerIndex == 0){ replayNext(); return ""; }
@@ -876,19 +985,23 @@ public:
         img->bpm = s->bpm;
         img->notegrid = s->notegrid;
         img->palette = s->palette;
-        img->scale = s->scale;
+        const ScaleDef es = effectiveScale(*s);
+        const ScaleDef* sd = es.name.empty() ? nullptr : &es;
+        img->scale = sd ? sd->name : s->scale;
+        img->root = effectiveRoot(*s);
         img->snapshot = s->snapshot;
         const bool frozen = l.fixed.is_object() && l.fixed.contains("items") && !previewItem;
         img->seed = frozen ? l.fixed.value("seed", 0u) : (rng() & 0x7fffffff);
-        const ScaleDef* sd = findScale(s->scale);
         const PaletteDef* pd = findPalette(s->palette);
         if(sd) img->scaleNotes.assign(sd->notes.begin(), sd->notes.end());
 
         img->perf = completePerformance(s->performance);
+        img->layerCover = l.cover;
         img->preview = previewItem != nullptr;
         if(previewItem) img->previewOf = previewItem->ref();
         std::vector<std::string> items;
-        if(!frozen) items = selectItems(l, rng);
+        std::vector<float> itemGains;   // the cells' volume, per selected item
+        if(!frozen) items = selectItems(l, rng, &itemGains);
         Harmony h;
         bool live = !previewItem && sceneOverride.empty();
         if(frozen){
@@ -923,19 +1036,21 @@ public:
                 else layerNextBar[layerIndex] = bar + l.bars * img->repeat;
             }
         }
+        applyPitchShift(h.roots);
         img->roots = h.roots;
         img->trans = h.trans;
 
         json req{{"id", img->id}, {"layer", img->layer}, {"session", session}, {"seed", img->seed},
                  {"size", {width, height}}, {"scene", s->name}, {"snapshot", s->snapshot},
                  {"bars", l.bars}, {"notegrid", s->notegrid}, {"bpm", s->bpm},
-                 {"roots", h.roots}, {"trans", h.trans}, {"compat", s->compat}};
+                 {"roots", h.roots}, {"trans", h.trans}, {"compat", s->compat}, {"bassDegree", s->bassDegree}};
         // the scale and palette themselves travel with the request
         req["scale"] = sd ? sd->legacyIndex : -1;
         req["palette"] = pd ? pd->legacyIndex : -1;
         if(sd){ req["scaleName"] = sd->name; req["scaleNotes"] = sd->notes; }
         if(pd){ req["paletteName"] = pd->name; req["paletteColors"] = pd->colors; }
-        req["performance"] = img->perf;   // archived in the sidecar
+        req["performance"] = img->perf;
+        req["layerCover"] = l.cover;   // archived in the sidecar
         // presets resolve after the selection and the harmony, so scenes without presets draw the
         // same random numbers as before
         json jitems = json::array();
@@ -945,16 +1060,21 @@ public:
         };
         if(previewItem) genItem(*previewItem);
         else if(frozen) jitems = l.fixed["items"];
-        else for(auto& it : items){
+        else for(size_t ii = 0; ii < items.size(); ii++){
+            auto& it = items[ii];
             if(!isPresetRef(it)){ jitems.push_back({{"method", it}}); continue; }
             auto pi = presets.find(it);
             if(pi == presets.end()){ note("preset " + it + " not found"); continue; }
+            size_t first = jitems.size();
             genItem(pi->second);
+            float g = ii < itemGains.size() ? itemGains[ii] : 1.f;
+            if(g != 1) for(size_t k = first; k < jitems.size(); k++) jitems[k]["gain"] = g;   // the cell's volume (renderer)
         }
         req["items"] = jitems;
+        applyLayerEffect(req,l,img->seed);
 
         fs::path p = sessionDir() / "requests" / (img->id + ".json");
-        writeJsonAtomic(p, req);
+        if(requestSink) requestSink(p,std::move(req)); else writeJsonAtomic(p,req);
         pending[img->id] = img;
         pendingSince[img->id] = std::chrono::steady_clock::now();
         if(sceneOverride.empty() && !previewItem && layerIndex == 0 && !laneChose) advanceSetlist();   // the lane's images don't count
@@ -1067,15 +1187,18 @@ public:
         l.bars = side.value("bars", l.bars);
         l.z = -1;
         l.cells.clear();
+        l.effectPreset=side.value("layerEffectPreset",std::string());
         if(freeze){
             l.fixed = json{{"seed", side.value("seed", 0u)}, {"items", side.value("items", json::array())},
                            {"roots", side.value("roots", json::array())}, {"trans", side.value("trans", json::array())},
                            {"from", side.value("session", std::string()) + "/" + side.value("id", std::string())}};
+            l.fixed["layerEffectPreset"]=l.effectPreset;
             l.globalProb = 100;
         }else{
             l.fixed = json();
             std::set<std::string> seen;
             for(auto& it : side.value("items", json::array())){
+                if(it.value("layerEffect",false))continue;
                 std::string ref = it.value("preset", it.value("method", std::string()));
                 if(ref.empty() || seen.count(ref)) continue;
                 seen.insert(ref);
@@ -1187,19 +1310,38 @@ public:
         int best = -1, bestBar = 0, bestCut = -1;
         double bestDeadline = 0;
         const Scene* bestScene = nullptr;
-        for(int i = 1; i < 4; i++){
+        size_t layerCount=schedule->layers.size();
+        for(auto& [name,scene]:scenes) layerCount=std::max(layerCount,scene.layers.size());
+        for(int i = 1; i < (int)layerCount; i++){
             auto& L = schedule->layer(i);
             int waiting = 0;
             for(auto& [id, img] : pending) if(img->layer == i + 1 && !img->cancelled) waiting++;
             int future = (int)L.ready.size() + waiting;
             for(auto& sl : L.slots) if(!sl.repeat && sl.start + sl.len > B) future++;
             if(future > aheadImages + 2) continue;   // a cap, whatever the deadlines
-            // the next start: right after what is placed or asked for, or a few bars ahead of the
-            // header when the layer (re)starts
+            // The next start follows what is placed or asked for. A late restart
+            // moves ahead by complete cycles from the scene origin.
             int earliest = (int)std::ceil(B / 4.0) + renderAheadBars;
-            int next = layerNextBar.count(i) ? layerNextBar[i] : earliest;
+            // A newly enabled layer shares layer 1's scene origin. The ring may defer a
+            // late page by whole cycles, but must not invent a two-bar phase offset.
+            const PlanEntry* origin = planOrPredicted((int)std::floor(B / 4.0));
+            int originBar = origin ? origin->startBar : earliest;
+            std::string runScene;
+            if(origin) for(auto& pe : layer1Plan){
+                if(pe.startBar > origin->startBar) break;
+                if(pe.scene != runScene || pe.hardCut) originBar = pe.startBar;
+                runScene = pe.scene;
+            }
+            int next = layerNextBar.count(i) ? layerNextBar[i] : originBar;
             if(L.scheduledEnd >= 0) next = std::max(next, (int)std::ceil(L.scheduledEnd / 4.0 - 1e-6));
-            if(next * 4.0 + 4.0 <= B) next = earliest;   // fell behind: restart ahead
+            if(next * 4.0 + 4.0 <= B){
+                next = earliest;
+                auto it = origin ? scenes.find(origin->scene) : scenes.end();
+                if(it != scenes.end() && i < (int)it->second.layers.size()){
+                    int cycle = std::max(1, it->second.layers[i].bars);
+                    next = originBar + ((earliest - originBar + cycle - 1) / cycle) * cycle;
+                }
+            }
             // the scene at that bar is layer 1's (its plan); a layer the scene doesn't have is
             // silent until a planned scene has it again
             const Scene* s = nullptr;
@@ -1461,6 +1603,17 @@ public:
         if(pr.isStack()){
             // the stack's own linked pick: one choice per image, shared by all its layers
             json sharedHere = shared;
+            // A stack can cover as one instrument; all of its chosen child shapes share
+            // the resolved cover. Use a separate RNG so cover variation never changes notes.
+            bool hasCover=false;
+            for(auto& entry:pr.params.items()) if(entry.key().rfind("cover",0)==0) hasCover=true;
+            if(hasCover){
+                auto definition=genDefFromJson({{"params",formscover::schema()}});
+                Rng coverRng=rng;
+                json cover=resolve(definition,pr,coverRng);
+                if(formscover::read(cover).enabled)
+                    for(auto& entry:cover.items()) if(!sharedHere.contains(entry.key())) sharedHere[entry.key()]=entry.value();
+            }
             if(!pr.linked.empty()){ json pick = json::object(); applyLinked(pick, pr.linked, rng); for(auto& [k, v] : pick.items()) sharedHere[k] = v; }
             // which layers play in this image
             std::vector<bool> on(pr.layers.size(), true);
@@ -1585,6 +1738,22 @@ public:
         return items;
     }
 
+    // Resolve a whole-layer effect independently of instrument selection/harmony.
+    // Tagged items can be replaced without deleting the same preset used in a cell.
+    void applyLayerEffect(json& req,const LayerDef& layer,unsigned seed){
+        json items=json::array();
+        for(auto& it:req.value("items",json::array()))if(!it.value("layerEffect",false))items.push_back(it);
+        auto found=presets.find(layer.effectPreset);
+        if(layer.fixed.is_object() && layer.fixed.value("layerEffectPreset",std::string())==layer.effectPreset){
+            for(auto& it:layer.fixed.value("items",json::array()))if(it.value("layerEffect",false))items.push_back(it);
+        }else if(found!=presets.end() && onlyEffects(found->second)){
+            int savedBars=itemBars;itemBars=layer.bars;
+            auto fx=presetItemsSeeded(found->second,seed ^ 0x4c465830u);itemBars=savedBars;
+            for(auto it:fx){it["layerEffect"]=true;items.push_back(std::move(it));}
+        }
+        req["items"]=std::move(items);req["layerEffectPreset"]=layer.effectPreset;
+    }
+
     std::vector<std::string> makePreviews(const std::string& sceneName, const std::vector<std::pair<std::string, json>>& variants){
         std::vector<std::string> paths;
         if(session.empty()) newSession();
@@ -1600,8 +1769,10 @@ public:
             h = makeHarmony(s, l.bars, rng);
             previewSeed = seed; previewHarmony = h; previewSeedScene = sceneName; previewSeedSet = true;
         }
-        const ScaleDef* sd = findScale(s.scale);
+        const ScaleDef es = effectiveScale(s);
+        const ScaleDef* sd = es.name.empty() ? nullptr : &es;
         const PaletteDef* pd = findPalette(s.palette);
+        applyPitchShift(h.roots);
         for(auto& [tag, items] : variants){
             auto img = std::make_shared<Image>();
             char idbuf[16];
@@ -1612,7 +1783,8 @@ public:
             img->bpm = s.bpm;
             img->notegrid = s.notegrid;
             img->palette = s.palette;
-            img->scale = s.scale;
+            img->scale = sd ? sd->name : s.scale;
+            img->root = effectiveRoot(s);
             img->snapshot = s.snapshot;
             img->seed = seed;
             img->roots = h.roots;
@@ -1622,7 +1794,7 @@ public:
             json req{{"id", img->id}, {"layer", 1}, {"session", session}, {"seed", seed},
                      {"size", {width, height}}, {"scene", s.name}, {"snapshot", s.snapshot},
                      {"bars", l.bars}, {"notegrid", s.notegrid}, {"bpm", s.bpm},
-                     {"roots", h.roots}, {"trans", h.trans}, {"compat", s.compat}, {"preview", tag}};
+                     {"roots", h.roots}, {"trans", h.trans}, {"compat", s.compat}, {"preview", tag}, {"bassDegree", s.bassDegree}};
             req["scale"] = sd ? sd->legacyIndex : -1;
             req["palette"] = pd ? pd->legacyIndex : -1;
             if(sd){ req["scaleName"] = sd->name; req["scaleNotes"] = sd->notes; }

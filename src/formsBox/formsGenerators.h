@@ -63,6 +63,12 @@ inline GenDef genDefFromJson(const json& g){
         pd.max = p.value("max", 1.0f);
         pd.def = p.contains("default") ? p["default"] : json();
         if(p.contains("options")) pd.options = p["options"].get<std::vector<std::string>>();
+        // Forms GL's kick sweep now respects the shared Hits intensity control.
+        // Upgrade older on-disk schemas too, so their editor cannot clamp boosts to 1.
+        if(d.name=="hits" && pd.key=="level"){
+            pd.max=4;pd.label="Volume (above 1 saturates)";
+        }
+        if(d.name=="effects" && pd.key=="echoDelay")pd.label="Echo delay (grid steps; dotted allowed)";
         d.params.push_back(pd);
     }
     return d;
@@ -71,6 +77,9 @@ inline GenDef genDefFromJson(const json& g){
 struct Preset {
     std::string gen, name, notes;
     std::string legacy;                // the legacy method this preset ports (for the A/B), if any
+    // Musical role, the Processing families extended: bass, melody, chords, pads, arps (Harmony),
+    // rhythm, texture, geometry, effects. Empty: derived from the legacy method / generator (presetCategory)
+    std::string category;
     // A layered preset (gen "stack"): several generator items drawn in order, each {gen, params}.
     // A layer may have "chance" (% per image) and "group" (layers of one group share one roll);
     // with "pick": "one" a single layer is drawn per image (weighted by "weight", default 1); with
@@ -96,6 +105,7 @@ inline void to_json(json& j, const Preset& p){
     j = json{{"gen", p.gen}, {"name", p.name}, {"params", p.params}};
     if(!p.notes.empty()) j["notes"] = p.notes;
     if(!p.legacy.empty()) j["legacy"] = p.legacy;
+    if(!p.category.empty()) j["category"] = p.category;
     if(p.isStack()){ j["layers"] = p.layers; if(p.pick != "all") j["pick"] = p.pick; }
     if(!p.linked.empty()) j["linked"] = p.linked;
     if(p.perBar > 0) j["perBar"] = p.perBar;
@@ -105,11 +115,46 @@ inline void from_json(const json& j, Preset& p){
     p.name = j.value("name", std::string());
     p.notes = j.value("notes", std::string());
     p.legacy = j.value("legacy", std::string());
+    p.category = j.value("category", std::string());
     p.layers = j.value("layers", json::array());
     p.pick = j.value("pick", std::string("all"));
     p.params = j.value("params", json::object());
     p.linked = j.value("linked", json::array());
     p.perBar = std::max(0, j.value("perBar", 0));
+}
+
+// The categories (the Processing families harmony / rhythm / texture / effects, harmony split into
+// bass, melody, chords, pads, arps; the geometric textures apart), their family letter and label
+inline const std::vector<std::string>& presetCategories(){
+    static const std::vector<std::string> c{"bass", "melody", "chords", "pads", "arps", "harmony", "rhythm", "texture", "geometry", "effects"};
+    return c;
+}
+// the family a category belongs to, as the legacy method prefix: h, r, t, g (geometry), fx
+inline std::string categoryFamily(const std::string& cat){
+    if(cat == "rhythm") return "r";
+    if(cat == "texture") return "t";
+    if(cat == "geometry") return "g";
+    if(cat == "effects") return "fx";
+    return "h";
+}
+inline std::string categoryLabel(const std::string& cat){
+    if(cat.empty()) return "";
+    if(cat == "effects") return "FX";
+    std::string s = cat; s[0] = (char)toupper(s[0]); return s;
+}
+// A preset's category: its tag, else derived from the legacy method it ports and its generator
+inline std::string presetCategory(const Preset& p){
+    if(!p.category.empty()) return p.category;
+    if(p.gen == "effects") return "effects";
+    if(p.gen == "shapes") return "geometry";
+    std::string pre;
+    for(char c : p.legacy){ if(isalpha((unsigned char)c)) pre += c; else break; }
+    if(pre == "fx") return "effects";
+    if(pre == "r") return "rhythm";
+    if(pre == "t") return "texture";
+    if(p.gen == "hits" || p.gen == "sweep") return pre == "h" ? "harmony" : "rhythm";
+    if(p.params.is_object() && p.params.value("bass", false)) return "bass";
+    return "harmony";
 }
 
 // A preset item reference ("<gen>/<preset>"); legacy method names never contain '/'
@@ -211,6 +256,8 @@ inline json resolve(const GenDef& g, const Preset& prIn, Rng& rng){
             out[p.key] = v;
         }
     }
+    if(out.contains("coverGrowHeight") && !pr.params.contains("coverGrowHeight") && out.contains("coverDilate"))
+        out["coverGrowHeight"] = out["coverDilate"];
     return out;
 }
 
