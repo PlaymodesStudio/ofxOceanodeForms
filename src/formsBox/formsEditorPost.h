@@ -7,6 +7,7 @@
 //
 
 #pragma once
+#include <deque>
 
 #include "formsPost.h"
 #include "formsControls.h"
@@ -19,18 +20,32 @@ struct PostControls {
     ofParameter<float> hue, sat, val, levelMin, levelMax, gamma, low, high;
     ofParameter<float> lineWidth, lineSoft, lineSoftV, lineAlpha, lineEase, lineOffset, lineR, lineG, lineB;
     ofParameter<float> bgR, bgG, bgB;
-    ofParameter<bool> paper;   // paper view (Output only)   // background of the final image (Output only)
-    ofParameter<int> lineCurve;
+    ofParameter<bool> paper, featherExport;   // paper view / export options
+    ofParameter<int> lineCurve, stretchBlend;
     ofParameter<float> featherW[4], featherK[4];   // edge feathers: left, right, top, bottom
     // before the sound: each layer's buffer, each layer its own settings
-    static constexpr int FX_LAYERS = 4;
+    int FX_LAYERS = 4; // initial settings for legacy patches; grows with the scene
     ofParameter<bool> fxOn;
-    ofParameter<float> hBlur[FX_LAYERS], vBlur[FX_LAYERS], trailBeats[FX_LAYERS], trailLevel[FX_LAYERS];
+    std::deque<ofParameter<float>> hBlur = std::deque<ofParameter<float>>(4), vBlur = std::deque<ofParameter<float>>(4), trailBeats = std::deque<ofParameter<float>>(4), trailLevel = std::deque<ofParameter<float>>(4);
+    std::deque<ofParameter<float>> maskAmount=std::deque<ofParameter<float>>(4), maskWidth=std::deque<ofParameter<float>>(4), maskHeight=std::deque<ofParameter<float>>(4), maskContrast=std::deque<ofParameter<float>>(4), maskThreshold=std::deque<ofParameter<float>>(4), maskSpeed=std::deque<ofParameter<float>>(4), maskBlur=std::deque<ofParameter<float>>(4);
+    std::deque<ofParameter<bool>> maskInvert=std::deque<ofParameter<bool>>(4), maskAnimate=std::deque<ofParameter<bool>>(4);
+    std::deque<ofParameter<int>> maskSeed=std::deque<ofParameter<int>>(4);
+    void setupMaskLayer(ControlRegistry& reg,int l){
+        std::string n="L"+ofToString(l+1)+" Perlin ";
+        maskAmount[l].set(n+"Amount",0,0,1); maskWidth[l].set(n+"Width",4,.125f,32);
+        maskHeight[l].set(n+"Height",.25f,.01f,2); maskContrast[l].set(n+"Contrast",1,.1f,8);
+        maskBlur[l].set(n+"Blur",0,0,60); maskThreshold[l].set(n+"Threshold",0,0,1); maskSpeed[l].set(n+"Speed",.25f,0,4);
+        maskSeed[l].set(n+"Seed",l+1,0,65535); maskInvert[l].set(n+"Invert",false); maskAnimate[l].set(n+"Animated",false);
+        for(auto* p:{&maskAmount[l],&maskWidth[l],&maskHeight[l],&maskContrast[l],&maskThreshold[l],&maskBlur[l],&maskSpeed[l]})reg.reg(*p);
+        reg.reg(maskSeed[l]);reg.reg(maskInvert[l]);reg.reg(maskAnimate[l]);
+    }
+    std::function<void(int)> drawEffectPreset;
     int fxLayer = 0;   // the layer the tab shows
 
     void setup(ControlRegistry& reg){
         enabled.set("Post", true);
         stretch.set("Stretch", true);
+        stretchBlend.set("Stretch Blend", 0, 0, 5);
         useOpacity.set("Post Opacity", true);
         hue.set("Hue", 0, 0, 1);
         sat.set("Saturation", 1, 0, 2);
@@ -55,10 +70,11 @@ struct PostControls {
         bgG.set("Background G", 0, 0, 1);
         bgB.set("Background B", 0, 0, 1);
         paper.set("Paper View", false);
+        featherExport.set("Feather PNG Exports", false);
         static const char* edgeName[4] = {"Left", "Right", "Top", "Bottom"};
         for(int e = 0; e < 4; e++){
             featherW[e].set(std::string("Feather ") + edgeName[e], 0, 0, 0.5f);
-            featherK[e].set(std::string("Feather ") + edgeName[e] + " Curve", 1, 0.1f, 5);
+            featherK[e].set(std::string("Feather ") + edgeName[e] + " Curve", 1.0f, 0.1f, 5.0f);
             reg.reg(featherW[e]); reg.reg(featherK[e]);
         }
         fxOn.set("Layer FX", true);
@@ -70,11 +86,26 @@ struct PostControls {
             trailBeats[l].set(n + "Trail", 0, 0, 16);
             trailLevel[l].set(n + "Trail Level", 0.8f, 0, 1);
             for(auto* p : {&hBlur[l], &vBlur[l], &trailBeats[l], &trailLevel[l]}) reg.reg(*p);
+            setupMaskLayer(reg,l);
         }
-        for(auto* p : {&enabled, &stretch, &useOpacity, &line, &paper}) reg.reg(*p);
+        for(auto* p : {&enabled, &stretch, &useOpacity, &line, &paper, &featherExport}) reg.reg(*p);
         for(auto* p : {&hue, &sat, &val, &levelMin, &levelMax, &gamma, &low, &high, &lineWidth, &lineSoft, &lineSoftV, &lineAlpha,
                        &lineEase, &lineOffset, &lineR, &lineG, &lineB, &bgR, &bgG, &bgB}) reg.reg(*p);
         reg.reg(lineCurve);
+        reg.reg(stretchBlend);
+    }
+
+    void ensureLayers(ControlRegistry& reg, size_t count){
+        int old=FX_LAYERS; if(count<=(size_t)old) return;
+        maskAmount.resize(count);maskWidth.resize(count);maskHeight.resize(count);maskContrast.resize(count);maskThreshold.resize(count);maskSpeed.resize(count);maskBlur.resize(count);maskSeed.resize(count);maskInvert.resize(count);maskAnimate.resize(count);
+        hBlur.resize(count); vBlur.resize(count); trailBeats.resize(count); trailLevel.resize(count); FX_LAYERS=(int)count;
+        for(int l=old;l<FX_LAYERS;++l){
+            std::string n="L"+ofToString(l+1)+" ";
+            hBlur[l].set(n+"H Blur",0,0,60); vBlur[l].set(n+"V Blur",0,0,60);
+            trailBeats[l].set(n+"Trail",0,0,16); trailLevel[l].set(n+"Trail Level",.8f,0,1);
+            for(auto* p:{&hBlur[l],&vBlur[l],&trailBeats[l],&trailLevel[l]}) reg.reg(*p);
+            setupMaskLayer(reg,l);
+        }
     }
 
     // A patch saved when the effects were one setting for every layer: every layer gets it
@@ -82,16 +113,16 @@ struct PostControls {
         if(!j.contains("formsControls") || !j["formsControls"].is_object()) return;
         auto& v = j["formsControls"];
         if(v.contains("L1_H_Blur")) return;
-        auto take = [&](const char* key, ofParameter<float>* ps){
+        auto take = [&](const char* key, std::deque<ofParameter<float>>& ps){
             if(!v.contains(key) || !v[key].is_number()) return;
             for(int l = 0; l < FX_LAYERS; l++) ps[l] = ofClamp(v[key].get<float>(), ps[l].getMin(), ps[l].getMax());
         };
         take("H_Blur", hBlur); take("V_Blur", vBlur); take("Trail", trailBeats); take("Trail_Level", trailLevel);
     }
-    bool anyFx(int l) const { return fxOn && (hBlur[l] > 0.05f || vBlur[l] > 0.05f || trailBeats[l] > 0.01f); }
+    bool anyFx(int l) const { return fxOn && (hBlur[l] > 0.05f || vBlur[l] > 0.05f || trailBeats[l] > 0.01f || maskAmount[l] > 0); }
 
     void apply(Post& p) const {
-        p.enabled = enabled; p.stretch = stretch; p.useOpacity = useOpacity;
+        p.enabled = enabled; p.stretch = stretch; p.stretchBlend = stretchBlend; p.useOpacity = useOpacity;
         p.hue = hue; p.sat = sat; p.val = val;
         p.levelMin = levelMin; p.levelMax = levelMax; p.gamma = gamma; p.low = low; p.high = high;
         p.line = line; p.lineWidth = lineWidth; p.lineSoft = lineSoft; p.lineSoftV = lineSoftV; p.lineAlpha = lineAlpha;
@@ -101,12 +132,13 @@ struct PostControls {
     }
 
     // one layer's effects before the sound (also drawn in Scenes / Live, under the layer stack)
-    void drawLayerFx(ControlRegistry& reg, int L, bool showMaster){
+    void drawLayerFx(ControlRegistry& reg, int L, bool showMaster, bool effectPreset=true){
         L = std::max(0, std::min(FX_LAYERS - 1, L));
         if(showMaster){
             reg.check(fxOn, "Layer effects on");
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("For every layer (also in Post-processing)");
         }
+        if(effectPreset && drawEffectPreset)drawEffectPreset(L);
         reg.slider(hBlur[L], "%.1f px", "H blur");
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blurs this layer horizontally (Gaussian sigma, px); the edges repeat, nothing comes from outside");
         reg.slider(vBlur[L], "%.1f px", "V blur");
@@ -115,6 +147,25 @@ struct PostControls {
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("A tail behind what moves (to the right of it), fading like a reverb: its length in beats\n(whatever the layer's speed). At the header it sounds like a reverb.");
         reg.slider(trailLevel[L], "%.2f", "Trail level");
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("How bright the tail starts (1: as bright as what leaves it)");
+        ImGui::SeparatorText("Perlin mask");
+        reg.slider(maskAmount[L],"%.2f","Mask amount");
+        if(ImGui::IsItemHovered())ImGui::SetTooltip("Masks this whole layer, including its blur and trail, before compositing and sonification. 0: off.");
+        reg.slider(maskWidth[L],"%.3f beats","Mask width");
+        reg.slider(maskHeight[L],"%.3f","Mask height");
+        if(ImGui::IsItemHovered())ImGui::SetTooltip("Noise cell height as a fraction of the layer height; independent of resolution.");
+        reg.slider(maskContrast[L],"%.2f","Mask contrast");
+        reg.slider(maskThreshold[L],"%.2f","Mask threshold");
+        if(ImGui::IsItemHovered())ImGui::SetTooltip("0: soft Perlin mask. Above 0: cut the noise into open / closed regions.");
+        reg.slider(maskBlur[L],"%.1f px","Mask blur");
+        if(ImGui::IsItemHovered())ImGui::SetTooltip("Gaussian blur after the threshold, applied only to the mask. Softens its edges without smearing the layer's image. 0: off.");
+        reg.check(maskInvert[L],"Invert mask");
+        reg.slider(maskSeed[L],"Mask seed");
+        reg.check(maskAnimate[L],"Animated");
+        if(maskAnimate[L]){
+            reg.slider(maskSpeed[L],"%.3f / beat","Evolution speed");
+            if(ImGui::IsItemHovered())ImGui::SetTooltip("Perlin evolution per musical beat. Follows playback speed and pauses with the transport.");
+        }
+
     }
 
     void draw(ControlRegistry& reg, const Post& post){
@@ -149,9 +200,9 @@ struct PostControls {
         int L = ofClamp(fxLayer, 0, FX_LAYERS - 1);
         drawLayerFx(reg, L, false);
         if(ImGui::SmallButton("Same for every layer")){
-            for(int l = 0; l < FX_LAYERS; l++) if(l != L){ hBlur[l] = hBlur[L].get(); vBlur[l] = vBlur[L].get(); trailBeats[l] = trailBeats[L].get(); trailLevel[l] = trailLevel[L].get(); }
+            for(int l = 0; l < FX_LAYERS; l++) if(l != L){ hBlur[l] = hBlur[L].get(); vBlur[l] = vBlur[L].get(); trailBeats[l] = trailBeats[L].get(); trailLevel[l] = trailLevel[L].get(); maskAmount[l]=maskAmount[L].get();maskWidth[l]=maskWidth[L].get();maskHeight[l]=maskHeight[L].get();maskContrast[l]=maskContrast[L].get();maskThreshold[l]=maskThreshold[L].get();maskBlur[l]=maskBlur[L].get();maskSpeed[l]=maskSpeed[L].get();maskSeed[l]=maskSeed[L].get();maskInvert[l]=maskInvert[L].get();maskAnimate[l]=maskAnimate[L].get(); }
         }
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Copies layer %d's four settings to the other layers", L + 1);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Copies layer %d's blur, trail and Perlin settings to the other layers", L + 1);
         ImGui::Spacing();
         ImGui::TextDisabled("Value and Header opacity\n(right) scale the sound too.");
         ImGui::PopItemWidth();
@@ -187,6 +238,10 @@ struct PostControls {
         ImGui::SeparatorText("Image");
         reg.check(stretch, "Stretch left of the header");
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Everything left of the header shows the header column (PixelStretch)");
+        ImGui::BeginDisabled(!stretch);
+        reg.combo(stretchBlend, {"Replace", "Add", "Lighten", "Screen", "Multiply", "Darken"}, "Stretch blend");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blend the stretched header column with the scrolling image beneath it.\nReplace preserves the original pixel-stretch appearance. Visual only: does not change the sound.");
+        ImGui::EndDisabled();
         reg.slider(hue, "%.3f");
         reg.slider(sat, "%.2f");
         reg.slider(val, "%.2f");
@@ -212,6 +267,8 @@ struct PostControls {
                 if(ImGui::IsItemHovered()) ImGui::SetTooltip("Shape of the fade: 1 smooth, above 1 the edge stays dark longer, below 1 softer");
             }
         }
+        reg.check(featherExport, "Feather PNG exports");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Apply these edge feathers to the Gallery's separate *_look.png export too.");
         ImGui::PopItemWidth();
 
         ImGui::TableNextColumn();

@@ -14,20 +14,28 @@ namespace forms {
 // controls (drawn by Forms Box)
 inline void Editor::drawPlayTab(){
     float zz = z();
-    Schedule* s = engine->schedule.get();
-    bool on = playerOn && playerOn();
-    const ofTexture* tex = (on && playTexture) ? playTexture() : nullptr;
-    // one row: the view, then the Transport / Header / Scroller columns (drawn by Forms Box),
-    // four columns of the same width
+    // one row: the view, then the Transport / Header / Scroller columns (drawn by Forms Box)
     bool row = ImGui::BeginTable("##playRow", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV);
     if(row){
         ImGui::TableSetupColumn("view", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("controls", ImGuiTableColumnFlags_WidthStretch, 3.0f);
         ImGui::TableNextColumn();
     }
-    float avail = ImGui::GetContentRegionAvail().x;
+    drawOutputView(ImGui::GetContentRegionAvail().x, std::max(120.0f * zz, ImGui::GetContentRegionAvail().y * 0.9f));
+    if(row) ImGui::TableNextColumn();
+    if(drawPlayControls) drawPlayControls();
+    if(row) ImGui::EndTable();
+}
+
+// The built-in player's output, at most maxW x maxH, with the pitch / beat grids and the header line
+inline void Editor::drawOutputView(float maxW, float maxH){
+    float zz = z();
+    Schedule* s = engine->schedule.get();
+    bool on = playerOn && playerOn();
+    const ofTexture* tex = (on && playTexture) ? playTexture() : nullptr;
+    float avail = maxW;
     float aspect = (tex && tex->getWidth() > 0) ? tex->getHeight() / tex->getWidth() : 9.0f / 16.0f;
-    float vh = std::min(avail * aspect, std::max(120.0f * zz, ImGui::GetContentRegionAvail().y * 0.9f));
+    float vh = std::min(avail * aspect, maxH);
     float vw = std::min(avail, vh / aspect);
     ImVec2 p = ImGui::GetCursorScreenPos();
     auto* dl = ImGui::GetWindowDrawList();
@@ -99,9 +107,7 @@ inline void Editor::drawPlayTab(){
     ImGui::SameLine();
     ImGui::Checkbox("Beat grid", &showBeatGrid);
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Layer 1's bars and beats as they scroll; the other layers' bar lines dashed, in their colour");
-    if(row) ImGui::TableNextColumn();
-    if(drawPlayControls) drawPlayControls();
-    if(row) ImGui::EndTable();
+    (void)s;
 }
 
 inline void Editor::drawSetlistTab(){
@@ -294,8 +300,8 @@ inline void Editor::drawSystemTab(){
         engine->renderAheadBars = ofClamp(engine->renderAheadBars, 1, 16);
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("A layer that starts (or restarts after falling behind) begins this many bars after the header,\nso its first image has time to render. Raise it at high BPM.");
         ImGui::Text("Header beat %.2f (bar %d)", engine->schedule->headerBeat, (int)std::floor(engine->schedule->headerBeat / 4.0));
-        for(int i = 1; i < (int)curS->layers.size() && i < 4; i++){
-            auto& L = engine->schedule->layers[i];
+        for(int i = 1; i < (int)curS->layers.size(); i++){
+            auto& L = engine->schedule->layer(i);
             ImGui::Text("Layer %d: in image %.3f | %d shown, %d repeated, %d late (moved on), %d too late, %d waiting", i + 1, L.phase, L.shown, L.repeats, L.retimed, L.dropped, (int)L.ready.size());
         }
         if(kickLevel) ImGui::Text("Kick probe %.2f (fires above 0.50)", *kickLevel);
@@ -323,7 +329,8 @@ inline void Editor::drawSizeControl(){
     float zz = z();
     static const std::vector<std::pair<const char*, glm::ivec2>> presets = {
         {"1280 x 720", {1280, 720}}, {"1920 x 1080", {1920, 1080}}, {"2560 x 1440", {2560, 1440}},
-        {"3840 x 2160 (4K)", {3840, 2160}}, {"7680 x 4320 (8K)", {7680, 4320}}};
+        {"3840 x 2160 (4K)", {3840, 2160}}, {"7680 x 4320 (8K)", {7680, 4320}},
+        {"15360 x 8640 (16K)", {15360, 8640}}};
     std::string current = ofToString(imageW) + " x " + ofToString(imageH);
     ImGui::SetNextItemWidth(170 * zz);
     if(ImGui::BeginCombo("##sizePreset", current.c_str())){

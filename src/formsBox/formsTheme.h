@@ -39,6 +39,7 @@ inline float fsXXL(){ return 36.f / 14.f; }
 // Families: v1's generators and legacy method families onto the five roles
 enum Family { Pitched, Percussive, Texture, Effects, Modulation, None };
 inline Family familyOfGen(const std::string& g){
+    if(g == "legacy/g") return Texture;   // geometry: the geometric textures
     if(g == "masses" || g == "sweep" || g == "legacy/h") return Pitched;
     if(g == "pulse" || g == "hits" || g == "legacy/r") return Percussive;
     if(g == "shapes" || g == "legacy/t") return Texture;

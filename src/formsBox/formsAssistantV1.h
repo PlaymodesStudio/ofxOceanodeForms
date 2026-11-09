@@ -38,7 +38,7 @@ inline std::string assistV1SystemPrompt(const Engine& e){
          "\"pick\": \"all\" | \"one\" | \"group\", each layer optionally \"chance\" (0-100), \"group\", \"weight\".\n\n"
          "SCENE: {\"name\", \"bpm\" (20-300), \"palette\" (a name from the library), \"scale\" (a name from the library), \"notegrid\" (12-400), "
          "\"root\" (MIDI, 0-96), \"degreeWeights\" (12 numbers: chance of each scale degree per bar), \"transposeWeights\" (12 numbers: "
-         "chance of each transposition 0..11 per bar), \"layers\": [1 to 4 of {\"bars\" (1-64), \"repeat\" (1-16), \"globalProb\" (0-100), "
+         "chance of each transposition 0..11 per bar), \"layers\": [one or more of {\"bars\" (1-64), \"repeat\" (1-16), \"globalProb\" (0-100), "
          "\"groupProb\": [0..1 per group], \"rows\" (cells used), \"blend\" (lighten | add | normal), \"gain\" (0-2), "
          "\"cells\": [{\"item\": <a preset ref \"<gen>/<name>\" or a legacy method>, \"prob\" (0-100), \"group\" (int)}]}], "
          "\"performance\": {} (leave empty unless asked)}.\n\n";
@@ -178,7 +178,7 @@ inline std::vector<std::string> validateSceneV1(const Engine& e, const json& j){
     if(!pal) bad.push_back("palette \"" + s.palette + "\" is not in the library");
     if(!sc) bad.push_back("scale \"" + s.scale + "\" is not in the library");
     if(s.degreeWeights.size() != 12 || s.transposeWeights.size() != 12) bad.push_back("degreeWeights / transposeWeights need 12 numbers");
-    if(s.layers.empty() || s.layers.size() > 4) bad.push_back("1 to 4 layers");
+    if(s.layers.empty()) bad.push_back("at least one layer is required");
     static const std::vector<std::string> blends = {"lighten", "add", "normal"};
     for(size_t i = 0; i < s.layers.size(); i++){
         auto& l = s.layers[i];

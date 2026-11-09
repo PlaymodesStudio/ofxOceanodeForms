@@ -46,15 +46,22 @@ inline void Editor::drawGalleryTab(){
             auto plan = gallery.replayPlan(gallery.selectedSession);
             engine->startReplay(gallery.selectedSession, plan.layer1, plan.extra);
         }
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Plays this session again from its archive, in its order (no rendering),\nlooping until Stop replay. Layers 2-4 too if the session has a timeline.");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Plays this session again from its archive, in its order (no rendering),\nlooping until Stop replay. Every archived layer too if the session has a timeline.");
     }
     if(engine->replaying && !thisReplay){ ImGui::SameLine(); ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "replaying %s", engine->replayName.c_str()); ImGui::SameLine(); if(ImGui::SmallButton("stop")) engine->stopReplay(); }
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    const char* layers[] = {"all layers", "layer 1", "layer 2", "layer 3", "layer 4"};
+    int layerCount=1;
+    for(auto& image:gallery.images) layerCount=std::max(layerCount,image.layer);
+    if(galleryLayer>layerCount) galleryLayer=0;
     ImGui::SetNextItemWidth(110 * zz);
-    ImGui::Combo("##glayer", &galleryLayer, layers, 5);
+    std::string layerLabel=galleryLayer ? "layer "+std::to_string(galleryLayer) : "all layers";
+    if(ImGui::BeginCombo("##glayer",layerLabel.c_str())){
+        if(ImGui::Selectable("all layers",galleryLayer==0)) galleryLayer=0;
+        for(int i=1;i<=layerCount;++i) if(ImGui::Selectable(("layer "+std::to_string(i)).c_str(),galleryLayer==i)) galleryLayer=i;
+        ImGui::EndCombo();
+    }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(160 * zz);
     ImGui::InputTextWithHint("##gfilter", "scene contains...", galleryFilter, sizeof(galleryFilter));
