@@ -28,14 +28,29 @@ public:
     // Phase 3: each image's own opacity (its scene's layer setting, read live), applied as it is
     // drawn, so an image shows its opacity before it reaches the header too. Only with keepAlpha.
     std::function<float(const Image&)> opacityOf;
+    std::function<void(const ofTexture&,float,float,float,float,float)> drawWithGain;
     // The absolute beat under the header, counted from the wraps (each image is bars x 4 beats)
     double headerBeat = 0;
     double headerStart = 0, headerLen = 32;   // the image under the header: its start beat and length
     int defaultBars = 8;                  // for beats while no image is loaded
     // Immediate replace: a new image takes the place of the one under the header as soon as it
-    // is ready, instead of entering at the right edge on the next wrap (the beat count stays
-    // continuous; the screen shows the new image, wrapped, until the next one)
+    // is ready, instead of entering at the right edge on the next wrap. Same-length replacements
+    // keep the beat continuous; a length change keeps the new page on the shared bar grid.
     bool immediate = false;
+    bool beatRebased = false;             // length changed the beat mapping: transport must seek
+    double beatAt(float phase,float headerPos,int w) const {
+        double start=origin,left=beatsOf(leavingIndex),right=beatsOf(appearingIndex);
+        if(oldPhase-phase>.5f){
+            start+=left;left=right;
+            if(!isLoading&&loaded(loadingIndex))right=beatsOf(loadingIndex);
+        }else if(phase-oldPhase>.5f){
+            right=left;
+            if(!isLoading&&loaded(loadingIndex))left=beatsOf(loadingIndex);
+            start-=left;
+        }
+        double c=phase+(w>0?headerPos/w:0);
+        return c<1?start+c*left:start+left+(c-1)*right;
+    }
     // where the images were placed last frame: left edge x (px) and bars (the grid overlay)
     struct Span { float x; int bars; };
     std::vector<Span> lastSpans;
@@ -50,6 +65,7 @@ public:
 
     // One frame: load, wrap on phase, draw into the FBO, report the header image to L
     void update(Schedule::Layer* L, float phase, float headerPos, int w, int h){
+        beatRebased = false;
         allocate(w, h);
         if(isLoading && loaded(loadingIndex)) isLoading = false;
         // Switch now: an old image waiting in the loading slot gives way to the switch image
@@ -61,10 +77,15 @@ public:
             L->ready.pop_front();
             images[loadingIndex].clear();
             const auto& e = entries[loadingIndex];
-            if(e->rgba && e->pw > 0 && e->ph > 0 && e->rgba->size() >= (size_t)e->pw * e->ph * 4){
-                // in memory (Forms GL Box): straight to a texture, no PNG round trip
+            const auto& pixels = e->stageRgba ? e->stageRgba : e->rgba;
+            int imageW = e->stageRgba ? e->stageW : e->pw;
+            int imageH = e->stageRgba ? e->stageH : e->ph;
+            if(e->texture && e->texture->isAllocated()){
+                // Already resident: no texture allocation or upload on the scrolling thread.
+            }else if(pixels && imageW > 0 && imageH > 0 && pixels->size() >= (size_t)imageW * imageH * 4){
+                // in memory (Forms GL Box): upload the viewport-sized copy, without a PNG round trip
                 auto t0 = std::chrono::steady_clock::now();
-                images[loadingIndex].setFromPixels(e->rgba->data(), e->pw, e->ph, OF_IMAGE_COLOR_ALPHA);
+                images[loadingIndex].setFromPixels(pixels->data(), imageW, imageH, OF_IMAGE_COLOR_ALPHA);
                 pipelineStats().upload.add(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
             }else{
                 loader.loadFromDisk(images[loadingIndex], e->png);
@@ -74,17 +95,30 @@ public:
         bool once = L && L->replaceNext && entries[loadingIndex] == L->replaceNext;   // Switch now
         if((immediate || once) && !isLoading && loaded(loadingIndex) && entries[loadingIndex]){
             if(once) L->replaceNext.reset();
-            // replace what is under the header now, keeping the beat under it where it was
+            // Evaluate the old mapping at THIS frame's phase. Using last frame's
+            // headerBeat shifts the origin by a frame on every replacement.
             float c = phase + (w > 0 ? headerPos / w : 0);
             swapDup = once && !immediate && c < 1;
-            double hb = headerBeat;
+            bool hadPage = entries[leavingIndex] || entries[appearingIndex];
+            double frameOrigin = origin;
+            if(oldPhase - phase > 0.5) frameOrigin += beatsOf(leavingIndex);
+            else if(phase - oldPhase > 0.5) frameOrigin -= beatsOf(leavingIndex);
+            double hb = c < 1 ? frameOrigin + c * beatsOf(leavingIndex)
+                              : frameOrigin + beatsOf(leavingIndex) + (c - 1) * beatsOf(appearingIndex);
             int ni = loadingIndex;
             leavingIndex = appearingIndex = ni;
             loadingIndex = (ni + 1) % 3;
             int other = (ni + 2) % 3;
             images[loadingIndex].clear(); entries[loadingIndex].reset();
             images[other].clear(); entries[other].reset();
-            origin = hb - c * beatsOf(ni);   // both slots show it: the header beat stays where it was
+            double candidate = hadPage ? hb - c * beatsOf(ni) : origin;
+            // Images encode bars from their left edge. A fractional origin makes
+            // layer 1's sixteenths disagree with every extra layer's absolute grid.
+            origin = std::round(candidate / 4.0) * 4.0;
+            beatRebased = hadPage && std::fabs(origin - candidate) > 1e-6;
+            // The new page occupies both slots; an input wrap on this same frame
+            // must not advance its freshly assigned origin a second time.
+            oldPhase = phase;
             if(L) L->shown++;
         }
         // Switch now: the copy of the switch image entering at the right gives way to the next
@@ -158,13 +192,26 @@ public:
         for(auto& e : entries) if(e) v.push_back(e);
         return v;
     }
+    struct VisiblePage { std::shared_ptr<Image> image; float x; };
+    std::vector<VisiblePage> visiblePages() {
+        std::vector<VisiblePage> out;
+        if(loaded(leavingIndex) && !(isLoading && leavingIndex==loadingIndex) && entries[leavingIndex])
+            out.push_back({entries[leavingIndex],-oldPhase*fbo.getWidth()});
+        if(loaded(appearingIndex) && !(isLoading && appearingIndex==loadingIndex) && entries[appearingIndex])
+            out.push_back({entries[appearingIndex],(1-oldPhase)*fbo.getWidth()});
+        return out;
+    }
     // A page's PNG was rewritten (immediate mode): load it again where it is held
     void reloadPng(const std::string& png){
         for(int i = 0; i < 3; i++){
             auto& e = entries[i];
             if(!e || e->png != png || (isLoading && i == loadingIndex)) continue;
-            if(e->rgba && e->pw > 0 && e->ph > 0 && e->rgba->size() >= (size_t)e->pw * e->ph * 4)
-                images[i].setFromPixels(e->rgba->data(), e->pw, e->ph, OF_IMAGE_COLOR_ALPHA);
+            if(e->texture && e->texture->isAllocated()) continue;
+            const auto& pixels = e->stageRgba ? e->stageRgba : e->rgba;
+            int imageW = e->stageRgba ? e->stageW : e->pw;
+            int imageH = e->stageRgba ? e->stageH : e->ph;
+            if(pixels && imageW > 0 && imageH > 0 && pixels->size() >= (size_t)imageW * imageH * 4)
+                images[i].setFromPixels(pixels->data(), imageW, imageH, OF_IMAGE_COLOR_ALPHA);
             else images[i].load(png);
         }
     }
@@ -196,15 +243,20 @@ private:
     // beat 0, the bar its harmony was made for
     double beatsOf(int i) const { return entries[i] ? 4.0 * entries[i]->bars : 0.0; }
 
-    bool loaded(int i){ return images[i].isAllocated() && images[i].isUsingTexture(); }
+    bool loaded(int i) const { return (entries[i] && entries[i]->texture && entries[i]->texture->isAllocated()) ||
+                               (images[i].isAllocated() && images[i].isUsingTexture()); }
 
     void drawSlot(int i, float x, int w, int h, float headerPos, Schedule::Layer* L){
         if(!loaded(i) || (isLoading && i == loadingIndex)) return;
-        float op = (keepAlpha && opacityOf && entries[i]) ? ofClamp(opacityOf(*entries[i]), 0, 1) : 1.0f;
+        float op = (keepAlpha && opacityOf && entries[i]) ? ofClamp(opacityOf(*entries[i]), 0, 2) : 1.0f;
         if(op <= 0) { /* fully transparent: still track the header below */ }
         else{
             ofSetColor(255, 255, 255, 255 * op);   // scales alpha (and so the premultiplied colour)
-            images[i].draw(x, 0, w, h);
+            if(drawWithGain){
+                const auto& texture=entries[i] && entries[i]->texture ? *entries[i]->texture : images[i].getTexture();
+                drawWithGain(texture,x,w,h,op,1);
+            }else if(entries[i] && entries[i]->texture) entries[i]->texture->draw(x, 0, w, h);
+            else images[i].draw(x, 0, w, h);
             ofSetColor(255);
         }
         if(headerPos > x && headerPos <= x + w && entries[i]){

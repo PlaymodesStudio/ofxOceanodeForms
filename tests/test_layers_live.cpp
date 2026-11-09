@@ -45,6 +45,14 @@ int main(int argc, char** argv){
     a.performance = completePerformance(a.performance);
     a.performance["repeatChance"] = 1.0; a.performance["repeatBarStart"] = 0.5;
     a.performance["repeatMults"] = json::array({0.5, 1, 2}); a.performance["repeatNum"] = json::array({3});
+    // Exercise the same player path with arbitrary scene layer counts, including hard cuts
+    // from a large scene to a small one and back.
+    const int layerCount = std::max(4, getenv("TEST_LAYERS") ? atoi(getenv("TEST_LAYERS")) : 4);
+    if(layerCount>4){
+        LayerDef extra=a.layers.back(); a.layers.resize(layerCount,extra);
+        for(int i=3;i<layerCount;++i) a.layers[i].bars=4+2*(i%3);
+    }
+    e.schedule->layer(layerCount-1);
     Scene b = a; b.name = "B"; b.layers.resize(2); b.layers[0].bars = 4; b.layers[1].bars = 3;
     bool repeatOn = getenv("REPEAT") && *getenv("REPEAT");
     if(repeatOn){ a.layers[0].repeat = 2; a.layers[2].repeat = 3; b.layers[0].repeat = 3; b.layers[1].repeat = 2; }
@@ -53,7 +61,8 @@ int main(int argc, char** argv){
     e.useSetlist = true; e.setlistEntry = 0; e.imagesInEntry = 0;
 
     Transport clock; Header head; head.rng.seed(seed);
-    ScrollerCore scroller; LayerRing rings[3];
+    ScrollerCore scroller; std::deque<LayerRing> rings(layerCount-1);
+    head.beatAt=[&](float phase,float x){return scroller.beatAt(phase,x,W);};
     scroller.keepAlpha = true;
     // as Forms Box sets it (formsBox.h hardCutIn)
     auto hardCutIn = [&](double a, double b){ return e.hardCutIn(a, b); };
@@ -98,9 +107,9 @@ int main(int argc, char** argv){
     long jumpArrivals = 0;
     std::map<int, long> holeSince;
     long frames = 0, cutBad = 0, repeatBad = 0, repeatChecked = 0, holes = 0, pops = 0, beatBack = 0, repeatFrames = 0;
-    double maxB = -1e9, firstImageAt[4] = {1e9, 1e9, 1e9, 1e9};
+    double maxB = -1e9; std::vector<double> firstImageAt(layerCount,1e9);
     std::map<std::pair<int, long>, std::string> firstPass;   // (layer, beat x 8) -> image id
-    std::set<std::string> everDrawn[4];
+    std::vector<std::set<std::string>> everDrawn(layerCount);
     std::vector<std::string> notes;
     auto note = [&](const std::string& s){ if(notes.size() < 25) notes.push_back(s); };
 
@@ -135,11 +144,11 @@ int main(int argc, char** argv){
         e.requestLayers();
         const Scene* cs = e.sceneAtHeader();
         int nLayers = 1;
-        for(int i = 1; i < 4; i++){
+        for(int i = 1; i < layerCount; i++){
             auto& Li = e.schedule->layers[i];
             if((cs && i < (int)cs->layers.size()) || !Li.slots.empty() || !Li.ready.empty()) nLayers = i + 1;
         }
-        for(int i = 1; i < nLayers && i < 4; i++){
+        for(int i = 1; i < nLayers; i++){
             rings[i - 1].active = cs && i < (int)cs->layers.size();
             rings[i - 1].update(e.schedule->layer(i), B, head.headerPos, W, H);
         }
@@ -166,7 +175,7 @@ int main(int argc, char** argv){
             e.onReady(id, "/fake/" + id + ".png", "/fake/" + id + ".json");
         }
 
-        for(int li = 1; li < nLayers && li < 4; li++){
+        for(int li = 1; li < nLayers; li++){
             auto& c = rings[li - 1].current;
             if(c && c->startBar >= 0){ if(c->repeatIndex == 0) extraSeen[c->id] = c; else extraCopies++; }
         }
@@ -184,7 +193,7 @@ int main(int argc, char** argv){
         // the latest hard cut at or before this bar
         const Engine::PlanEntry* cut = nullptr;
         for(auto& p : e.layer1Plan) if(p.hardCut && p.startBar <= bar && (!cut || p.startBar > cut->startBar)) cut = &p;
-        for(int li = 0; li < 4; li++){
+        for(int li = 0; li < layerCount; li++){
             std::shared_ptr<Image> cur = li == 0 ? L->header : (li < nLayers ? rings[li - 1].current : nullptr);
             bool sceneHas = pe && e.scenes.count(pe->scene) && li < (int)e.scenes.at(pe->scene).layers.size();
             if(cur) firstImageAt[li] = std::min(firstImageAt[li], t);
@@ -220,7 +229,7 @@ int main(int argc, char** argv){
                 }
             }
         }
-        for(int li = 1; li < nLayers && li < 4; li++){
+        for(int li = 1; li < nLayers; li++){
             for(auto& d : rings[li - 1].lastDrawn){
                 if(getenv("TRACE2") && li == 1 && d.png == "/fake/0010.png" && everDrawn[li].count(d.png) == 0)
                     printf("t %6.1f B %6.1f lastB %6.1f first drawn x %.1f start %.1f len %.1f header %.1f\n", t, B, lastB, d.x, d.start, d.len, head.headerPos);
@@ -234,7 +243,7 @@ int main(int argc, char** argv){
         }
         if(idTrace){   // IDTRACE=<file>: what each layer shows, every frame (to compare runs)
             fprintf(idTrace, "%ld %.4f", frames, B);
-            for(int li = 0; li < 4; li++){ std::shared_ptr<Image> c = li == 0 ? L->header : (li < nLayers ? rings[li - 1].current : nullptr); fprintf(idTrace, " %s", c ? (c->id + "." + std::to_string(c->repeatIndex)).c_str() : "-"); }
+            for(int li = 0; li < layerCount; li++){ std::shared_ptr<Image> c = li == 0 ? L->header : (li < nLayers ? rings[li - 1].current : nullptr); fprintf(idTrace, " %s", c ? (c->id + "." + std::to_string(c->repeatIndex)).c_str() : "-"); }
             fprintf(idTrace, "\n");
         }
         maxB = std::max(maxB, B);
@@ -244,7 +253,7 @@ int main(int argc, char** argv){
     std::cout << "layer-1 plan:";
     for(auto& p : e.layer1Plan) std::cout << " " << p.scene << "@" << p.startBar << (p.hardCut ? "(cut)" : "");
     std::cout << "\n";
-    for(int i = 1; i < 4; i++){ auto& Li = e.schedule->layers[i]; std::cout << "layer " << i + 1 << ": shown " << Li.shown << ", repeated " << Li.repeats << ", moved on " << Li.retimed << ", images drawn " << everDrawn[i].size() << "\n"; }
+    for(int i = 1; i < layerCount; i++){ auto& Li = e.schedule->layers[i]; std::cout << "layer " << i + 1 << ": shown " << Li.shown << ", repeated " << Li.repeats << ", moved on " << Li.retimed << ", images drawn " << everDrawn[i].size() << "\n"; }
     std::cout << "frames " << frames << ", in a beat repeat " << repeatFrames << " (" << (100.0 * repeatFrames / frames) << "%), repeat frames checked " << repeatChecked << "\n";
     std::cout << "images that came in with a repeat's jump of the whole view: " << jumpArrivals << "\n";
     std::cout << "transport feed: jumps " << feedJumps << " (1 = only the start), went back " << feedBack << ", tempo within " << (100 * bpmErr) << "% of Forms Box (during its tempo glides; the beat itself is sent every frame)\n";

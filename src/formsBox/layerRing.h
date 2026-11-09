@@ -24,6 +24,7 @@ class LayerRing {
 public:
     ofFbo fbo;
     bool active = true;                       // the current scene has this layer (else no repeats)
+    std::function<void(const ofTexture&,float,float,float,float,float)> drawWithGain;
     std::function<float(const Image&)> opacityOf;   // each image's own opacity, read live
     // the first hard cut (a scene change that cuts every layer) at a beat in (from, to], or -1
     std::function<double(double from, double to)> hardCutIn;
@@ -100,6 +101,9 @@ public:
             if(taken){
                 double end = std::ceil(B / 4.0) * 4.0;
                 for(auto& sl : L.slots) if(sl.seen || !sl.repeat) end = std::max(end, sl.end());
+                // Keep the page on its original layer cycle. Starting at the current bar
+                // offsets different-length layers every time a render arrives late.
+                end = start + std::max(0.0, std::ceil((end - start) / len - 1e-9)) * len;
                 // still visible at that place? then it waits one more image length
                 for(int guard = 0; guard < 64 && screenX(L, B, end, headerPos, w, len) < w; guard++) end += len;
                 // only where its own scene plays (a late image does not carry its scene into
@@ -204,15 +208,21 @@ public:
         }
         if(loadingPng.empty()){
             for(auto& p : want){
+                bool resident = false;
+                for(auto& sl : L.slots) if(sl.img && sl.img->png == p && sl.img->texture){ resident = true; break; }
+                if(resident) continue;
                 if(images.count(p)) continue;
                 auto im = std::make_shared<ofImage>();
                 images[p] = im;
                 // in memory (Forms GL Box): straight to a texture
                 std::shared_ptr<Image> src;
-                for(auto& sl : L.slots) if(sl.img && sl.img->png == p && sl.img->rgba){ src = sl.img; break; }
-                if(src && src->pw > 0 && src->ph > 0 && src->rgba->size() >= (size_t)src->pw * src->ph * 4){
+                for(auto& sl : L.slots) if(sl.img && sl.img->png == p && (sl.img->stageRgba || sl.img->rgba)){ src = sl.img; break; }
+                const auto& pixels = src ? (src->stageRgba ? src->stageRgba : src->rgba) : std::shared_ptr<const std::vector<uint8_t>>{};
+                int imageW = src ? (src->stageRgba ? src->stageW : src->pw) : 0;
+                int imageH = src ? (src->stageRgba ? src->stageH : src->ph) : 0;
+                if(src && pixels && imageW > 0 && imageH > 0 && pixels->size() >= (size_t)imageW * imageH * 4){
                     auto t0 = std::chrono::steady_clock::now();
-                    im->setFromPixels(src->rgba->data(), src->pw, src->ph, OF_IMAGE_COLOR_ALPHA);
+                    im->setFromPixels(pixels->data(), imageW, imageH, OF_IMAGE_COLOR_ALPHA);
                     pipelineStats().upload.add(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
                     continue;   // loaded: look at the next one this frame too
                 }
@@ -235,20 +245,33 @@ public:
         ofEnableAlphaBlending();
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         for(auto& [i, x] : draw){
+            auto resident = L.slots[i].img->texture;
             auto it = images.find(L.slots[i].img->png);
-            if(it == images.end() || it->first == loadingPng) continue;
-            auto& im = it->second;
-            if(!(im && im->isAllocated() && im->isUsingTexture())) continue;
+            if(!resident && (it == images.end() || it->first == loadingPng)) continue;
+            ofTexture* texture = resident.get();
+            if(!texture){
+                auto& im = it->second;
+                if(!(im && im->isAllocated() && im->isUsingTexture())) continue;
+                texture = &im->getTexture();
+            }
             float vw = vis(L.slots[i]);
-            float op = opacityOf ? ofClamp(opacityOf(*L.slots[i].img), 0, 1) : 1.0f;
+            float op = opacityOf ? ofClamp(opacityOf(*L.slots[i].img), 0, 2) : 1.0f;
             if(op <= 0) continue;
             ofSetColor(255, 255, 255, 255 * op);
-            if(vw >= w - 0.01f) im->draw(x, 0, w, h);
-            else im->drawSubsection(x, 0, vw, h, 0, 0, vw / w * im->getWidth(), im->getHeight());   // cut
+            if(drawWithGain)drawWithGain(*texture,x,w,h,op,vw/w);
+            else if(vw >= w - 0.01f) texture->draw(x, 0, w, h);
+            else texture->drawSubsection(x, 0, vw, h, 0, 0, vw / w * texture->getWidth(), texture->getHeight());
             ofSetColor(255);
         }
         ofPopStyle();
         fbo.end();
+    }
+
+    bool drawable(const std::shared_ptr<Image>& im) const {
+        if(!im) return false;
+        if(im->texture && im->texture->isAllocated()) return true;
+        auto it=images.find(im->png);
+        return it!=images.end() && im->png!=loadingPng && it->second && it->second->isAllocated() && it->second->isUsingTexture();
     }
 
     // A page's PNG was rewritten (immediate mode): it loads again (the next frames)

@@ -29,7 +29,15 @@ struct ofBuffer { void append(const std::string&){} };
 inline void ofBufferToFile(const std::string&, const ofBuffer&){}
 inline void ofSaveImage(const ofPixels&, const std::string&){}
 enum ofImageType { OF_IMAGE_GRAYSCALE, OF_IMAGE_COLOR, OF_IMAGE_COLOR_ALPHA };
+struct ofTexture {
+    bool isAllocated() const { return true; }
+    void draw(float, float, float, float){}
+    void drawSubsection(float, float, float, float, float, float, float, float){}
+    float getWidth() const { return 1920; } float getHeight() const { return 1080; }
+};
 struct ofImage {
+    ofTexture texture;
+    ofTexture& getTexture(){ return texture; }
     bool loaded = false; std::string path;
     void setFromPixels(const unsigned char*, int, int, ofImageType){ loaded = true; }
     bool load(const std::string& p){ path = p; loaded = true; return true; }

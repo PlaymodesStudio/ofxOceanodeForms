@@ -23,7 +23,7 @@ struct TransportFeed {
     // headerBeat / headerLen: the scroller's beat under the header and the length (beats) of the
     // image there; repeatPx: the header's beat-repeat offset (px of viewW); clockBpm: Forms Box's
     // tempo (the first frame's); paused: Pause
-    void step(double headerBeat, double headerLen, int repeatPx, int viewW, float clockBpm, bool paused, float dt){
+    void step(double headerBeat, double headerLen, float repeatPx, int viewW, float clockBpm, bool paused, float dt){
         double tb = headerBeat + repeatPx / std::max(1.0, (double)viewW) * std::max(1.0, headerLen);
         // running backwards (negative Speed): the transport holds where it was and goes on once
         // Forms Box passes that point again (a seek every frame would reset everything synced)

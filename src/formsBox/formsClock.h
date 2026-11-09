@@ -58,6 +58,7 @@ public:
     // inputs
     float speed = 1;            // "Speed" (custom GUI ±24)
     bool pause = false;
+    bool autoGo = true;         // user switch; session automation cannot override it
     bool analogMode = false;    // pitch follows speed (tape)
     float bpmAdd = 0;           // -1..1 → ±999
     bool sequence = true;       // SEQUENCE toggle
@@ -76,7 +77,7 @@ public:
     std::function<float(float, float)> noise2 = [](float x, float){ return 0.5f + 0.5f * std::sin(x * 6.2831853f); };
     std::mt19937 rng {std::random_device{}()};
 
-    void newPng(double t){ newPngAt = t; ramping = true; }   // like the NEW PNG button: GO 200 ms later
+    void newPng(double t){ newPngAt = t; ramping = true; rampAutomatic = false; }   // manual GO 200 ms later
 
     void step(double t, float dt){
         if(dt <= 0) return;
@@ -115,10 +116,12 @@ public:
         phase += rate * dt;
         if(phase >= 1 || phase < 0){
             phase = fracf(phase);
-            if(autoPng) newPng(t);   // Void_to_Tick × AUTOPNG → newPNG → 200 ms → GO
+            if(autoPng) automaticPng(t);
         }
+        if(!autoGo && rampAutomatic) ramping = false;
+        if(!autoGo) delayedNewPng = false;
         if(ramping && t - newPngAt >= 0.2){ ramping = false; goCount++; }
-        if(delayedNewPng && t >= delayedNewPngAt){ delayedNewPng = false; newPng(t); }
+        if(delayedNewPng && t >= delayedNewPngAt){ delayedNewPng = false; automaticPng(t); }
 
         // --- session sequence (spec §2.5). AUTOPNG has two writers: the SEQUENCE toggle (every
         // change of it) and "minutes < max" (every change of that).
@@ -132,7 +135,7 @@ public:
         if(over != restartSnap){
             // reStartSnap: past the end → one more image and SEQUENCE off; back below → SEQUENCE on
             restartSnap = over;
-            if(over) newPng(t);
+            if(over) automaticPng(t);
             sequenceRequest = over ? 0 : 1;
         }
         float curve = fadeCurve(x);
@@ -150,9 +153,17 @@ private:
     float smoothedSpeed = 0;
     bool first = true;
     double newPngAt = 0, delayedNewPngAt = 0, counterT0 = 0;
-    bool ramping = false, delayedNewPng = false;
+    bool ramping = false, delayedNewPng = false, rampAutomatic = false;
     bool started = false, lastSequence = true, lastShouldRun = true, restartSnap = false;
     int sequenceRequest = -1;
+
+    void automaticPng(double t){
+        if(!autoGo) return;
+        // An explicit New PNG request keeps priority over automatic wraps.
+        if(ramping && !rampAutomatic) return;
+        newPng(t);
+        rampAutomatic = true;
+    }
 
     // AUTOPNG edges: rising → timer reset + setlist restart; falling → setlist restart and one
     // more image 1 s later
@@ -178,6 +189,7 @@ private:
 
 class Header {
 public:
+    std::function<double(float phase,float headerPos)> beatAt;
     // inputs
     float width = 1920;
     float phase = 0;            // Transport phase
@@ -196,7 +208,7 @@ public:
     int headerPx = 0;           // trunc(headerPos)
     float headerNorm = 0, phLock = 0, phOff = 0, opacity = 1;
     int actualBar = 0;
-    int repeatPx = 0;
+    float repeatPx = 0;
     float repeatOpacity = 1, gate = 1, tremolo = 1;
 
     std::function<float(float, float)> noise2 = [](float x, float){ return 0.5f + 0.5f * std::sin(x * 6.2831853f); };
@@ -205,6 +217,11 @@ public:
     void step(double t, float dt){
         if(dt <= 0) return;
         float W = width;
+        if(W <= 0) return;
+        // The smoothing state is in pixels, but a resize must keep its musical
+        // position. Otherwise 1080p -> 4K initially halves the normalized header.
+        if(!firstFrame && lastWidth > 0 && W != lastWidth) hs *= W / lastWidth;
+        lastWidth = W;
         // --- manual header + random jumps (Macro_8 HeaderPosOut)
         float hdrIn = clampf(header + headerPlus * (1 - header), 0, 1);
         // Phasor_3: global BPM, period Div beats; Div random in [1, headerMaxDiv] per cycle
@@ -222,58 +239,66 @@ public:
         float target = mapClamp(headerPosOut, 0, 1, 0, W);
         hs = firstFrame ? target : smooth * hs + (1 - smooth) * target;
 
-        // --- beat repeat (Macro_9 = 2× the phase at the header, Macro_5)
+        float minPx=headerMin*W,maxPx=headerMax*W;
+        float stretch=(maxPx-minPx)/W;
+        float ph10=stretch>1e-6f?fracf(phase/stretch):0;
+        float sweep=minPx+(maxPx-minPx)*ph10;
+        float baseHeader=std::fmod(hs+(autoHeader?sweep:0.f),W);
+        float beats=std::max(1,bars)*4.f;
+        auto beatOf=[&](float x){return beatAt?beatAt(phase,x):(double)(phase+x/W)*beats;};
+        double baseBeat=beatOf(baseHeader);
+        // --- beat repeat: advance from the musical beat, never an independent BPM timer
         float ph9 = fracf(2 * fracf(phase + hs / W));
-        bool afterStart = ph9 > perfF(perf, "repeatBarStart", 0.75f);
+        if(firstFrame || ph9<lastPh9){
+            auto mults=perfV(perf,"repeatMults",{0.5f,1,0.66f,1.5f,2,0.25f});
+            beatLen=std::max(.0001f,mults[std::min((size_t)(uni()*mults.size()),mults.size()-1)]*.5f);
+        }
+        bool afterStart = ph9 >= perfF(perf, "repeatBarStart", 0.75f);
         if(afterStart != lastAfterStart){
             lastAfterStart = afterStart;
             bool on = afterStart && uni() < perfF(perf, "repeatChance", 0);
-            if(on && !repeatOn){ repeatPhase = 0; repeatCount = 0; }
+            if(on && !repeatOn)repeatStartBeat=std::floor((baseBeat+1e-7)/beatLen)*beatLen;
             repeatOn = on;
         }
-        if(ph9 < lastPh9){   // each Macro_9 cycle: a new repeat length
-            auto mults = perfV(perf, "repeatMults", {0.5f, 1, 0.66f, 1.5f, 2, 0.25f});
-            beatLen = mults[std::min((size_t)(uni() * mults.size()), mults.size() - 1)] * 0.5f;
-        }
         lastPh9 = ph9;
-        float beats = std::max(1, bars) * 4.0f;
-        float stepPx = std::ceil(W / beats * beatLen);
+        float stepPx=W/beats*beatLen;
         if(repeatOn && beatLen > 0){
-            repeatPhase += dt * bpm / 60.0f / beatLen;
-            while(repeatPhase >= 1){ repeatPhase -= 1; repeatCount++; }
+            double cycles=std::max(0.,(baseBeat-repeatStartBeat)/beatLen);
+            double whole=std::floor(cycles+1e-7);
+            repeatCount=(int)whole;repeatPhase=(float)std::max(0.,cycles-whole);
         }
         int numReps = std::max(1, (int)perfF(perf, "repeatNum", 4));
         int k = repeatCount % numReps;
-        repeatPx = repeatOn ? (int)(k * stepPx) : 0;
+        repeatPx = repeatOn ? k * stepPx : 0;
         repeatOpacity = repeatOn ? (repeatPhase < perfF(perf, "repeatPW", 0.75f) ? 1.0f : 0.0f) : 1.0f;
 
         // --- auto sweep (Macro_10): follows a column from headerMin to headerMax, then jumps back
-        float minPx = headerMin * W, maxPx = headerMax * W;
-        float stretch = (maxPx - minPx) / W;
-        float ph10 = stretch > 1e-6f ? fracf(phase / stretch) : 0;
-        float sweep = minPx + (maxPx - minPx) * ph10;
-
-        headerPos = std::fmod(std::fabs(hs - repeatPx) + (autoHeader ? sweep : 0.0f), W);
+        // Don't reflect a backwards repeat into the future when it crosses the left edge.
+        int available=stepPx>0?(int)std::floor(baseHeader/stepPx):0;
+        if(repeatOn && k>available)repeatPx=(repeatCount%std::max(1,std::min(numReps,available+1)))*stepPx;
+        headerPos = baseHeader-repeatPx;
         headerPx = (int)headerPos;
         headerNorm = clampf(headerPos / W, 0, 1);
-        phOff = headerPx / W;
+        phOff = headerPos / W;
         phLock = std::fmod(phase + phOff, 1.0f);
         actualBar = (int)(phLock * std::max(1, bars));
 
         // --- strobe gate: in the second half of every 2-bar span, with gateChance
-        float g = fracf(phLock * bars / 2.0f);
-        bool win = g > 0.5f;
-        if(win != lastWin){
+        double heardBeat=beatOf(headerPos);
+        double window=std::floor(heardBeat/8.0);
+        float g=(float)(heardBeat/8.0-window);
+        bool win = g >= 0.5f;
+        if(win != lastWin || (win && window!=lastGateWindow)){
             lastWin = win;
+            lastGateWindow=window;
             gateOn = win && uni() < perfF(perf, "gateChance", 0);
             if(win){
                 auto gm = perfV(perf, "gateMults", {4});
                 gateMult = gm[std::min((size_t)(uni() * gm.size()), gm.size() - 1)];
             }
         }
-        if(phLock < lastPhLock - 0.5f) gatePhase = 0;   // reset at each wrap of the phase at the header
-        lastPhLock = phLock;
-        gatePhase = fracf(gatePhase + dt * bpm / 60.0f * gateMult);
+        double cycles=(heardBeat-(window*8+4))*gateMult;
+        gatePhase=(float)(cycles-std::floor(cycles));
         gate = gateOn ? (gatePhase < 0.25f ? 1.0f : 0.0f) : 1.0f;
 
         // --- tremolo (Macro_8 opacityOut)
@@ -307,13 +332,14 @@ public:
     }
 
 private:
-    float headerPosOut = 0, hs = 0;
+    float headerPosOut = 0, hs = 0, lastWidth = 0;
     float jumpPhase = 0, jumpDiv = 1, jumpTarget = 0, jumpChance = 0, jumpSw = 0;
     bool lastAfterStart = false, repeatOn = false;
     float lastPh9 = 0, beatLen = 0.5f, repeatPhase = 0;
     int repeatCount = 0;
+    double repeatStartBeat=0,lastGateWindow=0;
     bool lastWin = false, gateOn = false;
-    float gateMult = 4, gatePhase = 0, lastPhLock = 0;
+    float gateMult = 4, gatePhase = 0;
     float tremPhase = 0, envPhase = 0, envStageT = 0, envValue = 0, releaseFrom = 0, envSmoothed = 0, globalSmoothed = 1;
     bool envGate = false, lastEnvGate = false;
     bool firstFrame = true;
