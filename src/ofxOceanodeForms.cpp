@@ -10,6 +10,7 @@
 #include "probabilityDropdownList.h"
 #include "texUniForms.h"
 #include "formsBox/formsGLBox.h"
+#include "formsV2/formsGL2Box.h"
 #if defined(FORMS_HAS_SC) && __has_include("ofxOceanodeSuperColliderController.h")
 #include "ofxOceanodeSuperColliderController.h"
 #define FORMS_SC_CONTROLLER 1
@@ -37,8 +38,11 @@ void registerModels(ofxOceanode &o){
     // ofxOceanodeSuperCollider's (without them it has no sound)
     if(auto sc = o.getController<ofxOceanodeSuperColliderController>()) o.registerModel<formsGLBox>("Forms", sc->getServers());
     else o.registerModel<formsGLBox>("Forms");
+    if(auto sc = o.getController<ofxOceanodeSuperColliderController>()) o.registerModel<formsGL2Box>("Forms", sc->getServers());
+    else o.registerModel<formsGL2Box>("Forms");
 #else
     o.registerModel<formsGLBox>("Forms");
+    o.registerModel<formsGL2Box>("Forms");
 #endif
 }
 
