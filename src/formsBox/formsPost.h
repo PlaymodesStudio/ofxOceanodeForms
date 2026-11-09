@@ -26,9 +26,12 @@
 namespace forms {
 
 struct Post {
+    // Export can retain floating-point intermediates; live rendering keeps its existing format.
+    GLint internalFormat = GL_RGBA;
     // settings
     bool enabled = true;
     bool stretch = true;
+    int stretchBlend = 0; // Replace, Add, Lighten, Screen, Multiply, Darken.
     float hue = 0, sat = 1, val = 1;
     bool useOpacity = true;
     float levelMin = 0, levelMax = 0.617f, gamma = 1, low = 0, high = 1;
@@ -47,10 +50,16 @@ struct Post {
 
     ofFbo fbo, featherFbo;
     float lineX = -1, lineV = 0;   // eased line position (px) and speed (smooth curve)
+    float lineViewWidth = 0;
     bool ok = false, tried = false;
 
     // Eases the line toward the header. Called once per frame.
     void stepLine(float target, float dt, float width){
+        if(lineViewWidth > 0 && width > 0 && width != lineViewWidth){
+            if(lineX >= 0) lineX = (lineX - lineOffset) * width / lineViewWidth + lineOffset;
+            lineV *= width / lineViewWidth;
+        }
+        lineViewWidth = width;
         target += lineOffset;
         if(lineX < 0 || lineEase <= 0 || dt <= 0 || std::abs(target - lineX) > width * 0.75f){
             // first frame, no easing, or a wrap of the scroll: jump
@@ -81,8 +90,8 @@ struct Post {
         if(!enabled) return &src;
         setupShader();
         if(!ok) return &src;
-        if(!fbo.isAllocated() || (int)fbo.getWidth() != w || (int)fbo.getHeight() != h){
-            ofFboSettings st; st.width = w; st.height = h; st.internalformat = GL_RGBA;
+        if(!fbo.isAllocated() || (int)fbo.getWidth() != w || (int)fbo.getHeight() != h || fbo.getTexture().getTextureData().glInternalFormat != internalFormat){
+            ofFboSettings st; st.width = w; st.height = h; st.internalformat = internalFormat;
             fbo.allocate(st);
         }
         fbo.begin();
@@ -92,6 +101,7 @@ struct Post {
         shader.begin();
         shader.setUniformTexture("tSource", src, 0);
         shader.setUniform2f("size", (float)w, (float)h);
+        shader.setUniform1i("stretchBlend", stretchBlend);
         shader.setUniform1f("stretchX", stretch ? std::max(0.0f, headerX) : -1.0f);
         shader.setUniform3f("hsv", hue, sat, val);
         shader.setUniform1f("opacity", useOpacity ? std::max(opacity, 0.001f) : 1.0f);
@@ -116,8 +126,8 @@ struct Post {
         if(!edges.active() || w < 1 || h < 1) return &img;
         setupFeather();
         if(!fOk) return &img;
-        if(!featherFbo.isAllocated() || (int)featherFbo.getWidth() != w || (int)featherFbo.getHeight() != h){
-            ofFboSettings st; st.width = w; st.height = h; st.internalformat = GL_RGBA;
+        if(!featherFbo.isAllocated() || (int)featherFbo.getWidth() != w || (int)featherFbo.getHeight() != h || featherFbo.getTexture().getTextureData().glInternalFormat != internalFormat){
+            ofFboSettings st; st.width = w; st.height = h; st.internalformat = internalFormat;
             featherFbo.allocate(st);
         }
         featherFbo.begin();
@@ -180,7 +190,8 @@ float edge(float d, float w, float k){
 void main(){
     vec3 c = texelFetch(tImage, ivec2(gl_FragCoord.xy), 0).rgb;
     float u = gl_FragCoord.x / size.x;
-X
+    // This FBO's fragment Y follows the top-first edge controls and CPU helper.
+    float v = gl_FragCoord.y / size.y;
     float f = edge(u, width.x, curve.x) * edge(1.0 - u, width.y, curve.y) *
               edge(v, width.z, curve.z) * edge(1.0 - v, width.w, curve.w);
     out_color = vec4(mix(target, c, f), 1.0);
@@ -204,6 +215,7 @@ void main(){ gl_Position = modelViewProjectionMatrix * position; }
 uniform sampler2D tSource;
 uniform vec2 size;
 uniform float stretchX;
+uniform int stretchBlend;
 uniform vec3 hsv;
 uniform float opacity;
 uniform vec4 levels;      // min, max, gamma
@@ -245,6 +257,12 @@ void main(){
         vec3 a = mix(colour(i), colour(i + ivec2(1, 0)), f.x);
         vec3 b = mix(colour(i + ivec2(0, 1)), colour(i + ivec2(1, 1)), f.x);
         c = mix(a, b, f.y);
+        vec3 base = colour(ivec2(gl_FragCoord.xy));
+        if(stretchBlend == 1) c = min(base + c, vec3(1.0));
+        else if(stretchBlend == 2) c = max(base, c);
+        else if(stretchBlend == 3) c = vec3(1.0) - (vec3(1.0) - base) * (vec3(1.0) - c);
+        else if(stretchBlend == 4) c = base * c;
+        else if(stretchBlend == 5) c = min(base, c);
     } else c = colour(ivec2(gl_FragCoord.xy));
     // 3. opacity
     c *= opacity;

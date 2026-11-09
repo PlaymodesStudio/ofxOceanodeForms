@@ -28,7 +28,11 @@ struct LayerFxSettings {
     float hBlur = 0, vBlur = 0;     // sigma, px
     float trailPx = 0;              // px until the tail is down to 1/1000
     float trailLevel = 0.8f;        // 0..1
-    bool any() const { return hBlur > 0.05f || vBlur > 0.05f || trailPx >= 1; }
+    float maskAmount=0, maskWidth=4, maskHeight=.25f, maskContrast=1, maskThreshold=0, maskBlur=0, maskSpeed=0;
+    int maskSeed=1; bool maskInvert=false;
+    // Musical coordinates: anchor beat at headerX, pixels per beat of this layer.
+    float maskBeat=0, maskHeaderX=0, maskPixelsPerBeat=1, maskPhase=0;
+    bool any() const { return hBlur > 0.05f || vBlur > 0.05f || trailPx >= 1 || maskAmount > 0; }
 };
 
 // The shaders (also read by tests/test_layer_fx.cpp)
@@ -103,8 +107,63 @@ void main(){
 }
 )"; }
 
+inline const char* layerFxMaskFrag(){ return R"(
+#version 410
+uniform sampler2D tex;
+uniform vec2 size;
+uniform vec4 geom; // beat at header, header x, pixels per beat, evolution phase
+uniform vec4 mask; // amount, width in beats, height fraction, contrast
+uniform float threshold;
+uniform bool invert;
+uniform uint seed;
+uniform bool maskOnly;
+out vec4 out_color;
+uint hash(uvec3 p){
+    uint h=p.x*374761393u+p.y*668265263u+p.z*2246822519u+seed*3266489917u;
+    h=(h^(h>>13u))*1274126177u; return h^(h>>16u);
+}
+float grad(ivec3 p,vec3 d){
+    uint h=hash(uvec3(p))&15u;
+    float u=h<8u?d.x:d.y;
+    float v=h<4u?d.y:(h==12u||h==14u?d.x:d.z);
+    return ((h&1u)==0u?u:-u)+((h&2u)==0u?v:-v);
+}
+float perlin(vec3 p){
+    ivec3 i=ivec3(floor(p));vec3 f=fract(p),u=f*f*f*(f*(f*6.0-15.0)+10.0);
+    float a=mix(grad(i,f),grad(i+ivec3(1,0,0),f-vec3(1,0,0)),u.x);
+    float b=mix(grad(i+ivec3(0,1,0),f-vec3(0,1,0)),grad(i+ivec3(1,1,0),f-vec3(1,1,0)),u.x);
+    float c=mix(grad(i+ivec3(0,0,1),f-vec3(0,0,1)),grad(i+ivec3(1,0,1),f-vec3(1,0,1)),u.x);
+    float d=mix(grad(i+ivec3(0,1,1),f-vec3(0,1,1)),grad(i+ivec3(1,1,1),f-vec3(1,1,1)),u.x);
+    return mix(mix(a,b,u.y),mix(c,d,u.y),u.z);
+}
+void main(){
+    vec2 p=gl_FragCoord.xy;
+    float beat=geom.x+(p.x-geom.y)/max(.0001,geom.z);
+    vec3 q=vec3(beat/max(.0001,mask.y),(p.y/size.y)/max(.0001,mask.z),geom.w)+vec3(17.31,43.73,9.19);
+    float v=pow(clamp(.5+.5*perlin(q),0.0,1.0),max(.01,mask.w));
+    if(invert)v=1.0-v;
+    if(threshold>0.0)v=step(threshold,v);
+    // Premultiplied colour and alpha must be attenuated together.
+    out_color=maskOnly?vec4(v):texelFetch(tex,ivec2(p),0)*mix(1.0,v,clamp(mask.x,0.0,1.0));
+}
+)"; }
+
+inline const char* layerFxMaskApplyFrag(){ return R"(
+#version 410
+uniform sampler2D tex;
+uniform sampler2D maskTex;
+uniform float amount;
+out vec4 out_color;
+void main(){
+    ivec2 p=ivec2(gl_FragCoord.xy);
+    float v=texelFetch(maskTex,p,0).r;
+    out_color=texelFetch(tex,p,0)*mix(1.0,v,clamp(amount,0.0,1.0));
+}
+)"; }
+
 class LayerFx {
 public:
+    GLint internalFormat = GL_RGBA; // Export opts into floating-point blur/trail intermediates.
     bool ok = false, tried = false;
 
     // Processes `f` in place
@@ -156,16 +215,39 @@ public:
             pass(mix, *dst, [&]{ mix.setUniformTexture("tex", src->getTexture(), 0); mix.setUniformTexture("orig", orig->getTexture(), 1); mix.setUniform1f("level", ofClamp(s.trailLevel, 0, 1)); });
             cur = dst;
         }
+        if(s.maskAmount > 0){
+            ofFbo* dst=other(cur);
+            bool soften=s.maskBlur>.05f;
+            if(soften){alloc(maskA,w,h);alloc(maskB,w,h);}
+            pass(noiseMask,soften?maskA:*dst,[&]{
+                noiseMask.setUniformTexture("tex",cur->getTexture(),0);
+                noiseMask.setUniform2f("size",w,h);
+                noiseMask.setUniform4f("geom",s.maskBeat,s.maskHeaderX,s.maskPixelsPerBeat,s.maskPhase);
+                noiseMask.setUniform4f("mask",s.maskAmount,s.maskWidth,s.maskHeight,s.maskContrast);
+                noiseMask.setUniform1f("threshold",s.maskThreshold);
+                noiseMask.setUniform1i("maskOnly",soften);
+                noiseMask.setUniform1i("invert",s.maskInvert);
+                glUniform1ui(glGetUniformLocation(noiseMask.getProgram(),"seed"),(GLuint)s.maskSeed);
+            });
+            if(soften){
+                // Blur the thresholded mask itself, then attenuate the untouched
+                // layer. Blurring the already-masked image would smear its notes.
+                pass(blur,maskB,[&]{blur.setUniformTexture("tex",maskA.getTexture(),0);blur.setUniform2f("size",w,h);blur.setUniform2f("dir",1,0);blur.setUniform1f("sigma",s.maskBlur);});
+                pass(blur,maskA,[&]{blur.setUniformTexture("tex",maskB.getTexture(),0);blur.setUniform2f("size",w,h);blur.setUniform2f("dir",0,1);blur.setUniform1f("sigma",s.maskBlur);});
+                pass(maskApply,*dst,[&]{maskApply.setUniformTexture("tex",cur->getTexture(),0);maskApply.setUniformTexture("maskTex",maskA.getTexture(),1);maskApply.setUniform1f("amount",s.maskAmount);});
+            }
+            cur=dst;
+        }
         if(cur != &f) copy(*cur, f, w, h);
         ofPopStyle();
     }
 
 private:
-    ofShader blur, trail, mix, plain;
-    ofFbo a, b, c;
+    ofShader blur, trail, mix, plain, noiseMask, maskApply;
+    ofFbo a, b, c, maskA, maskB;
     void alloc(ofFbo& x, int w, int h){
-        if(x.isAllocated() && (int)x.getWidth() == w && (int)x.getHeight() == h) return;
-        ofFboSettings st; st.width = w; st.height = h; st.internalformat = GL_RGBA;
+        if(x.isAllocated() && (int)x.getWidth() == w && (int)x.getHeight() == h && x.getTexture().getTextureData().glInternalFormat == internalFormat) return;
+        ofFboSettings st; st.width = w; st.height = h; st.internalformat = internalFormat;
         x.allocate(st);
     }
     void copy(ofFbo& src, ofFbo& dst, int w, int h){
@@ -192,8 +274,8 @@ uniform sampler2D tex;
 out vec4 out_color;
 void main(){ out_color = texelFetch(tex, ivec2(gl_FragCoord.xy), 0); }
 )";
-        ok = make(blur, layerFxBlurFrag()) && make(trail, layerFxTrailFrag()) && make(mix, layerFxMixFrag()) && make(plain, plainFrag);
-        if(!ok) ofLogError("Forms Box") << "layer effects shaders failed: no blur / trail";
+        ok = make(blur, layerFxBlurFrag()) && make(trail, layerFxTrailFrag()) && make(mix, layerFxMixFrag()) && make(plain, plainFrag) && make(noiseMask,layerFxMaskFrag()) && make(maskApply,layerFxMaskApplyFrag());
+        if(!ok) ofLogError("Forms Box") << "layer effects shaders failed";
     }
 };
 

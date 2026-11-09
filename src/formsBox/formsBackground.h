@@ -38,4 +38,43 @@ inline float paperOver(float ink, float coverage, float bg){
     return ink * a + bg * (1 - a);
 }
 
+inline const char* backgroundFragmentShader(){ return R"(
+#version 410
+uniform sampler2D tImage;
+uniform sampler2D tCover;
+uniform vec2 size;
+uniform float stretchX;   // < 0: no stretch
+uniform int stretchBlend;
+uniform float opacity;
+uniform vec3 bg;
+uniform int paper;
+out vec4 out_color;
+void main(){
+    vec3 c = texelFetch(tImage, ivec2(gl_FragCoord.xy), 0).rgb;
+    float a;
+    if(stretchX >= 0.0 && gl_FragCoord.x <= stretchX){
+        // the header column, interpolated as the post's stretch does
+        vec2 q = vec2(stretchX, gl_FragCoord.y) - 0.5;
+        ivec2 i = ivec2(floor(q)); vec2 f = q - floor(q);
+        ivec2 m = ivec2(size) - 1;
+        float a0 = mix(texelFetch(tCover, clamp(i, ivec2(0), m), 0).a, texelFetch(tCover, clamp(i + ivec2(1, 0), ivec2(0), m), 0).a, f.x);
+        float a1 = mix(texelFetch(tCover, clamp(i + ivec2(0, 1), ivec2(0), m), 0).a, texelFetch(tCover, clamp(i + ivec2(1, 1), ivec2(0), m), 0).a, f.x);
+        a = mix(a0, a1, f.y);
+        float base = texelFetch(tCover, ivec2(gl_FragCoord.xy), 0).a;
+        if(stretchBlend == 1) a = min(base + a, 1.0);
+        else if(stretchBlend == 2) a = max(base, a);
+        else if(stretchBlend == 3) a = 1.0 - (1.0 - base) * (1.0 - a);
+        else if(stretchBlend == 4) a = base * a;
+        else if(stretchBlend == 5) a = min(base, a);
+    } else a = texelFetch(tCover, ivec2(gl_FragCoord.xy), 0).a;
+    a = clamp(a * opacity, 0.0, 1.0);
+    if(paper == 1){
+        // paper view: lightness inverted (hue, saturation kept), as ink over the background
+        vec3 ink = clamp(c + (1.0 - max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))), 0.0, 1.0);
+        out_color = vec4(ink * a + bg * (1.0 - a), 1.0);
+    } else out_color = vec4(min(c + bg * (1.0 - a), vec3(1.0)), 1.0);
+}
+)";
+}
+
 } // namespace forms

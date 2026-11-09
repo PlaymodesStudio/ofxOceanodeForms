@@ -71,6 +71,8 @@ int main(int, char** argv){
     GLuint blur = program(vert, shaderFrom(hdr, "layerFxBlurFrag"));
     GLuint trail = program(vert, shaderFrom(hdr, "layerFxTrailFrag"));
     GLuint mix = program(vert, shaderFrom(hdr, "layerFxMixFrag"));
+    GLuint mask = program(vert, shaderFrom(hdr, "layerFxMaskFrag"));
+    GLuint maskApply = program(vert, shaderFrom(hdr,"layerFxMaskApplyFrag"));
     if(fails){ printf("shader failures\n"); return 1; }
     const int W = 400, H = 200;
     auto img = [&](std::function<int(int, int, int)> f){ std::vector<unsigned char> v(W * H * 4); for(int y = 0; y < H; y++) for(int x = 0; x < W; x++) for(int c = 0; c < 4; c++) v[(y * W + x) * 4 + c] = (unsigned char)f(x, y, c); return v; };
@@ -137,6 +139,108 @@ int main(int, char** argv){
         printf("Trail (60 px, level 0.8): at +1 %d (want %.0f), +30 %d (want %.0f), +60 %d (want %.1f); worst vs CPU %.2f levels; lit left of the dot %d, on other rows %d\n",
                o[(80 * W + 101) * 4], 0.8 * 255 * perPx, o[(80 * W + 130) * 4], 0.8 * 255 * std::pow(perPx, 30), o[(80 * W + 160) * 4], 0.8 * 255 * std::pow(perPx, 60), worst, left, otherRows);
         if(worst > 1.5 || left || otherRows){ fails++; printf("  FAIL: trail\n"); }
+    }
+    // Whole-layer mask: premultiplied colour/alpha, bypass, inversion, evolution,
+    // threshold, and attachment to musical time while the image scrolls.
+    {
+        auto src=img([](int,int,int c){return c==0?64:c==1?96:128;});
+        Target input=target(W,H,src.data()),output=target(W,H);
+        auto renderMask=[&](float amount,bool inv,float phase,float beat,float threshold,int seed){
+            run(mask,output,W,H,[&]{
+                bindTex(mask,"tex",input.t,0);
+                glUniform2f(glGetUniformLocation(mask,"size"),W,H);
+                glUniform4f(glGetUniformLocation(mask,"geom"),beat,0,50,phase);
+                glUniform4f(glGetUniformLocation(mask,"mask"),amount,4,.25,1);
+                glUniform1f(glGetUniformLocation(mask,"threshold"),threshold);
+                glUniform1i(glGetUniformLocation(mask,"invert"),inv);
+                glUniform1i(glGetUniformLocation(mask,"maskOnly"),0);
+                glUniform1ui(glGetUniformLocation(mask,"seed"),seed);
+            });return readBack(output,W,H);
+        };
+        auto bypass=renderMask(0,false,0,0,0,1);if(bypass!=src){++fails;printf("FAIL mask bypass\n");}
+        auto normal=renderMask(1,false,0,0,0,1),inverse=renderMask(1,true,0,0,0,1);
+        int worst=0;for(size_t i=0;i<normal.size();++i){
+            worst=std::max(worst,std::abs(normal[i]+inverse[i]-src[i]));
+            if(normal[i]>src[i])++fails;
+        }
+        if(worst>1){++fails;printf("FAIL mask complement\n");}
+        for(size_t i=0;i<normal.size();i+=4)if(std::abs(normal[i]*2-normal[i+3])>1 || std::abs(normal[i+1]*4-normal[i+3]*3)>4)++fails;
+        if(normal!=renderMask(1,false,0,0,0,1)){++fails;printf("FAIL mask deterministic pause\n");}
+        if(normal==renderMask(1,false,.25,0,0,1) || normal==renderMask(1,false,0,0,0,2)){++fails;printf("FAIL mask evolution / seed\n");}
+        auto shifted=renderMask(1,false,0,1,0,1);
+        for(int y=0;y<H;++y)for(int x=0;x<W-50;++x)for(int c=0;c<4;++c)
+            if(std::abs(shifted[(y*W+x)*4+c]-normal[(y*W+x+50)*4+c])>1)++fails;
+        auto hard=renderMask(1,false,0,0,.5,1);
+        for(size_t i=0;i<hard.size();++i)if(hard[i]!=0 && hard[i]!=src[i])++fails;
+        // Threshold -> mask-only Gaussian -> multiplication. A thin source line
+        // must stay thin: blurring the masked image instead would spread its ink.
+        {
+            auto line=img([](int x,int,int){return x==200?128:0;});
+            Target lineInput=target(W,H,line.data()),maskA=target(W,H),maskB=target(W,H),softened=target(W,H);
+            run(mask,maskA,W,H,[&]{
+                bindTex(mask,"tex",input.t,0);glUniform2f(glGetUniformLocation(mask,"size"),W,H);
+                glUniform4f(glGetUniformLocation(mask,"geom"),0,0,50,0);glUniform4f(glGetUniformLocation(mask,"mask"),1,4,.25,1);
+                glUniform1f(glGetUniformLocation(mask,"threshold"),.5);glUniform1i(glGetUniformLocation(mask,"invert"),0);
+                glUniform1ui(glGetUniformLocation(mask,"seed"),1);glUniform1i(glGetUniformLocation(mask,"maskOnly"),1);
+            });
+            auto hardOnly=readBack(maskA,W,H);
+            for(auto v:hardOnly)if(v!=0 && v!=255)++fails;
+            for(int axis=0;axis<2;++axis){
+                Target& in=axis==0?maskA:maskB;Target& out=axis==0?maskB:maskA;
+                run(blur,out,W,H,[&]{bindTex(blur,"tex",in.t,0);glUniform2f(glGetUniformLocation(blur,"size"),W,H);glUniform2f(glGetUniformLocation(blur,"dir"),axis==0?1:0,axis==0?0:1);glUniform1f(glGetUniformLocation(blur,"sigma"),5);});
+            }
+            run(maskApply,softened,W,H,[&]{bindTex(maskApply,"tex",lineInput.t,0);bindTex(maskApply,"maskTex",maskA.t,1);glUniform1f(glGetUniformLocation(maskApply,"amount"),1);});
+            auto soft=readBack(softened,W,H);int intermediate=0;
+            for(int y=0;y<H;++y)for(int x=0;x<W;++x){
+                int a=soft[(y*W+x)*4+3];if(x!=200 && a)++fails;
+                if(x==200 && a>0 && a<128)++intermediate;
+                for(int c=0;c<4;++c)if(soft[(y*W+x)*4+c]!=a)++fails;
+            }
+            if(intermediate==0){++fails;printf("FAIL post-threshold mask blur has no soft edges\n");}
+            run(maskApply,softened,W,H,[&]{bindTex(maskApply,"tex",lineInput.t,0);bindTex(maskApply,"maskTex",maskA.t,1);glUniform1f(glGetUniformLocation(maskApply,"amount"),0);});
+            if(readBack(softened,W,H)!=line){++fails;printf("FAIL blurred mask amount bypass\n");}
+            glUseProgram(mask);glUniform1i(glGetUniformLocation(mask,"maskOnly"),0);
+            printf("Post-threshold mask blur: %d soft edge pixels, no spread of source ink, alpha and zero-amount bypass checked\n",intermediate);
+        }
+        // Threefold resolution has pixel centres at the same musical coordinates.
+        std::vector<unsigned char> hi((size_t)W*H*9*4);
+        for(size_t i=0;i<hi.size();++i)hi[i]=src[i%4];
+        Target hiInput=target(W*3,H*3,hi.data()),hiOutput=target(W*3,H*3);
+        run(mask,hiOutput,W*3,H*3,[&]{
+            bindTex(mask,"tex",hiInput.t,0);glUniform2f(glGetUniformLocation(mask,"size"),W*3,H*3);
+            glUniform4f(glGetUniformLocation(mask,"geom"),0,0,150,0);glUniform4f(glGetUniformLocation(mask,"mask"),1,4,.25,1);
+            glUniform1f(glGetUniformLocation(mask,"threshold"),0);glUniform1i(glGetUniformLocation(mask,"invert"),0);glUniform1ui(glGetUniformLocation(mask,"seed"),1);
+        });
+        auto high=readBack(hiOutput,W*3,H*3);
+        for(int y=0;y<H;++y)for(int x=0;x<W;++x)for(int c=0;c<4;++c)
+            if(std::abs(normal[(y*W+x)*4+c]-high[((y*3+1)*(W*3)+x*3+1)*4+c])>1)++fails;
+        printf("Perlin: bypass, premultiplied alpha, inversion, deterministic pause, evolution, seed, beat-aligned scrolling and hard threshold and resolution invariance checked\n");
+    }
+    // Per-image volume boost before blur/trail and sonification, with straight
+    // input alpha and a premultiplied destination. Both texture targets compile.
+    {
+        std::string gainHeader=hdr.substr(0,hdr.find_last_of('/')+1)+"formsLayerGain.h";
+        auto gainVert=shaderFrom(gainHeader,"layerGainVert"),gainBody=shaderFrom(gainHeader,"layerGainBody");
+        GLuint boost=program(gainVert,"#version 410\nuniform sampler2D tex;\n"+gainBody);
+        program(gainVert,"#version 410\nuniform sampler2DRect tex;\n"+gainBody);
+        float uv[]={0,0,1,0,0,1,1,1};GLuint uvBuffer;glGenBuffers(1,&uvBuffer);glBindBuffer(GL_ARRAY_BUFFER,uvBuffer);glBufferData(GL_ARRAY_BUFFER,sizeof(uv),uv,GL_STATIC_DRAW);
+        glEnableVertexAttribArray(3);glVertexAttribPointer(3,2,GL_FLOAT,GL_FALSE,0,nullptr);
+        auto src=img([](int x,int,int c){return c==3?(x%3==0?64:128):c==0?64:c==1?128:255;});
+        Target input=target(W,H,src.data()),dst=target(W,H);
+        for(float gain:{.5f,1.f,1.5f,2.f}){
+            glBindFramebuffer(GL_FRAMEBUFFER,dst.fbo);glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);
+            glEnable(GL_BLEND);glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+            run(boost,dst,W,H,[&]{bindTex(boost,"tex",input.t,0);glUniform1f(glGetUniformLocation(boost,"gainAmount"),gain);});glDisable(GL_BLEND);
+            auto out=readBack(dst,W,H);
+            for(size_t i=0;i<src.size();i+=4){
+                float alpha=std::min(1.f,src[i+3]/255.f*gain);
+                for(int c=0;c<4;++c){float expected=c==3?alpha*255:std::min(alpha,src[i+c]/255.f*src[i+3]/255.f*gain)*255;
+                    if(std::abs(out[i+c]-expected)>1.5f)++fails;
+                }
+            }
+        }
+        glDisableVertexAttribArray(3);
+        printf("Layer volume: 0.5 / 1 / 1.5 / 2, saturation and premultiplied alpha checked; both texture target shaders compiled\n");
     }
     printf("%s (%d failures)\n", fails ? "FAILED" : "ALL OK", fails);
     return fails ? 1 : 0;
