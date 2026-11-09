@@ -162,6 +162,51 @@ int main(int, char** argv){
         }else{ fails++; printf("  filter: no stack / instruments to test with\n"); }
         printf("mute / solo: %d / %d checks ok\n", fOk, fAll);
     }
+    // cell edits (patchSelection) on every scene's first layer: an untouched layer changes nothing;
+    // raising a present instrument's chance keeps the page; lowering one to 0 removes exactly it;
+    // raising an absent one to 100 adds it (and nothing else); 100 -> 50 keeps about half
+    {
+        int sOk = 0, sAll = 0, halfKept = 0, halfOf = 0;
+        auto check = [&](bool c, const std::string& what){ sAll++; if(c) sOk++; else { fails++; if(fails < 20) printf("  selection: %s\n", what.c_str()); } };
+        for(auto& [name, sc] : e.scenes){
+            if(sc.layers.empty() || sc.layers[0].fixed.is_object()) continue;
+            e.manualScene = name;
+            json req = readJsonFile(e.makeRequest(true));
+            unsigned seed = req.value("seed", 0u);
+            const LayerDef& L = sc.layers[0];
+            check(patchSelection(e, req, L, L, seed, 0)["items"] == req["items"], name + ": no edit, same items");
+            auto chances = itemChances(L);
+            auto ownsAny = [&](const json& r, const std::string& item){
+                std::set<std::string> refs;
+                if(isPresetRef(item)){ auto it = e.presets.find(item); if(it != e.presets.end()) refs = itemRefs(e, it->second); }
+                for(auto& it : r["items"]) if(it.contains("method") ? it["method"] == item : refs.count(it.value("preset", std::string()))) return true;
+                return false;
+            };
+            for(auto& [item, p] : chances){
+                bool has = ownsAny(req, item);
+                LayerDef up = L, zero = L, full = L;
+                for(auto& c : up.cells) if(c.item == item) c.prob = std::min(100.0f, c.prob + 10);
+                for(auto& c : zero.cells) if(c.item == item) c.prob = 0;
+                for(auto& c : full.cells) if(c.item == item) c.prob = 100;
+                if(has){
+                    check(patchSelection(e, req, L, up, seed, 0)["items"] == req["items"], name + " " + item + ": raising a present one keeps the page");
+                    json rz = patchSelection(e, req, L, zero, seed, 0);
+                    check(!ownsAny(rz, item), name + " " + item + ": 0 removes it");
+                    if(p == 100){ LayerDef half = L; for(auto& c : half.cells) if(c.item == item) c.prob = 50; halfOf++; if(ownsAny(patchSelection(e, req, L, half, seed, 0), item)) halfKept++; }
+                }else if(p < 100){
+                    json rf = patchSelection(e, req, L, full, seed, 0);
+                    check(ownsAny(rf, item), name + " " + item + ": 100 adds it");
+                    json rest = rf; json keep = json::array();
+                    for(auto& it : rf["items"]) if(!ownsAny(json{{"items", json::array({it})}}, item)) keep.push_back(it);
+                    check(keep == req["items"], name + " " + item + ": adding leaves the rest as drawn");
+                }
+            }
+            json rl = req; rl["notegrid"] = 1; Scene s2 = sc; s2.notegrid = sc.notegrid + 7;
+            patchForScene(e, rl, s2);
+            check(rl["notegrid"] == s2.notegrid, name + ": note grid patched");
+        }
+        printf("cell edits: %d / %d checks ok; 100%% -> 50%% kept %d of %d\n", sOk, sAll, halfKept, halfOf);
+    }
     printf("%d pages, %d with an instrument edited (%d where the edited value changed the page, %d rendered, %d structural ok), %d scene patches ok, %d failures\n",
            pages, edited, differs, renders, structural, scenesOk, fails);
     return fails ? 1 : 0;
