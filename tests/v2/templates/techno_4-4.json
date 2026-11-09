@@ -1,0 +1,184 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "template": "techno 4-4",
+  "name": "techno 4-4",
+  "version": 1,
+  "bpm": 128,
+  "seed": 4401,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I:2 VI:2"
+      },
+      {
+        "name": "B",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "IV V:3"
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 8,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 8,
+      "blend": "add",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "kick",
+      "type": "kick",
+      "layer": 2,
+      "follow": "off",
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x...x...x...x...",
+        "steps": 16
+      },
+      "phrase": {
+        "length": 4
+      }
+    },
+    {
+      "id": "hats",
+      "type": "hats",
+      "layer": 3,
+      "follow": "off",
+      "seq": {
+        "mode": "probability",
+        "density": 0.7,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 8,
+        "variation": {
+          "rhythm": "mutate",
+          "pitch": "keep",
+          "amount": 0.2
+        }
+      },
+      "routings": [
+        {
+          "source": "random1",
+          "dest": "depth",
+          "amount": 1,
+          "level": "event",
+          "min": 0.5,
+          "max": 2,
+          "sourceParams": {
+            "scope": "event"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bass",
+      "type": "bass",
+      "layer": 1,
+      "follow": "chord",
+      "seq": {
+        "mode": "euclidean",
+        "hits": 5,
+        "steps": 16,
+        "pitchSource": "chord",
+        "octave": -1,
+        "noteLength": 0.4
+      },
+      "phrase": {
+        "length": 16
+      }
+    },
+    {
+      "id": "stab",
+      "type": "chords",
+      "layer": 0,
+      "follow": "chord",
+      "seq": {
+        "mode": "euclidean",
+        "hits": 3,
+        "steps": 8,
+        "pitchSource": "chord",
+        "voices": 3
+      },
+      "phrase": {
+        "length": [
+          8,
+          16
+        ],
+        "quant": "bars"
+      }
+    }
+  ],
+  "routings": [
+    {
+      "source": "macro1",
+      "dest": "hats:seq.level",
+      "amount": 1,
+      "level": "event",
+      "min": 0.3,
+      "max": 1
+    },
+    {
+      "source": "macro2",
+      "dest": "layer2.zoom",
+      "amount": 1,
+      "level": "layer",
+      "min": 8,
+      "max": 4
+    }
+  ],
+  "macros": {
+    "macro1": 0.6,
+    "macro2": 0
+  }
+}

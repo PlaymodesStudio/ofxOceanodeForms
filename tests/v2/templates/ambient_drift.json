@@ -1,0 +1,154 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "template": "ambient drift",
+  "name": "ambient drift",
+  "version": 1,
+  "bpm": 70,
+  "seed": 7001,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "major",
+          "semis": [
+            0,
+            2,
+            4,
+            5,
+            7,
+            9,
+            11
+          ],
+          "tonic": 0
+        },
+        "progression": "I:2 IV:2 vi:2 V:2"
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 32,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 32,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 16,
+      "blend": "add",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 32,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "pad",
+      "type": "chords",
+      "layer": 0,
+      "follow": "chord",
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "chord",
+        "voices": 4,
+        "voicing": "open",
+        "hold": true,
+        "level": 0.5
+      },
+      "phrase": {
+        "length": 32
+      }
+    },
+    {
+      "id": "bells",
+      "type": "bells",
+      "layer": 2,
+      "follow": "scaleOnly",
+      "seq": {
+        "mode": "probability",
+        "density": 0.15,
+        "pitchSource": "scale",
+        "range": 10
+      },
+      "phrase": {
+        "length": [
+          16,
+          32
+        ],
+        "quant": "bars",
+        "variation": {
+          "rhythm": "new",
+          "pitch": "mutate",
+          "amount": 0.4
+        }
+      }
+    },
+    {
+      "id": "mass",
+      "type": "mass",
+      "layer": 1,
+      "follow": "chord",
+      "seq": {
+        "mode": "euclidean",
+        "hits": 1,
+        "steps": 4
+      },
+      "phrase": {
+        "length": 16
+      }
+    },
+    {
+      "id": "drift",
+      "type": "texture",
+      "layer": 3,
+      "follow": "off",
+      "seq": {
+        "mode": "probability",
+        "density": 0.2,
+        "steps": 8
+      },
+      "phrase": {
+        "length": 24
+      }
+    }
+  ],
+  "routings": [
+    {
+      "source": "lfo1",
+      "dest": "bells:depth",
+      "amount": 1,
+      "level": "event",
+      "min": 0.5,
+      "max": 2,
+      "sourceParams": {
+        "shape": "sine",
+        "rateBeats": 32
+      }
+    },
+    {
+      "source": "macro1",
+      "dest": "layer0.zoom",
+      "amount": 1,
+      "level": "layer",
+      "min": 32,
+      "max": 12
+    }
+  ],
+  "macros": {
+    "macro1": 0
+  }
+}

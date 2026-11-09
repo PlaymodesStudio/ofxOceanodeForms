@@ -1,0 +1,150 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "template": "spectral drone",
+  "name": "spectral drone",
+  "version": 1,
+  "bpm": 60,
+  "seed": 6060,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {
+          "num": 4,
+          "den": 4
+        },
+        "scale": {
+          "name": "natural minor",
+          "semis": [
+            0,
+            2,
+            3,
+            5,
+            7,
+            8,
+            10
+          ],
+          "tonic": 9
+        },
+        "progression": "I:4 VI:2 V:2"
+      }
+    ]
+  },
+  "layers": [
+    {
+      "zoomBeats": 64,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 32,
+      "blend": "lighten",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 32,
+      "blend": "add",
+      "gain": 1
+    },
+    {
+      "zoomBeats": 64,
+      "blend": "lighten",
+      "gain": 1
+    }
+  ],
+  "instances": [
+    {
+      "id": "drone",
+      "type": "chords",
+      "layer": 0,
+      "follow": "pedal",
+      "seq": {
+        "mode": "pattern",
+        "pattern": "x",
+        "steps": 1,
+        "pitchSource": "chord",
+        "voices": 6,
+        "voicing": "open",
+        "hold": true,
+        "level": 0.7
+      },
+      "phrase": {
+        "length": 64
+      }
+    },
+    {
+      "id": "partials",
+      "type": "bells",
+      "layer": 2,
+      "follow": "chord",
+      "seq": {
+        "mode": "probability",
+        "density": 0.1,
+        "pitchSource": "chord",
+        "range": 12
+      },
+      "phrase": {
+        "length": [
+          16,
+          32
+        ],
+        "quant": "bars",
+        "variation": {
+          "rhythm": "mutate",
+          "pitch": "mutate",
+          "amount": 0.25
+        }
+      }
+    },
+    {
+      "id": "sweep",
+      "type": "sweep",
+      "layer": 1,
+      "follow": "off",
+      "seq": {
+        "mode": "euclidean",
+        "hits": 1,
+        "steps": 2
+      },
+      "phrase": {
+        "length": 32
+      }
+    },
+    {
+      "id": "dust",
+      "type": "hats",
+      "layer": 3,
+      "follow": "off",
+      "seq": {
+        "mode": "probability",
+        "density": 0.08,
+        "steps": 16
+      },
+      "phrase": {
+        "length": 16
+      }
+    }
+  ],
+  "routings": [
+    {
+      "source": "lane:swell",
+      "dest": "layer0.zoom",
+      "amount": 1,
+      "level": "layer",
+      "min": 64,
+      "max": 16
+    },
+    {
+      "source": "macro1",
+      "dest": "partials:depth",
+      "amount": 1,
+      "level": "phrase",
+      "min": 1,
+      "max": 3
+    }
+  ],
+  "macros": {
+    "macro1": 0
+  }
+}

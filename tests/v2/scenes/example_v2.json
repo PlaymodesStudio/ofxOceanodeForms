@@ -1,0 +1,71 @@
+{
+  "format": "espectres.scene",
+  "formatVersion": 1,
+  "name": "example v2",
+  "version": 1,
+  "bpm": 96,
+  "seed": 2027,
+  "harmony": {
+    "sections": [
+      {
+        "name": "A",
+        "meter": {"num": 4, "den": 4},
+        "scale": {"name": "natural minor", "semis": [0, 2, 3, 5, 7, 8, 10], "tonic": 9},
+        "progression": "I vi IV V",
+        "steps": [
+          {"degree": 0, "length": 4}, {"degree": 5, "length": 4},
+          {"degree": 3, "length": 4}, {"degree": 4, "length": 4}
+        ],
+        "lengthBeats": 16
+      },
+      {
+        "name": "B",
+        "meter": {"num": 7, "den": 8, "grouping": [2, 2, 3]},
+        "scale": {"name": "natural minor", "semis": [0, 2, 3, 5, 7, 8, 10], "tonic": 9},
+        "progression": "I:2 V:2",
+        "steps": [{"degree": 0, "length": 14}, {"degree": 4, "length": 14}]
+      }
+    ]
+  },
+  "layers": [
+    {"zoomBeats": 16, "blend": "lighten", "gain": 1},
+    {"zoomBeats": 16, "blend": "lighten", "gain": 1},
+    {"zoomBeats": 8, "blend": "add", "gain": 1},
+    {"zoomBeats": 16, "blend": "lighten", "gain": 1}
+  ],
+  "instances": [
+    {
+      "id": "pad", "type": "chords", "layer": 0, "follow": "chord",
+      "params": {"look": "additive", "thickness": 10, "partials": 6, "bloom": 0.5, "colourRole": "highlight"},
+      "seq": {"mode": "pattern", "pattern": "x", "steps": 1, "pitchSource": "chord", "voices": 4, "voicing": "open", "hold": true, "level": 0.6},
+      "phrase": {"length": 16}
+    },
+    {
+      "id": "bass", "type": "bass", "layer": 1, "follow": "chord",
+      "params": {"thickness": 16, "partials": 3, "colourRole": "bass"},
+      "seq": {"mode": "probability", "density": 0.45, "pitchSource": "scale", "scaleMode": "walk", "range": 5, "octave": -1, "noteLength": 0.8},
+      "phrase": {"length": 8, "variation": {"rhythm": "new", "pitch": "mutate", "amount": 0.3}}
+    },
+    {
+      "id": "kick", "type": "kick", "layer": 2, "follow": "off",
+      "params": {"cell": "taiko", "width": 0.3},
+      "seq": {"mode": "euclidean", "hits": 3, "rotation": 0},
+      "phrase": {"length": 4}
+    },
+    {
+      "id": "hats", "type": "hats", "layer": 3, "follow": "off",
+      "params": {"cell": "dot", "dotSize": 3, "scatter": 0.6},
+      "seq": {"mode": "probability", "density": 0.6, "steps": 16},
+      "phrase": {"length": 8},
+      "routings": [
+        {"source": "random1", "dest": "depth", "amount": 1, "level": "event", "min": 0.2, "max": 3,
+         "sourceParams": {"scope": "event"}}
+      ]
+    }
+  ],
+  "routings": [
+    {"source": "macro1", "dest": "hats:seq.level", "amount": 1, "level": "event", "min": 0.2, "max": 1},
+    {"source": "macro2", "dest": "layer0.zoom", "amount": 1, "level": "layer", "min": 16, "max": 4}
+  ],
+  "macros": {"macro1": 0.5, "macro2": 0}
+}
