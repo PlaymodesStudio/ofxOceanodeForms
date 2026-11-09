@@ -20,8 +20,10 @@
 #include <thread>
 #include <vector>
 #include <unordered_map>
+#include <stdexcept>
 
 namespace formsgl {
+struct RasterError : std::runtime_error { using std::runtime_error::runtime_error; };
 
 class Canvas {
 public:
@@ -68,9 +70,9 @@ public:
         px[i] = ((uint32_t)rA << 24) | ((uint32_t)rR << 16) | ((uint32_t)rG << 8) | (uint32_t)rB;
     }
     // rows split over the CPU cores (each pixel on its own: the same result as in order)
-    template<class F> static void parallelFor(size_t n, F f){
+    template<class F> static void parallelFor(size_t n, F f, size_t minWork = 200000){
         unsigned T = std::max(1u, std::min(16u, std::thread::hardware_concurrency()));
-        if(n < 200000 || T == 1){ f((size_t)0, n); return; }
+        if(n < minWork || T == 1){ f((size_t)0, n); return; }
         std::vector<std::thread> th;
         size_t step = (n + T - 1) / T;
         for(unsigned t = 0; t < T; t++){ size_t a = t * step, b = std::min(n, a + step); if(a < b) th.emplace_back([=, &f]{ f(a, b); }); }
@@ -83,6 +85,10 @@ public:
             uint32_t s = L.px[i];
             int a = (s >> 24) & 255;
             if(a == 0) continue;
+            if(layer){ // Cover silhouettes retain geometric alpha, including black ink.
+                blendLayer(i,(s>>16)&255,(s>>8)&255,s&255,a);
+                continue;
+            }
             uint32_t d = px[i];
             int nr = mul8(a, (s >> 16) & 255) + mul8(255 - a, (d >> 16) & 255);
             int ng = mul8(a, (s >> 8) & 255) + mul8(255 - a, (d >> 8) & 255);

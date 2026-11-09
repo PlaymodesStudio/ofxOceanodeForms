@@ -8,6 +8,7 @@ int main(int argc, char** argv){
     Schemas sc; sc.loadEmbedded();
     int scale = atoi(argv[1]);
     GpuEffectsCGL gpu;
+    gpu.allowApproximateNoise = true; // this benchmark explicitly measures the legacy noise shader
     if(!gpu.ok()){ printf("no GPU: %s\n", gpu.error.c_str()); return 1; }
     double tc = 0, tg = 0; long diff = 0, diff2 = 0, total = 0; int maxd = 0, n = 0;
     for(int i = 2; i < argc; i++){

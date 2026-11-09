@@ -21,6 +21,7 @@
 #pragma once
 
 #include "formsGLRandom.h"
+#include "../formsBox/formsCover.h"
 #include "formsGLCanvas.h"
 #include "formsGLSchemas.h"
 #include <nlohmann/json.hpp>
@@ -36,6 +37,14 @@
 #include <vector>
 
 namespace formsgl {
+// Echo rhythm: whole steps, conventional dotted steps, and sub-step divisions.
+inline float quantizedEchoSteps(float value){
+    value=std::clamp(value,.25f,32.f);
+    float best=std::max(1.f,std::round(value));
+    for(float candidate:{.25f,.375f,.5f,.75f,1.5f})
+        if(std::fabs(candidate-value)<std::fabs(best-value)) best=candidate;
+    return best;
+}
 
 using json = nlohmann::json;
 
@@ -77,6 +86,7 @@ public:
                 d.def = p.contains("default") ? p["default"] : json();
                 d.min = p.contains("min") ? p["min"] : json();
                 d.max = p.contains("max") ? p["max"] : json();
+                if(s.name=="hits" && d.key=="level")d.max=4;
                 if(p.contains("options")) for(auto& o : p["options"]) if(o.is_string()) d.options.push_back(o.get<std::string>());
                 s.index[d.key] = (int)s.params.size();
                 s.params.push_back(d);
@@ -156,11 +166,15 @@ inline int floorMod(int32_t a, int n){ int m = a % n; return m < 0 ? m + n : m; 
 // Effects the host can run on the GPU (formsGLGpu.h); false = not done, the CPU does it
 struct GpuEffects {
     virtual ~GpuEffects() = default;
-    virtual bool mask(std::vector<uint32_t>& px, int W, int H, const SketchPRNG& prng, float ox, float oy, float cell,
+    // Optional exact raster paths. False leaves the canvas untouched for the CPU fallback.
+    virtual bool kickSweep(Canvas&, float, float, float, float, int){ return false; }
+    // cellX / cellY: the noise cell's width and height in px (square unless maskBars sets the width)
+    virtual bool mask(std::vector<uint32_t>& px, int W, int H, const SketchPRNG& prng, float ox, float oy, float cellX, float cellY,
                       float gain, float con, float out, bool invert, float threshold, float amount, bool canvasMode) = 0;
 };
 
 struct RenderResult {
+    std::vector<formscover::Mask> covers;
     std::string error;           // "" = drawn
     std::vector<uint8_t> rgba;   // straight alpha, w x h x 4
     int w = 0, h = 0;
@@ -223,6 +237,7 @@ public:
         paleta = req.value("palette", 1);
         selsc = req.value("scale", 5);
         bpm = req.value("bpm", bpm);
+        bassDegree = req.value("bassDegree", 0);
         if(req.contains("scaleNotes")){
             std::vector<int> notes;
             for(auto& n : req["scaleNotes"]) notes.push_back(ji(n));
@@ -275,12 +290,75 @@ public:
                     clipX0 = (float)cx0; clipX1 = (float)cx1;
                     clipBar0 = (int)std::floor(b0); clipBar1 = (int)std::ceil(b1);
                 }
+                // the scene cell's volume: the item's result is blended back toward the canvas
+                // before it (1 = as drawn, 0 = not there); effects act at that strength too
+                float igain = item.contains("gain") ? std::clamp(jf(item["gain"]), 0.0f, 1.0f) : 1.0f;
+                std::vector<uint32_t> before;
+                if(igain < 1) before = c.px;
                 hasShareKey = item.contains("shareKey");
                 itemShareKey = hasShareKey ? item.value("shareKey", std::string()) : std::string();
+                // Draw the cover silhouette from an independent copy of this exact render state.
+                // It must neither include earlier instruments nor consume their random stream.
+                clearSpans.clear();
+                auto cover = formscover::read(item.value("params", json::object()));
+                if(cover.enabled && cover.amount > 0 && item.value("gen", std::string()) != "effects"){
+                    Sketch silhouette(*this);
+                    silhouette.c.allocateLayer(width, height);
+                    silhouette.gc = &silhouette.c;
+                    silhouette.gpu = nullptr; // the mask canvas belongs to this copy
+                    std::string maskError = silhouette.runGenerator(item.value("gen", std::string()), item.value("params", json::object()),
+                                            item.contains("process") ? item["process"] : json());
+                    if(maskError.empty()){
+                        formscover::Mask mask; mask.settings = cover;
+                        // Retain at most an HD mask. Max pooling keeps fine strokes at print sizes.
+                        float scale = std::min(1.f, std::min(1920.f / width, 1080.f / height));
+                        mask.w = std::max(1, (int)std::lround(width * scale)); mask.h = std::max(1, (int)std::lround(height * scale));
+                        auto alpha = std::make_shared<std::vector<uint8_t>>((size_t)mask.w * mask.h, 0);
+                        for(int y=0; y<height; ++y) for(int x=cx0; x<cx1; ++x){
+                            uint32_t v = silhouette.c.px[(size_t)y * width + x];
+                            int a = (v>>24)&255u; // geometric coverage, independent of the ink colour
+                            size_t q=(size_t)std::min(mask.h-1,y*mask.h/height)*mask.w+std::min(mask.w-1,x*mask.w/width);
+                            (*alpha)[q]=std::max((*alpha)[q],(uint8_t)std::lround(a*igain));
+                        }
+                        mask.alpha=alpha; out.covers.push_back(std::move(mask));
+                    }
+                }
                 err = runGenerator(item.value("gen", std::string()), item.value("params", json::object()),
                                    item.contains("process") ? item["process"] : json());
+                // Legacy blank/solo blocks clear their own image to black, which becomes
+                // transparent on export. Carry the block as an explicit lower-layer eraser
+                // instead of losing its solo behavior when the instrument moves layers.
+                if(err.empty() && !clearSpans.empty() && igain>0){
+                    formscover::Mask mask;mask.settings.enabled=true;
+                    mask.settings.amount=igain;
+                    mask.settings.growRight=mask.settings.growHeight=mask.settings.feather=mask.settings.release=0;
+                    float scale=std::min(1.f,std::min(1920.f/width,1080.f/height));
+                    mask.w=std::max(1,(int)std::lround(width*scale));mask.h=std::max(1,(int)std::lround(height*scale));
+                    auto alpha=std::make_shared<std::vector<uint8_t>>((size_t)mask.w*mask.h,0);
+                    for(auto& span:clearSpans){
+                        int x0=std::max(cx0,pjRound(span.first)),x1=std::min(cx1,pjRound(span.first+span.second));
+                        int a=std::clamp((int)std::floor(x0*mask.w/(double)width),0,mask.w);
+                        int b=std::clamp((int)std::ceil(x1*mask.w/(double)width),0,mask.w);
+                        for(int y=0;y<mask.h;++y)if(b>a)std::fill(alpha->begin()+y*mask.w+a,alpha->begin()+y*mask.w+b,255);
+                    }
+                    mask.alpha=alpha;out.covers.push_back(std::move(mask));
+                }
                 clipX0 = -1e9f; clipX1 = 1e9f; clipBar0 = -1; clipBar1 = -1;
                 hasShareKey = false; itemShareKey.clear();
+                if(!before.empty() && before.size() == c.px.size()){
+                    uint32_t gi = (uint32_t)std::lround(igain * 256);
+                    for(size_t q = 0; q < c.px.size(); q++){
+                        uint32_t a0 = before[q], a1 = c.px[q];
+                        if(a0 == a1) continue;
+                        uint32_t r = 0;
+                        for(int sh = 0; sh < 32; sh += 8){
+                            int v0 = (a0 >> sh) & 255, v1 = (a1 >> sh) & 255;
+                            r |= (uint32_t)std::clamp(v0 + (((v1 - v0) * (int)gi) >> 8), 0, 255) << sh;
+                        }
+                        c.px[q] = r;
+                    }
+                    ir["gain"] = igain;
+                }
                 if(!snap.empty()){
                     for(int y = 0; y < height; y++){
                         size_t row = (size_t)y * width;
@@ -294,9 +372,9 @@ public:
             out.itemResults.push_back(ir);
         }
         refScale = 1;
-        out.renderMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         out.w = w; out.h = h;
         out.rgba = c.straightAlpha();
+        out.renderMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         return out;
     }
 
@@ -310,6 +388,7 @@ private:
     SketchPRNG prng;
     int renderMillis = 0;
     int width = 1920, height = 1080;
+    std::vector<std::pair<float,float>> clearSpans;
     float UX = 1, UY = 1;
     float bars = 4, safey = 10, barSize = 480, refScale = 1;
     int notegrid = 100, paleta = 1, selsc = 5, bpm = 120, layerIdx = 0, requestSeed = 0;
@@ -318,6 +397,9 @@ private:
     int CUSTOM_SCALE = 29;
     uint32_t customColour[5] = {0xFFFFFFFF, 0xFFBF0000, 0xFFFFCC00, 0xFF00139F, 0xFF065535};
     int rootList[60] = {}, transposeList[60] = {};
+    int bassDegree = 0;
+    // scale degree idx (any sign) as semitones: past the last degree up an octave, below 0 down one
+    int degreeSemis(int idx, int len) const { int o = (int)std::floor(idx / (double)std::max(1, len)); return scale[idx - o * len] + 12 * o; }   // the scene's bass degree: bass instruments add it to the bar's degree
     float clipX0 = -1e9f, clipX1 = 1e9f;
     int clipBar0 = -1, clipBar1 = -1;
     bool hasShareKey = false;
@@ -456,7 +538,8 @@ private:
             if(!unsupportedProcess(q).empty()) return gen + ": process not ported";
             genWithProcesses(gen, p, q);
             return "";
-        } catch(std::exception& e){
+        } catch(const RasterError&){ throw; }
+        catch(std::exception& e){
             return gen + ": " + e.what();
         }
     }
@@ -677,6 +760,7 @@ private:
     }
 
     void blankUnder(float x, float w){
+        clearSpans.push_back({x,w});
         pushStyle();
         style.stroke = false;
         fillColour(0xFF000000u);
@@ -807,9 +891,25 @@ private:
             }
         }
     }
-    void taikoSweep(float x, float ystart, float w, float power){
+    void taikoSweep(float x, float ystart, float w, float power,float level=1){
+        // This routine samples directly in output pixels. Keep the stroke one pixel wide;
+        // inheriting UY (8 px at 8K) makes every sample overlap its neighbours, brightening
+        // the kick and multiplying the raster work as resolution grows.
+        float previousWeight = style.strokeWeight;
+        style.strokeWeight = 1;
         float h = height - ystart;
-        for(float i = 0; i < w; i++){
+        if(level==1 && style.stroke && gpu && (size_t)width * height >= gpuMinPixels &&
+           gpu->kickSweep(*gc, x, ystart, w, power, style.cap)){
+            style.strokeWeight = previousWeight;
+            return;
+        }
+        const bool draw = style.stroke;
+        const int cap = style.cap;
+        // Each x column writes a disjoint set of pixels, so spread the expensive per-pixel
+        // power/envelope work over the CPU cores. Avoid mutating the shared Sketch style in the
+        // workers; Canvas::point keeps the same Java2D ROUND-cap blend as point().
+        parallelRows((int)std::ceil(w), [&](int ix){
+            float i = (float)ix;
             float ph = i / w;
             float ph2 = 1 - (i / w);
             ph = pjPow(ph, 0.25f);
@@ -817,13 +917,13 @@ private:
             float y2 = (ph * h) + ystart;
             float h2 = height - y2;
             for(float j = 0; j < h2; j++){
-                float ph3 = j / h2;
-                ph3 = pjPow(ph3, power / 2);
-                strokeGray(255, ph2 * 255 * ph3);
-                point(i + x, j + y2);
-                point(i + x, j + y2);
+                float ph3 = pjPow(j / h2, power / 2);
+                float alphaFloat = (ph2 * 255 * ph3)*level;
+                int alpha = (int)(pjConstrain(alphaFloat / 255.0f, 0.0f, 1.0f) * 255);
+                if(draw) gc->point(i + x, j + y2, 255, 255, 255, alpha, cap);
             }
-        }
+        });
+        style.strokeWeight = previousWeight;
     }
     void gradblock_op(float x, float y, float w, float h, float pw, float op){
         uint32_t sc = style.strokeColor;
@@ -897,7 +997,7 @@ private:
         }else if(cell == 1){
             auto kpR = p.range("kickPowerHit");
             float kp = kpR[1] > 0 ? std::max(0.1f, (float)drawInt(kpR)) : p.f("kickPower");
-            taikoSweep(x, yTop, w, kp);
+            taikoSweep(x, yTop, w, kp,level);
         }else if(cell == 2 || cell == 3){
             KlankCell k = klankArgs(x, yTop, h, w, p.f("klankPower"));
             k.soft = cell == 3;
@@ -1282,6 +1382,7 @@ private:
         auto clearLenR = p.range("clearLength");
         int arpStart = p.i("arpStart");
         bool followRoot = p.b("followRoot"), along = p.b("transposeAlongNote");
+        int bassDeg = p.b("bass") ? bassDegree : 0;
         auto voicesR = p.range("voices"), chordStepR = p.range("chordStep"), voiceOctR = p.range("voiceOctaves"), voiceVolR = p.range("voiceVolume");
         int voicing = p.option("voicing");
         bool randomStart = p.option("chordStart") == 1;
@@ -1332,7 +1433,7 @@ private:
                 noteLen = (nx - s) * stepsize;
                 if(ovR[0] != 1 || ovR[1] != 1) noteLen *= drawIn(ovR);
             }
-            int rootPart = followRoot ? rootList[std::min(59, bar)] : 0;
+            int rootPart = (followRoot ? rootList[std::min(59, bar)] : 0) + bassDeg;
             int idx;
             if(arp == 6 && walkLoop) idx = std::max(0, rootPart + degree + walkArr[k]);
             else if(arp == 6){
@@ -1368,7 +1469,7 @@ private:
                     else vi = idx + v * inc;
                 }
                 int octs = chordStep ? cOct[k] : drawInt(voiceOctR);
-                int pitch = scale[vi % len0] + 12 * (vi / len0) + (along ? 0 : transposeList[std::min(59, bar)]) + 12 * octave + oct[k]
+                int pitch = degreeSemis(vi, len0) + (along ? 0 : transposeList[std::min(59, bar)]) + 12 * octave + oct[k]
                           + 12 * octs + (!offsets.empty() ? offsets[v] : 0);
                 float vol = volume * drawIn(voiceVolR);
                 uint32_t col = pickColour(colourMode);
@@ -2046,13 +2147,15 @@ private:
         // echo
         int er = p.i("echoRepeats");
         if(er > 0){
-            int delay = std::max(1, pjRound(drawIn(p.range("echoDelay")) * stepsize));
+            float delay = quantizedEchoSteps(drawIn(p.range("echoDelay"))) * stepsize;
             float fb = p.f("echoFeedback");
             std::vector<uint32_t> src = px;
             for(int k = 1; k <= er; k++){
                 float amp = pjPow(fb, (float)k);
                 if(amp < 0.01f) break;
-                int dx = delay * k;
+                // Round each absolute position, not one rounded delay multiplied
+                // by k: the latter drifts at widths with fractional step pixels.
+                int dx = std::max(1, pjRound(delay * k));
                 for(int y = 0; y < H; y++){
                     size_t row = (size_t)y * W;
                     for(int x = dx; x < W; x++){
@@ -2099,18 +2202,21 @@ private:
         float ma = p.f("maskAmount");
         if(ma > 0){
             float cell = std::max(1.0f, p.f("maskScale") * noteh);
+            // its length along time: maskBars bars when set (the same at any zoom), else square
+            float mbars = p.has("maskBars") ? p.f("maskBars") : 0.0f;
+            float cellX = mbars > 0 ? std::max(1.0f, mbars * barSize) : cell;
             float con = p.f("maskContrast");
             bool minv = p.b("maskInvert");
             float mth = p.f("maskThreshold");
             float mgain = p.f("maskGain"), mout = p.f("maskOut");
             float ox = random(200);
             float oy = random(200);
-            bool onGpu = gpu && (size_t)W * H >= gpuMinPixels && gpu->mask(px, W, H, prng, ox, oy, cell, mgain, con, mout, minv, mth, ma, procCanvas);
+            bool onGpu = gpu && (size_t)W * H >= gpuMinPixels && gpu->mask(px, W, H, prng, ox, oy, cellX, cell, mgain, con, mout, minv, mth, ma, procCanvas);
             if(!onGpu) parallelRows(H, [&](int y){
                 for(int x = 0; x < W; x++){
                     size_t i = (size_t)y * W + x;
                     if(level(px[i]) == 0) continue;
-                    float nv = pjConstrain(pjPow(pjConstrain(prng.perlin(ox + x / cell, oy + y / cell) * mgain, 0.0f, 1.0f), con) * mout, 0.0f, 1.0f);
+                    float nv = pjConstrain(pjPow(pjConstrain(prng.perlin(ox + x / cellX, oy + y / cell) * mgain, 0.0f, 1.0f), con) * mout, 0.0f, 1.0f);
                     if(minv) nv = 1 - nv;
                     if(mth > 0) nv = nv >= mth ? 1 : 0;
                     px[i] = scaleAlpha(px[i], 1 - ma + ma * nv);
@@ -2343,35 +2449,36 @@ private:
         }
     }
 
-    std::vector<float> massPitches(int lines, bool chord, const std::array<float, 2>& stepR, int octStart, int octRange, bool follow, int bar){
+    std::vector<float> massPitches(int lines, bool chord, const std::array<float, 2>& stepR, int octStart, int octRange, bool follow, int bar, int bassDeg = 0){
         int len = (int)scales[selsc].size();
         std::vector<float> out(lines);
-        int root = follow ? rootList[std::min(59, bar)] : 0;
+        int root = (follow ? rootList[std::min(59, bar)] : 0) + bassDeg;
         int tr = follow ? transposeList[std::min(59, bar)] : 0;
         if(chord){
             int startnote = (int)random((float)len) + root;
             int inc = stepR[0] < 1 ? std::max(0, drawInt(stepR)) : std::max(1, drawInt(stepR));
             for(int i = 0; i < lines; i++){
                 int idx = startnote + i * inc;
-                out[i] = (float)(scale[idx % len] + 12 * (idx / len) + 12 * octStart + tr);
+                out[i] = (float)(degreeSemis(idx, len) + 12 * octStart + tr);
             }
         }else{
             for(int i = 0; i < lines; i++){
                 int idx = (int)random((float)len) + root;
                 int o = (int)random((float)octRange);
-                out[i] = (float)(12 * o + scale[idx % len] + 12 * (idx / len) + 12 * octStart + tr);
+                out[i] = (float)(12 * o + degreeSemis(idx, len) + 12 * octStart + tr);
             }
         }
         return out;
     }
-    std::vector<float> massWalk(std::vector<int>& deg, int step, int octStart, int octRange, bool follow, int bar){
+    std::vector<float> massWalk(std::vector<int>& deg, int step, int octStart, int octRange, bool follow, int bar, int bassDeg = 0){
         int len = (int)scales[selsc].size();
         std::vector<float> out(deg.size());
         int tr = follow ? transposeList[std::min(59, bar)] : 0;
         for(size_t i = 0; i < deg.size(); i++){
             if(step > 0) deg[i] = std::abs(deg[i] + (int)random((float)-step, (float)(step + 1))) % len;
             else deg[i] = (int)random((float)len);
-            out[i] = (float)(scale[deg[i]] + 12 * octStart + 12 * (int)random((float)octRange) + tr);
+            int idx = deg[i] + bassDeg;
+            out[i] = (float)(degreeSemis(idx, len) + 12 * octStart + 12 * (int)random((float)octRange) + tr);
         }
         return out;
     }
@@ -2382,6 +2489,7 @@ private:
         float segBars = p.f("segmentBars"), off = p.f("segmentOffset");
         int octStart = p.i("octaveStart");
         bool follow = p.b("followHarmony");
+        int bassDeg = p.b("bass") ? bassDegree : 0;
         bool glide = p.option("curve") == 1;
         float tension = p.f("tension");
         int copies = p.i("lineCopies");
@@ -2405,8 +2513,8 @@ private:
                 float y[2];
                 int bb[2] = {b0, b1};
                 for(int e = 0; e < 2; e++){
-                    int idx = rootList[std::min(59, bb[e])];
-                    float base = (float)(scale[idx % len] + 12 * (idx / len) + 12 * octStart + (follow ? transposeList[std::min(59, bb[e])] : 0));
+                    int idx = rootList[std::min(59, bb[e])] + bassDeg;
+                    float base = (float)(degreeSemis(idx, len) + 12 * octStart + (follow ? transposeList[std::min(59, bb[e])] : 0));
                     y[e] = height - f2p(p2f(base) * hn) * noteh - safey;
                 }
                 strokeRGBA((float)red(col), (float)green(col), (float)blue(col), 255 * a);
@@ -2433,6 +2541,7 @@ private:
         auto stepR = p.range("chordStep");
         int octStart = p.i("octaveStart"), octRange = p.i("octaveRange");
         bool follow = p.b("followHarmony");
+        int bassDeg = p.b("bass") ? bassDegree : 0;
         bool glide = p.option("curve") == 1;
         float tension = p.f("tension");
         float noteh = height / (float)notegrid;
@@ -2445,8 +2554,8 @@ private:
         bool walkMode = p.option("pitchMode") == 2;
         std::vector<int> walkDeg(walkMode ? lines : 0, 0);
         std::vector<float> cur;
-        if(walkMode) cur = massWalk(walkDeg, 0, octStart, octRange, follow, 0);
-        else { bool ch = random(100) < chordC; cur = massPitches(lines, ch, stepR, octStart, octRange, follow, 0); }
+        if(walkMode) cur = massWalk(walkDeg, 0, octStart, octRange, follow, 0, bassDeg);
+        else { bool ch = random(100) < chordC; cur = massPitches(lines, ch, stepR, octStart, octRange, follow, 0, bassDeg); }
         int convN = p.i("convergeNote");
         float dashC = p.f("dashChance");
         int nSeg = std::max(1, (int)std::ceil(bars / segBars));
@@ -2459,8 +2568,8 @@ private:
             bool hold = random(100) < holdC;
             std::vector<float> next;
             if(hold) next = cur;
-            else if(walkMode) next = massWalk(walkDeg, p.i("walkStep"), octStart, octRange, follow, bar);
-            else { bool ch = random(100) < chordC; next = massPitches(lines, ch, stepR, octStart, octRange, follow, bar); }
+            else if(walkMode) next = massWalk(walkDeg, p.i("walkStep"), octStart, octRange, follow, bar, bassDeg);
+            else { bool ch = random(100) < chordC; next = massPitches(lines, ch, stepR, octStart, octRange, follow, bar, bassDeg); }
             if(!hold && conv > 0 && random(100) < conv){
                 if(convN >= 0) for(int i = 0; i < lines; i++) next[i] = (float)(convN + (follow ? transposeList[std::min(59, bar)] : 0));
                 else for(int i = 1; i < lines; i++) next[i] = next[0];
@@ -2709,8 +2818,7 @@ public:
     struct Glyph { float advance = 0; std::vector<std::vector<Canvas::Pt>> contours; };   // units: size 1 (em), y down, baseline 0
     struct GlyphFont { float ascent = 0, descent = 0; std::map<char, Glyph> glyphs; };
     std::shared_ptr<const GlyphFont> font;   // set by the host before render()
-    // the GPU for the heavy per-pixel effects, on images of at least gpuMinPixels (prints): there it
-    // trades the bit-exact match for speed; smaller images (the live ones) stay on the CPU, exact
+    // Exact GPU raster paths for large live pages. Unsupported operations retain the CPU path.
     GpuEffects* gpu = nullptr;
     size_t gpuMinPixels = (size_t)1920 * 1080 * 2;
 private:

@@ -2,12 +2,10 @@
 //  formsGLGpu.h
 //  ofxOceanodeForms — ESPECTRES 2027, Phase 7 (Forms GL Box)
 //
-//  The GPU for the heaviest per-pixel effect, the noise mask (Processes.pde), on big images (prints):
-//  its own offscreen OpenGL context (macOS CGL), made current on the thread that renders, so it never
-//  touches the app's context. The image goes up as a texture, a fragment shader computes the sketch
-//  PRNG's Perlin noise and scales each pixel, and it comes back. GPU floats (pow, the Perlin
-//  arithmetic) are not Java's: a few pixels can differ by a level from the CPU path, which is why
-//  only images above Sketch::gpuMinPixels use it.
+//  Worker GPU contexts (macOS CGL): exact integer kick rasterization and full-resolution texture
+//  uploads shared with the app. The UI polls upload fences with zero timeout and attaches finished
+//  textures directly, preserving every source pixel without a large upload on the scrolling thread.
+//  Other drawing keeps the CPU reference. The old approximate noise shader is opt-in only.
 //  The includer provides the OpenGL declarations (the app: openFrameworks' GLEW); without them (the
 //  headless tests) <OpenGL/gl3.h> is used.
 //
@@ -20,15 +18,19 @@
 #include <OpenGL/gl3.h>
 #endif
 #include <string>
+#include "formsGLExactRaster.h"
+#include "formsGLSharedTexture.h"
 
 namespace formsgl {
 
 class GpuEffectsCGL : public GpuEffects {
 public:
+    explicit GpuEffectsCGL(CGLContextObj shared = nullptr) : sharedContext(shared) {}
     ~GpuEffectsCGL() override {
         if(ctx){
             CGLContextObj prev = CGLGetCurrentContext();   // whatever thread this runs on, its context is put back
             CGLSetCurrentContext(ctx);
+            raster.release();
             if(prog) glDeleteProgram(prog);
             if(vao) glDeleteVertexArrays(1, &vao);
             if(fbo) glDeleteFramebuffers(1, &fbo);
@@ -41,8 +43,49 @@ public:
     bool ok() { return init(); }
     std::string error;
 
-    bool mask(std::vector<uint32_t>& px, int W, int H, const SketchPRNG& prng, float ox, float oy, float cell,
+    bool kickSweep(Canvas& canvas, float x, float top, float width, float power, int cap) override {
+        if(!enableExactRaster) return false;
+        if(!init()) return false;
+        CGLSetCurrentContext(ctx);
+        bool done = raster.kick(canvas, x, top, width, power, cap);
+        if(!done && !raster.error.empty()) error = raster.error;
+        return done;
+    }
+    uint64_t exactDraws() const { return raster.draws; }
+    bool enableExactRaster = true;
+    double exactPrepareMs() const { return raster.prepareMs; }
+    double exactRasterMs() const { return raster.rasterMs; }
+    std::shared_ptr<SharedTexture> upload(const std::vector<uint8_t>& rgba, int w, int h,
+                                        const std::shared_ptr<SharedTexturePool>& pool, GLenum format=GL_RGBA){
+        size_t channels=format==GL_RED?1:4;
+        if(!pool || !init() || w <= 0 || h <= 0 || rgba.size() < (size_t)w * h * channels) return {};
+        CGLSetCurrentContext(ctx);
+        GLenum target = pool->target();
+        GLint maxTexture = 0;
+        glGetIntegerv(target == GL_TEXTURE_RECTANGLE ? GL_MAX_RECTANGLE_TEXTURE_SIZE : GL_MAX_TEXTURE_SIZE, &maxTexture);
+        if(w > maxTexture || h > maxTexture) return {};
+        auto t = std::make_shared<SharedTexture>(); t->pool = pool; t->w = w; t->h = h; t->target = target;
+        t->internalFormat=format==GL_RED?GL_R8:GL_RGBA8;
+        glGenTextures(1, &t->id);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(target, t->id);
+        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0); glPixelStorei(GL_UNPACK_ALIGNMENT, channels==1?1:4);
+        glTexImage2D(target, 0, t->internalFormat, w, h, 0, format, GL_UNSIGNED_BYTE, rgba.data());
+        if(glGetError() != GL_NO_ERROR){ error = "shared texture upload failed"; return {}; }
+        t->fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        if(!t->fence){ error = "shared texture fence allocation failed"; return {}; }
+        glFlush(); // make the texture and fence visible to the app's context
+        return t;
+    }
+
+    bool mask(std::vector<uint32_t>& px, int W, int H, const SketchPRNG& prng, float ox, float oy, float cellX, float cellY,
               float gain, float con, float out, bool invert, float threshold, float amount, bool canvasMode) override {
+        // The historical shader's floating-point noise differs by up to a few levels.
+        // Exact rendering always retains the CPU noise path.
+        if(!allowApproximateNoise) return false;
         if(!init()) return false;
         CGLSetCurrentContext(ctx);
         GLint maxTex = 0; glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
@@ -63,7 +106,7 @@ public:
         glUniform1fv(glGetUniformLocation(prog, "gy"), 16, gy);
         glUniform1f(glGetUniformLocation(prog, "bound"), prng.bound());
         glUniform2f(glGetUniformLocation(prog, "o"), ox, oy);
-        glUniform1f(glGetUniformLocation(prog, "cell"), cell);
+        glUniform2f(glGetUniformLocation(prog, "cell"), cellX, cellY);
         glUniform4f(glGetUniformLocation(prog, "shape"), gain, con, out, threshold);
         glUniform1f(glGetUniformLocation(prog, "amount"), amount);
         glUniform1i(glGetUniformLocation(prog, "invert"), invert ? 1 : 0);
@@ -97,6 +140,11 @@ public:
     }
 
 private:
+    CGLContextObj sharedContext = nullptr;
+public:
+    bool allowApproximateNoise = false;
+private:
+    ExactRasterGL raster;
     CGLContextObj ctx = nullptr;
     GLuint prog = 0, vao = 0, fbo = 0, texIn = 0, texOut = 0, texPerm = 0;
     bool tried = false, good = false;
@@ -106,8 +154,12 @@ private:
         tried = true;
         CGLPixelFormatAttribute attrs[] = {kCGLPFAOpenGLProfile, (CGLPixelFormatAttribute)kCGLOGLPVersion_3_2_Core, kCGLPFAAccelerated, (CGLPixelFormatAttribute)0};
         CGLPixelFormatObj pf = nullptr; GLint n = 0;
-        if(CGLChoosePixelFormat(attrs, &pf, &n) != kCGLNoError || !pf){ error = "no pixel format"; return false; }
-        CGLError ce = CGLCreateContext(pf, nullptr, &ctx);
+        if(sharedContext){
+            pf = CGLGetPixelFormat(sharedContext);
+            if(pf) CGLRetainPixelFormat(pf);
+        }else if(CGLChoosePixelFormat(attrs, &pf, &n) != kCGLNoError) pf = nullptr;
+        if(!pf){ error = "no pixel format"; return false; }
+        CGLError ce = CGLCreateContext(pf, sharedContext, &ctx);
         CGLDestroyPixelFormat(pf);
         if(ce != kCGLNoError || !ctx){ error = "no context"; return false; }
         CGLSetCurrentContext(ctx);
@@ -122,7 +174,7 @@ uniform float gx[16];
 uniform float gy[16];
 uniform float bound;
 uniform vec2 o;
-uniform float cell;
+uniform vec2 cell;      // width, height of a noise cell (px)
 uniform vec4 shape;    // gain, contrast, out, threshold
 uniform float amount;
 uniform int invert;
@@ -150,7 +202,7 @@ void main(){
     uint lvl = canvasMode == 1 ? max(c.b, max(c.g, c.r)) : c.a;
     if(lvl == 0u){ color = c; return; }
     float x = float(q.x), y = float(q.y + rowOffset);
-    float nv = clamp(pow(clamp(perlin(o.x + x / cell, o.y + y / cell) * shape.x, 0.0, 1.0), shape.y) * shape.z, 0.0, 1.0);
+    float nv = clamp(pow(clamp(perlin(o.x + x / cell.x, o.y + y / cell.y) * shape.x, 0.0, 1.0), shape.y) * shape.z, 0.0, 1.0);
     if(invert == 1) nv = 1.0 - nv;
     if(shape.w > 0.0) nv = nv >= shape.w ? 1.0 : 0.0;
     float k = 1.0 - amount + amount * nv;
