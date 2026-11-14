@@ -505,14 +505,26 @@ private:
             if(rc == recipes.end() || !forms::usesPreset(*rc->second, refs)) continue;
             unsigned seed = (unsigned)im->seed ^ (unsigned)std::hash<std::string>()(ref);
             auto req=*rc->second;auto sit=engine.scenes.find(im->scene);int li=req.value("layer",1)-1;
+            // A scene with its own version of this instrument sees the edit through it: the shared
+            // edit acts only where the scene left the setting alone.
+            forms::Preset b=before,a=after;
+            const forms::Scene* own=sit!=engine.scenes.end() ? &sit->second : nullptr;
+            if(own && own->instruments.is_object()){
+                auto d=own->instruments.find(ref);
+                if(d!=own->instruments.end()){
+                    b=forms::presetWithOwn(before,*d);a=forms::presetWithOwn(after,*d);
+                    if(forms::changedKeys(b,a).empty()) continue;   // the scene's version hides the whole edit
+                }
+            }
+            forms::Engine::OwnScope ownScope(engine,own);
             if(sit!=engine.scenes.end() && li>=0 && li<(int)sit->second.layers.size()){
                 formsgl::json regular=formsgl::json::array();
                 for(auto& item:req.value("items",formsgl::json::array()))if(!item.value("layerEffect",false))regular.push_back(item);
                 req["items"]=std::move(regular);
-                if(forms::usesPreset(req,refs))req=forms::patchForPreset(engine,req,before,after,seed);
+                if(forms::usesPreset(req,refs))req=forms::patchForPreset(engine,req,b,a,seed);
                 engine.applyLayerEffect(req,sit->second.layers[li],req.value("seed",0u));
                 forms::Engine::globalEffectsLast(req);
-            }else req=forms::patchForPreset(engine,req,before,after,seed);
+            }else req=forms::patchForPreset(engine,req,b,a,seed);
             submitImmediate(req);
             n++;
         }
@@ -523,6 +535,29 @@ private:
     void immediateSceneEdit(const std::string& name, const forms::Scene& before, const forms::Scene& after){
         std::set<std::string> done;
         int n = 0;
+        forms::Engine::OwnScope ownScope(engine, &after);   // this scene's own versions of its instruments
+        // the scene's own instrument versions that this edit changed (made, changed or reverted):
+        // each as the scene played it before and plays it now
+        struct OwnEdit { std::string ref; forms::Preset b, a; std::set<std::string> refs; };
+        std::vector<OwnEdit> ownEdits;
+        {
+            std::set<std::string> keys;
+            if(before.instruments.is_object()) for(auto& [k, v] : before.instruments.items()) keys.insert(k);
+            if(after.instruments.is_object()) for(auto& [k, v] : after.instruments.items()) keys.insert(k);
+            for(auto& k : keys){
+                auto lib = engine.presets.find(k);
+                if(lib == engine.presets.end()) continue;
+                formsgl::json db = before.instruments.is_object() ? before.instruments.value(k, formsgl::json::object()) : formsgl::json::object();
+                formsgl::json da = after.instruments.is_object() ? after.instruments.value(k, formsgl::json::object()) : formsgl::json::object();
+                if(db == da) continue;
+                OwnEdit e; e.ref = k;
+                e.b = forms::presetWithOwn(lib->second, db); e.a = forms::presetWithOwn(lib->second, da);
+                if(forms::changedKeys(e.b, e.a).empty()) continue;
+                e.refs = forms::itemRefs(engine, e.b);
+                for(auto& r : forms::itemRefs(engine, e.a)) e.refs.insert(r);
+                ownEdits.push_back(std::move(e));
+            }
+        }
         for(auto& im : stagePages()){
             if(im->scene != name || !done.insert(im->id).second) continue;
             auto rc = recipes.find(im->id);
@@ -534,6 +569,17 @@ private:
             if(li >= 0 && li < (int)before.layers.size() && li < (int)after.layers.size() && !after.layers[li].fixed.is_object()){
                 formsgl::json sel = forms::patchSelection(engine, req, before.layers[li], after.layers[li], req.value("seed", 0u), li);
                 if(sel["items"] != req["items"]){ req = sel; changed = true; }
+            }
+            if(li>=0 && li<(int)after.layers.size()) for(auto& oe : ownEdits){
+                // the layer effect's items are drawn anew below; patch the instruments' own items only
+                formsgl::json own = req;
+                formsgl::json regular = formsgl::json::array();
+                for(auto& item : req.value("items", formsgl::json::array())) if(!item.value("layerEffect", false)) regular.push_back(item);
+                own["items"] = regular;
+                if(!forms::usesPreset(own, oe.refs)) continue;
+                unsigned seed = (unsigned)im->seed ^ (unsigned)std::hash<std::string>()(oe.ref);
+                own = forms::patchForPreset(engine, own, oe.b, oe.a, seed);
+                if(own["items"] != regular){ req["items"] = own["items"]; changed = true; }
             }
             if(li>=0 && li<(int)after.layers.size()){
                 // Also move an existing layer effect back to the end after cell additions.

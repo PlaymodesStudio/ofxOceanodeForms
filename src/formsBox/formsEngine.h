@@ -587,6 +587,38 @@ public:
         return it;
     }
 
+    // ---- a scene's own version of its instruments (Scene::instruments) ----
+    // While a scene is set here (OwnScope), every instrument looked up for a request is that scene's
+    // version: the shared instrument with the scene's changes laid over it. Outside (the library,
+    // its previews and thumbnails, auditions) the shared instrument is used.
+    const Scene* ownScene = nullptr;
+    mutable std::map<std::string, Preset> ownCache;
+    struct OwnScope {
+        Engine& e; const Scene* prev;
+        OwnScope(Engine& en, const Scene* s) : e(en), prev(en.ownScene) { e.ownScene = s; e.ownCache.clear(); }
+        ~OwnScope(){ e.ownScene = prev; e.ownCache.clear(); }
+        OwnScope(const OwnScope&) = delete;
+        OwnScope& operator=(const OwnScope&) = delete;
+    };
+    const Preset* presetFor(const std::string& ref) const {
+        auto it = presets.find(ref);
+        if(it == presets.end()) return nullptr;
+        if(!ownScene || !ownScene->instruments.is_object()) return &it->second;
+        auto d = ownScene->instruments.find(ref);
+        if(d == ownScene->instruments.end()) return &it->second;
+        auto c = ownCache.find(ref);
+        if(c == ownCache.end()) c = ownCache.emplace(ref, presetWithOwn(it->second, *d)).first;
+        return &c->second;
+    }
+    // the instrument as a scene plays it (the shared one where the scene has no version of its own)
+    Preset effectivePreset(const Scene& s, const std::string& ref) const {
+        auto it = presets.find(ref);
+        if(it == presets.end()) return Preset();
+        if(!s.instruments.is_object()) return it->second;
+        auto d = s.instruments.find(ref);
+        return d == s.instruments.end() ? it->second : presetWithOwn(it->second, *d);
+    }
+
     void savePreset(const Preset& p){
         writeJsonAtomic(presetPath(p), presetFile(p));
         presets[p.ref()] = p;
@@ -616,6 +648,7 @@ public:
             for(auto& l : sc.layers) for(auto& c : l.cells) if(c.item == ref){ c.item = p.ref(); changed = true; }
             for(auto& l:sc.layers)if(l.effectPreset==ref){l.effectPreset=p.ref();changed=true;}
             for(auto& g:sc.globalEffects)if(g==ref){g=p.ref();changed=true;}
+            if(sc.instruments.is_object() && sc.instruments.contains(ref)){ sc.instruments[p.ref()] = sc.instruments[ref]; sc.instruments.erase(ref); changed = true; }   // the scene's own version follows
             if(changed) saveScene(sc);
         }
         // stacks that play it as a layer follow too
@@ -1119,6 +1152,7 @@ public:
         // same random numbers as before
         json jitems = json::array();
         itemBars = span;
+        OwnScope ownScope(*this, previewItem ? nullptr : s);   // the scene's own versions of its instruments (a library preview: the shared one)
         auto genItem = [&](const Preset& pr){
             for(auto& it : presetItems(pr)) jitems.push_back(it);
         };
@@ -1127,10 +1161,10 @@ public:
         else for(size_t ii = 0; ii < items.size(); ii++){
             auto& it = items[ii];
             if(!isPresetRef(it)){ jitems.push_back({{"method", it}}); continue; }
-            auto pi = presets.find(it);
-            if(pi == presets.end()){ note("preset " + it + " not found"); continue; }
+            const Preset* pi = presetFor(it);
+            if(!pi){ note("preset " + it + " not found"); continue; }
             size_t first = jitems.size();
-            genItem(pi->second);
+            genItem(*pi);
             float g = ii < itemGains.size() ? itemGains[ii] : 1.f;
             if(g != 1) for(size_t k = first; k < jitems.size(); k++) jitems[k]["gain"] = g;   // the cell's volume (renderer)
         }
@@ -1792,15 +1826,15 @@ public:
                 if(l.contains("preset")){
                     // a layer that plays another preset
                     std::string r = l.value("preset", std::string());
-                    auto pi = presets.find(r);
+                    const Preset* pi = presetFor(r);
                     if(r == pr.ref()){ note("stack " + pr.ref() + " includes itself"); continue; }
-                    if(pi == presets.end()){ note("layer preset " + r + " not found (" + pr.ref() + ")"); continue; }
+                    if(!pi){ note("layer preset " + r + " not found (" + pr.ref() + ")"); continue; }
                     // order, as for plain layers: the layer's "params", then the stack's shared
                     // pick, then the layer's own "linked"
                     json sh = (l.contains("params") && l["params"].is_object()) ? l["params"] : json::object();
                     for(auto& [k, v] : sharedHere.items()) sh[k] = v;
                     if(l.contains("linked")){ json pick = json::object(); applyLinked(pick, l["linked"], rng); for(auto& [k, v] : pick.items()) sh[k] = v; }
-                    for(auto& it : presetItems(pi->second, depth + 1, sh, clipFrom, clipTo)) out.push_back(it);
+                    for(auto& it : presetItems(*pi, depth + 1, sh, clipFrom, clipTo)) out.push_back(it);
                     continue;
                 }
                 Preset layer;
@@ -1872,12 +1906,12 @@ public:
     void applyLayerEffect(json& req,const LayerDef& layer,unsigned seed){
         json items=json::array();
         for(auto& it:req.value("items",json::array()))if(!it.value("layerEffect",false))items.push_back(it);
-        auto found=presets.find(layer.effectPreset);
+        const Preset* found=presetFor(layer.effectPreset);
         if(layer.fixed.is_object() && layer.fixed.value("layerEffectPreset",std::string())==layer.effectPreset){
             for(auto& it:layer.fixed.value("items",json::array()))if(it.value("layerEffect",false))items.push_back(it);
-        }else if(found!=presets.end() && onlyEffects(found->second)){
+        }else if(found && onlyEffects(*found)){
             double savedBars=itemBars;itemBars=layerBars(layer);
-            auto fx=presetItemsSeeded(found->second,seed ^ 0x4c465830u);itemBars=savedBars;
+            auto fx=presetItemsSeeded(*found,seed ^ 0x4c465830u);itemBars=savedBars;
             for(auto it:fx){it["layerEffect"]=true;items.push_back(std::move(it));}
         }
         req["items"]=std::move(items);req["layerEffectPreset"]=layer.effectPreset;
@@ -1902,12 +1936,12 @@ public:
         // effect in step (the processes are anchored on the image's own bars): it gets none
         bool onGrid = std::fabs(startBar - std::round(startBar)) < 1e-6 && std::fabs(bars - std::round(bars)) < 1e-6;
         if(onGrid) for(auto& ref : s.globalEffects){
-            auto found = presets.find(ref);
-            if(found == presets.end() || !onlyEffects(found->second)) continue;
+            const Preset* found = presetFor(ref);
+            if(!found || !onlyEffects(*found)) continue;
             for(int b = 0; b < nb; b++){
                 unsigned seed = globalEffectSeed(s.name, ref, barIndex(startBar + b));
                 double savedBars = itemBars; itemBars = 1;
-                auto fx = presetItemsSeeded(found->second, seed);
+                auto fx = presetItemsSeeded(*found, seed);
                 itemBars = savedBars;
                 for(auto it : fx){
                     double c0 = 0, c1 = 1;

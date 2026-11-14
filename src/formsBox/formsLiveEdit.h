@@ -58,8 +58,8 @@ inline void collectRefs(const Engine& e, const Preset& p, std::set<std::string>&
     for(auto& l : p.layers){
         std::string r = l.is_object() ? l.value("preset", std::string()) : std::string();
         if(r.empty() || out.count(r)) continue;
-        auto it = e.presets.find(r);
-        if(it != e.presets.end()) collectRefs(e, it->second, out, depth + 1);
+        const Preset* np = e.presetFor(r);   // a scene's own version, when one is set (Engine::OwnScope)
+        if(np) collectRefs(e, *np, out, depth + 1);
     }
 }
 inline std::set<std::string> itemRefs(const Engine& e, const Preset& p){ std::set<std::string> s; collectRefs(e, p, s); return s; }
@@ -254,9 +254,9 @@ inline json patchSelection(Engine& e, const json& recipe, const LayerDef& before
             out.push_back(std::move(method));
             continue;
         }
-        auto pi = e.presets.find(item);
-        if(pi == e.presets.end()) continue;
-        for(auto x : e.presetItemsSeeded(pi->second, (unsigned)(stableUnit(pageSeed, layer, item) * 4294967295.0))){
+        const Preset* pi = e.presetFor(item);
+        if(!pi) continue;
+        for(auto x : e.presetItemsSeeded(*pi, (unsigned)(stableUnit(pageSeed, layer, item) * 4294967295.0))){
             if(gain != 1.0f) x["gain"] = gain;
             out.push_back(std::move(x));
         }

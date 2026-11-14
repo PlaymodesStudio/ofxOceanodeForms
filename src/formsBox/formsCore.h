@@ -199,6 +199,10 @@ struct Scene {
     // resolution of the effect (its own seed), so layers of different lengths get the same effect at
     // the same moment.
     std::vector<std::string> globalEffects;
+    // This scene's own version of some instruments: per instrument ref, only what differs from the
+    // shared instrument (presetOwnDiff / presetWithOwn in formsGenerators.h). Laid over the shared
+    // one whenever this scene asks for images; the instrument's file and the other scenes never see it.
+    json instruments = json::object();
     std::vector<LayerDef> layers;
     json performance = json::object();
     std::shared_ptr<const formskick::Asset> kickSample;
@@ -261,6 +265,7 @@ inline void to_json(json& j, const Scene& s){
     if(s.bassDegree) j["bassDegree"] = s.bassDegree;
     if(s.lineWeight != 1) j["lineWeight"] = s.lineWeight;
     if(!s.globalEffects.empty()) j["globalEffects"] = s.globalEffects;
+    if(s.instruments.is_object() && !s.instruments.empty()) j["instruments"] = s.instruments;   // only when there are any: scenes stay as they were
     if(s.kickSample) j["kickSampleAsset"]=formskick::serialize(*s.kickSample);
 }
 inline void from_json(const json& j, Scene& s){
@@ -276,6 +281,7 @@ inline void from_json(const json& j, Scene& s){
     s.bassDegree = std::clamp(j.value("bassDegree", 0), 0, 11);
     s.lineWeight = std::clamp(j.value("lineWeight", 1.0f), 0.1f, 16.0f);
     s.globalEffects = j.value("globalEffects", std::vector<std::string>());
+    s.instruments = (j.contains("instruments") && j["instruments"].is_object()) ? j["instruments"] : json::object();
     s.layers = j.value("layers", std::vector<LayerDef>());
     s.performance = j.value("performance", json::object());
     s.kickSample=j.contains("kickSampleAsset")?formskick::read(j["kickSampleAsset"]):nullptr;

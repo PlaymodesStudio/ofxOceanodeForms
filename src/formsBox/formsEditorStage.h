@@ -395,12 +395,13 @@ inline bool Editor::drawLayerInstruments(Scene& s){
         bool beyond = ci >= inRows;
         bool off = c.prob <= 0 || beyond;
         if(off) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.45f);
-        std::string lab = (isPreset ? pi->second.name : shortName(c.item)) + (dirtyPresets.count(c.item) ? "  *" : "")
+        const bool ownVersion = isPreset && s.instruments.is_object() && s.instruments.contains(c.item);   // this scene plays its own version
+        std::string lab = (isPreset ? pi->second.name : shortName(c.item)) + (ownVersion ? "  (scene version)" : "") + (dirtyPresets.count(c.item) ? "  *" : "")
                         + (c.group > 0 ? "  G" + ofToString(c.group) : std::string()) + (beyond ? "  (beyond Rows)" : "");
         float selW = std::max(20.0f, ImGui::GetContentRegionAvail().x - 2 * dragW - xW - 3 * gap);
         ImGui::PushStyleColor(ImGuiCol_Text, isPreset ? genColour(pi->second.gen) : ImVec4(0.75f, 0.75f, 0.75f, 1));
         if(ImGui::Selectable((lab + "##row").c_str(), isPreset && sceneInstrumentEditRef == c.item, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap, ImVec2(selW, 0)))
-            if(isPreset && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) sceneInstrumentEditRef = c.item;
+            if(isPreset && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openInstrument(c.item, s.name);
         ImGui::PopStyleColor();
         if(ImGui::BeginDragDropSource()){
             ImGui::SetDragDropPayload("FORMS_CELL_ORDER", &ci, sizeof ci);
@@ -512,9 +513,9 @@ inline bool Editor::drawGlobalEffects(Scene& s){
         ImGui::PushID(i);
         const std::string& ref = s.globalEffects[i];
         bool known = engine->presets.count(ref) > 0;
-        if(ImGui::SmallButton((shortName(ref) + (known ? "" : " (missing)")).c_str()) && known) sceneInstrumentEditRef = ref;
+        if(ImGui::SmallButton((shortName(ref) + (known ? "" : " (missing)") + (s.instruments.is_object() && s.instruments.contains(ref) ? " (scene version)" : "")).c_str()) && known) openInstrument(ref, s.name);
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Click: edit this effect (its own window)");
-        instrumentMenu("##instMenu", ref);
+        instrumentMenu("##instMenu", ref, s.name);
         ImGui::SameLine(0, 1 * zz);
         if(ImGui::SmallButton("x")) removeAt = i;
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Take it off every layer");
@@ -547,7 +548,9 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
     float zz = z();
     bool canFollow = !playing.empty() && engine->scenes.count(playing) > 0;
     // a scene selected elsewhere since the last frame (New, the Gallery, the Assistant): stay on it
-    if(selected != stageSelectedSeen && !selected.empty() && selected != playing) stageFollow = false;
+    // (not the first time the editor is drawn: the scene it starts on was chosen by nobody, so it must
+    // not switch following off; the editor then opens on the playing scene)
+    if(!stageSelectedSeen.empty() && selected != stageSelectedSeen && !selected.empty() && selected != playing) stageFollow = false;
     if(stageFollow && canFollow) selected = playing;
     if(!selected.empty() && !engine->scenes.count(selected)) selected.clear();
     if(selected.empty() && !engine->scenes.empty()) selected = engine->scenes.begin()->first;

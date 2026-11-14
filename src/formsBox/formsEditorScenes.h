@@ -737,7 +737,7 @@ inline bool Editor::drawCellCards(Scene& s, LayerDef& l){
             openPicker = true;
         };
         if(clicked){
-            if(engine->presets.count(c.item)) sceneInstrumentEditRef = c.item;
+            if(engine->presets.count(c.item)) openInstrument(c.item, s.name);
             else replaceHere();
         }
         if(ImGui::IsItemHovered()) methodTooltip(c.item);
@@ -827,7 +827,24 @@ inline void Editor::drawSceneInstrumentEditor(std::string ref){
     // which otherwise collapses to a few pixels here. The scene scrolls to reveal this
     // panel, and long parameter groups scroll inside their tab as in Instruments.
     ImGui::BeginChild("##sceneInstrumentEditor", ImVec2(0, 0));   // fills its floating window
-    Preset& p = engine->presets[ref];
+    // Opened from a scene: the window edits that scene's own version of the instrument. The edits
+    // are kept in the scene (Scene::instruments: only what differs) and saved with it; the shared
+    // instrument and the other scenes stay as they are.
+    Scene* own = nullptr;
+    if(!sceneInstrumentEditScene.empty()){
+        auto si = engine->scenes.find(sceneInstrumentEditScene);
+        if(si != engine->scenes.end()) own = &si->second; else sceneInstrumentEditScene.clear();
+    }
+    Preset work;
+    if(own) work = engine->effectivePreset(*own, ref);
+    Preset& p = own ? work : engine->presets[ref];
+    bool ownEdited = false;
+    auto touch = [&]{ if(own) ownEdited = true; else dirtyPresets.insert(ref); };
+    auto storeOwn = [&]{   // the working copy back into the scene, as its difference from the shared instrument
+        json d = presetOwnDiff(engine->presets[ref], work);
+        if(d.empty()) own->instruments.erase(ref); else own->instruments[ref] = d;
+        dirty.insert(own->name);
+    };
     const GenDef* g = engine->findGen(p.gen);
     ImGui::TextColored(genColour(p.gen), "%s", p.name.c_str());
     ImGui::SameLine();
@@ -840,28 +857,55 @@ inline void Editor::drawSceneInstrumentEditor(std::string ref){
     if(ImGui::SmallButton("Show in Library##sceneInstrumentEditor")){ selPreset = ref; composeMode = 1; showTab = "Compose"; }
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("The full instrument page: preview, audition, stack layers, notes");
     ImGui::SameLine();
-    bool isDirty = dirtyPresets.count(ref) > 0;
-    if(ImGui::SmallButton(isDirty ? "Save *##sceneInstrumentEditor" : "Save##sceneInstrumentEditor")){
-        engine->savePreset(p);
-        dirtyPresets.erase(ref);
+    if(own){
+        const bool has = own->instruments.is_object() && own->instruments.contains(ref);
+        ImGui::BeginDisabled(!has);
+        if(ImGui::SmallButton("Save to instrument##sceneInstrumentEditor")){
+            engine->savePreset(work);            // the scene's version becomes the shared instrument (its file)
+            dirtyPresets.erase(ref);
+            own->instruments.erase(ref);
+            dirty.insert(own->name);
+        }
+        if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Make this scene's version the shared instrument and save it to the instrument's file:\nevery scene that uses the instrument then plays it like this.");
+        ImGui::SameLine();
+        if(ImGui::SmallButton("Revert to instrument##sceneInstrumentEditor")){
+            own->instruments.erase(ref);         // this scene plays the shared instrument again
+            dirty.insert(own->name);
+            work = engine->presets[ref];
+        }
+        if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Drop this scene's changes: the scene plays the shared instrument again.");
+        ImGui::EndDisabled();
+    }else{
+        bool isDirty = dirtyPresets.count(ref) > 0;
+        if(ImGui::SmallButton(isDirty ? "Save *##sceneInstrumentEditor" : "Save##sceneInstrumentEditor")){
+            engine->savePreset(p);
+            dirtyPresets.erase(ref);
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!isDirty);
+        if(ImGui::SmallButton("Revert##sceneInstrumentEditor")){
+            try { engine->presets[ref] = Engine::readPresetFile(engine->presetPath(p)); dirtyPresets.erase(ref); }
+            catch(std::exception& e){ engine->note("revert " + ref + ": " + e.what()); }
+        }
+        ImGui::EndDisabled();
     }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!isDirty);
-    if(ImGui::SmallButton("Revert##sceneInstrumentEditor")){
-        try { engine->presets[ref] = Engine::readPresetFile(engine->presetPath(p)); dirtyPresets.erase(ref); }
-        catch(std::exception& e){ engine->note("revert " + ref + ": " + e.what()); }
-    }
-    ImGui::EndDisabled();
     if(immediateSwitch){
         ImGui::SameLine();
         ImGui::Checkbox("Immediate##sceneInstrument",immediateSwitch);
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Redraw playing and queued pages after instrument edits, including nested stack instruments. No Save needed to hear the edit.");
     }
+    if(own){
+        const bool has = own->instruments.is_object() && own->instruments.contains(ref);
+        if(has) ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.35f, 1), "Edited in scene %s: %d setting%s differ from the shared instrument.", own->name.c_str(),
+                                   presetOwnCount(own->instruments[ref]), presetOwnCount(own->instruments[ref]) == 1 ? "" : "s");
+        else ImGui::TextDisabled("Scene %s plays the shared instrument.", own->name.c_str());
+        ImGui::TextDisabled("Edits here stay in this scene and are saved with the scene; the other scenes do not change.");
+    }
     ImGui::Separator();
     if(p.isStack()){
-        if(drawStackBlocking(p.params)) dirtyPresets.insert(ref);
+        if(drawStackBlocking(p.params)) touch();
         if(ImGui::CollapsingHeader("Cover (whole instrument)"))
-            if(drawCoverParams(p.params)) dirtyPresets.insert(ref);
+            if(drawCoverParams(p.params)) touch();
         if(sceneStackFor != ref){ sceneStackFor = ref; sceneStackLayer = 0; }
         for(int i = 0; i < (int)p.layers.size(); i++){
             if(i) ImGui::SameLine();
@@ -882,14 +926,14 @@ inline void Editor::drawSceneInstrumentEditor(std::string ref){
                 if(layerGen){
                     json params = layer.contains("params") && layer["params"].is_object() ? layer["params"] : json::object();
                     ImGui::TextDisabled("Layer %d · %s", sceneStackLayer + 1, layerGen->label.c_str());
-                    if(drawParamTabs(*layerGen, params)){ layer["params"] = params; dirtyPresets.insert(ref); }
+                    if(drawParamTabs(*layerGen, params)){ layer["params"] = params; touch(); }
                 }else ImGui::TextDisabled("Unknown layer generator: %s", genName.c_str());
             }
         }
     }else if(g){
         ImGui::TextDisabled("Editing %s", ref.c_str());
-        if(drawParamTabs(*g, p.params)) dirtyPresets.insert(ref);
-        if(ImGui::CollapsingHeader("Notes")){
+        if(drawParamTabs(*g, p.params)) touch();
+        if(!own && ImGui::CollapsingHeader("Notes")){   // the notes describe the shared instrument
             char noteBuf[512];
             snprintf(noteBuf, sizeof(noteBuf), "%s", p.notes.c_str());
             if(ImGui::InputTextMultiline("##scenePresetNotes", noteBuf, sizeof(noteBuf), ImVec2(-1, 70 * zz))){ p.notes = noteBuf; dirtyPresets.insert(ref); }
@@ -897,6 +941,7 @@ inline void Editor::drawSceneInstrumentEditor(std::string ref){
     }else{
         ImGui::TextDisabled("Unknown generator: %s", p.gen.c_str());
     }
+    if(own && ownEdited) storeOwn();
     ImGui::EndChild();
 }
 

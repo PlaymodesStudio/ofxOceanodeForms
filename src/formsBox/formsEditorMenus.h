@@ -167,7 +167,7 @@ inline void Editor::instrumentMenuItems(const std::string& ref, const std::strin
         if(ImGui::MenuItem("Mute", nullptr, (st & 1) != 0)) toggleInstMS(ref, 0);
         if(ImGui::MenuItem("Solo", nullptr, (st & 2) != 0)) toggleInstMS(ref, 1);
     }
-    if(isPreset && ImGui::MenuItem("Edit this instrument")) sceneInstrumentEditRef = ref;   // its own window
+    if(isPreset && ImGui::MenuItem(sit != engine->scenes.end() ? "Edit this instrument (in this scene)" : "Edit this instrument")) openInstrument(ref, scene);   // its own window; from a scene: the scene's own version
     if(isPreset && ImGui::MenuItem("Show in Library")){ selPreset = ref; composeMode = 1; showTab = "Compose"; }
     ImGui::Separator();
     if(inCell){
@@ -293,7 +293,8 @@ inline void Editor::drawInstrumentWindow(){
     float zz = z();
     bool open = true;
     ImGui::SetNextWindowSize(ImVec2(560 * zz, 660 * zz), ImGuiCond_FirstUseEver);
-    std::string title = "Instrument: " + pi->second.name + (dirtyPresets.count(sceneInstrumentEditRef) ? " *" : "") + "###formsInstrumentWindow";
+    if(!sceneInstrumentEditScene.empty() && !engine->scenes.count(sceneInstrumentEditScene)) sceneInstrumentEditScene.clear();   // the scene is gone: the shared instrument
+    std::string title = "Instrument: " + pi->second.name + (sceneInstrumentEditScene.empty() ? (dirtyPresets.count(sceneInstrumentEditRef) ? " *" : "") : "  -  in scene " + sceneInstrumentEditScene) + "###formsInstrumentWindow";
     std::string ref = sceneInstrumentEditRef;   // the editor may change or clear it
     if(ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse)) drawSceneInstrumentEditor(ref);
     ImGui::End();

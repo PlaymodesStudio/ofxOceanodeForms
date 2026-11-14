@@ -414,6 +414,10 @@ private:
     // instruments tab
     std::string selPreset, renameFor, previewScene, previewShownRef, listActive;
     std::string sceneInstrumentEditRef; // Scenes tab: preset opened from a cell's context menu
+    // The scene whose own version of that instrument the window edits ("" = the shared instrument,
+    // as the Library edits it). Set when the window is opened, so "follow what plays" cannot retarget it.
+    std::string sceneInstrumentEditScene;
+    void openInstrument(const std::string& ref, const std::string& scene = ""){ sceneInstrumentEditRef = ref; sceneInstrumentEditScene = engine->scenes.count(scene) ? scene : std::string(); }
     std::string sceneStackFor;
     int sceneStackLayer = 0;
     char presetFilter[64] = "";

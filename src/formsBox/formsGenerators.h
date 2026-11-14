@@ -105,6 +105,81 @@ struct Preset {
     json params = json::object();      // per key: value, {"min","max"}, {"options"}, {"either"}
     std::string ref() const { return gen + "/" + name; }   // how scenes refer to it (Cell::item)
 };
+// ---- a scene's own version of an instrument (Scene::instruments[ref]) ----
+// Only what differs from the shared instrument is kept, so later changes to the shared one still
+// reach the scene wherever the scene did not change it:
+//   "params": {key: value}     settings the scene changed or added
+//   "unset": [key]             settings the scene removed (back to the default)
+//   "layerParams": {"i": {"params", "unset", "gen"}}   the same per layer of a layered instrument, while
+//                              its layers are otherwise the shared ones
+//   "layers": [...]            the whole layer list, when the scene changed more than layer settings
+//   "linked", "pick", "perBar" when they differ
+inline json paramsOwnDiff(const json& lib, const json& own){
+    json set = json::object(), unset = json::array(), d = json::object();
+    if(own.is_object()) for(auto& [k, v] : own.items()) if(!lib.is_object() || !lib.contains(k) || lib[k] != v) set[k] = v;
+    if(lib.is_object()) for(auto& [k, v] : lib.items()) if(!own.is_object() || !own.contains(k)) unset.push_back(k);
+    if(!set.empty()) d["params"] = set;
+    if(!unset.empty()) d["unset"] = unset;
+    return d;
+}
+inline void paramsOwnApply(json& params, const json& d){
+    if(!d.is_object()) return;
+    if(!params.is_object()) params = json::object();
+    if(d.contains("unset") && d["unset"].is_array()) for(auto& k : d["unset"]) if(k.is_string()) params.erase(k.get<std::string>());
+    if(d.contains("params") && d["params"].is_object()) for(auto& [k, v] : d["params"].items()) params[k] = v;
+}
+inline json presetOwnDiff(const Preset& lib, const Preset& own){
+    json d = paramsOwnDiff(lib.params, own.params);
+    if(own.layers != lib.layers){
+        bool sameShape = own.layers.is_array() && lib.layers.is_array() && own.layers.size() == lib.layers.size();
+        for(size_t i = 0; sameShape && i < lib.layers.size(); i++){
+            json a = lib.layers[i], b = own.layers[i];
+            if(!a.is_object() || !b.is_object()){ sameShape = false; break; }
+            a.erase("params"); b.erase("params");
+            if(a != b) sameShape = false;
+        }
+        if(sameShape){
+            json lp = json::object();
+            for(size_t i = 0; i < lib.layers.size(); i++){
+                json x = paramsOwnDiff(lib.layers[i].value("params", json::object()), own.layers[i].value("params", json::object()));
+                if(!x.empty()){ x["gen"] = lib.layers[i].value("gen", std::string()); lp[std::to_string(i)] = x; }   // "gen": which kind of layer the changes were made on
+            }
+            if(!lp.empty()) d["layerParams"] = lp;
+        }else d["layers"] = own.layers;
+    }
+    if(own.linked != lib.linked) d["linked"] = own.linked;
+    if(own.pick != lib.pick) d["pick"] = own.pick;
+    if(own.perBar != lib.perBar) d["perBar"] = own.perBar;
+    return d;
+}
+inline Preset presetWithOwn(Preset p, const json& d){
+    if(!d.is_object() || d.empty()) return p;
+    paramsOwnApply(p.params, d);
+    if(d.contains("layers") && d["layers"].is_array()) p.layers = d["layers"];
+    else if(d.contains("layerParams") && d["layerParams"].is_object() && p.layers.is_array())
+        for(auto& [k, x] : d["layerParams"].items()){
+            size_t i = (size_t)std::strtoul(k.c_str(), nullptr, 10);
+            if(i >= p.layers.size() || !p.layers[i].is_object() || p.layers[i].contains("preset")) continue;   // the shared instrument changed shape: that layer plays as shared
+            if(x.is_object() && x.contains("gen") && x["gen"] != p.layers[i].value("gen", std::string())) continue;   // its layers were reordered: not this layer's changes
+            json params = p.layers[i].value("params", json::object());
+            paramsOwnApply(params, x);
+            p.layers[i]["params"] = params;
+        }
+    if(d.contains("linked") && d["linked"].is_array()) p.linked = d["linked"];
+    if(d.contains("pick") && d["pick"].is_string()) p.pick = d["pick"].get<std::string>();
+    if(d.contains("perBar") && d["perBar"].is_number()) p.perBar = std::max(0, d["perBar"].get<int>());
+    return p;
+}
+// how many settings a scene's own version changes (for the editor's marker)
+inline int presetOwnCount(const json& d){
+    if(!d.is_object()) return 0;
+    auto one = [](const json& x){ return (int)(x.value("params", json::object()).size() + x.value("unset", json::array()).size()); };
+    int n = one(d);
+    if(d.contains("layerParams")) for(auto& [k, x] : d["layerParams"].items()) n += one(x);
+    for(const char* k : {"layers", "linked", "pick", "perBar"}) if(d.contains(k)) n++;
+    return n;
+}
+
 inline void to_json(json& j, const Preset& p){
     j = json{{"gen", p.gen}, {"name", p.name}, {"params", p.params}};
     if(!p.notes.empty()) j["notes"] = p.notes;
