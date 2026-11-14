@@ -45,6 +45,7 @@ struct SoundFrame {
     struct Layer {
         bool active = false;                 // has an image under the header
         std::vector<float> amps;             // SOUND_PARTIALS, 0..1
+        std::vector<std::vector<float>> sub; // sharp attacks: the amplitudes of the frame's later slots (amps is slot 0)
         std::vector<float> pitch, gl, gr, duckw;   // SOUND_PARTIALS each
         int arraysVersion = 0;               // bumped when pitch / gains / duck weights change
         float level = 1;
@@ -52,6 +53,11 @@ struct SoundFrame {
     };
     std::vector<Layer> layers = std::vector<Layer>(SOUND_LAYERS);
     float bend = 0, detune = 0.0746f, bankGain = 0.0216f, lag = 1.0f / 30;
+    // sharp attacks (off: amplitudes once per frame, untimed, as always): slot k of a layer is sent for
+    // the instant now + lead + k x slotDt; attack: a partial's rise out of silence (s)
+    bool sharp = false;
+    float attack = 0.001f, slotDt = 1.0f / 240;
+    double lead = 0.02;
     // kick
     int kickCount = 0;                       // bumped for every kick to play
     int kickSample = 0;                      // index in the kick list
@@ -239,6 +245,14 @@ public:
     void resetInputBusses(ofxSCServer*, int) override {}
     void resendParametersForNRT() override { for(auto& [s, st] : states){ st.sent = Sent(); st.sent.layers.resize(st.banks.size()); } }
 
+    // sharp attacks: how far ahead the amplitudes are stamped (the wanted lead, or what the servers need
+    // for a timestamp not to be "late"); the node reads its columns that far ahead of the header
+    double leadSeconds(double wanted) const {
+        double lead = wanted;
+        for(auto& [server, st] : states) if(server) lead = std::max(lead, server->getMinimumLeadSeconds() + 0.004);
+        return std::min(lead, 0.25);
+    }
+
     // ---- per frame
     void send(const SoundFrame& f){
         setLayerCount(f.layers.size());
@@ -264,9 +278,24 @@ public:
                 if(!st.ampBus[l]) continue;
                 bool anyNow = false;
                 for(float a : L.amps) if(a > 0){ anyNow = true; break; }
+                if(f.sharp) for(auto& sv : L.sub){ if(anyNow) break; for(float a : sv) if(a > 0){ anyNow = true; break; } }
                 if(!run) anyNow = false;
                 if(!anyNow && !S.ampsNonZero) continue;     // silence already sent
                 S.ampsNonZero = anyNow;
+                if(f.sharp){
+                    // sharp attacks: every slot of the frame for its own instant (scsynth applies a
+                    // timestamped bundle at that instant; one too close to now goes out untimed)
+                    const int slots = 1 + (int)L.sub.size();
+                    for(int k = 0; k < slots; k++){
+                        const std::vector<float>& a = k == 0 ? L.amps : L.sub[k - 1];
+                        ofxOscMessage ms; ms.setAddress("/c_setn");
+                        ms.addIntArg(st.ampBus[l]->index);
+                        ms.addIntArg(SOUND_PARTIALS);
+                        for(int i = 0; i < SOUND_PARTIALS; i++) ms.addFloatArg(run && i < (int)a.size() ? a[i] : 0.0f);
+                        server->sendMsgAt(ms, ofxSCServer::timetagNow(f.lead + k * (double)f.slotDt));
+                    }
+                    continue;
+                }
                 if(args > 0) flush();
                 m.addIntArg(st.ampBus[l]->index);
                 m.addIntArg(SOUND_PARTIALS);
@@ -292,6 +321,12 @@ public:
                 setIf(st.banks[l], S.detune, "detune", f.detune);
                 setIf(st.banks[l], S.gain, "gain", f.bankGain);
                 setIf(st.banks[l], S.lag, "lag", f.lag);
+                // sharp attacks: the bank's mode, the time between two slots (to half a millisecond: frame times wobble) and the attack
+                setIf(st.banks[l], S.sharp, "sharp", f.sharp ? 1.0f : 0.0f);
+                if(f.sharp){
+                    setIf(st.banks[l], S.ramp, "ramp", std::max(0.001f, std::round(f.slotDt * 2000.0f) / 2000.0f));
+                    setIf(st.banks[l], S.attack, "attack", f.attack);
+                }
             }
             // kick
             int sample=f.kickSample;
@@ -356,7 +391,7 @@ public:
 
 private:
     struct Sent {
-        struct L { int arraysVersion = -1; float level = NAN, send = NAN, bend = NAN, detune = NAN, gain = NAN, lag = NAN; bool running = false, ampsNonZero = true; float offAt = -1; };
+        struct L { int arraysVersion = -1; float level = NAN, send = NAN, bend = NAN, detune = NAN, gain = NAN, lag = NAN, sharp = NAN, ramp = NAN, attack = NAN; bool running = false, ampsNonZero = true; float offAt = -1; };
         std::vector<L> layers = std::vector<L>(SOUND_LAYERS);
         int kickCount = -1;
         float kickAmp = NAN, duckDecay = NAN, duckCurve = NAN, comp = NAN, fxGain = NAN;

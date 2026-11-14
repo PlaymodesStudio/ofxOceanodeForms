@@ -15,7 +15,26 @@ FormsKick ──(audio, 2ch)─────────────────�
 
 ## FormsBank512
 
-This def has 512 partials. Each partial has a left sine and a right sine, so 1024 `SinOsc` in total.
+This def has 512 partials, each with a left sine and a right sine. Since 2026-11-11 they are one
+`FormsSparseBank` unit (`../ugens/FormsSparseBank`, a server plugin: `FormsSparseBank.scx` must be in the
+app's `data/Supercollider/Extensions`). It does the same maths as the 1024 `SinOsc` graph it replaced, but
+only runs the partials that sound: offline, 8 banks cost 31% of a core before and 7% fully lit, 2% at
+10% lit after. The old compiled defs are in `CompiledSynthdefs_backup_2026-11-11_sinosc`.
+The reverb in `FormsFX` is MicroSpace (`OceanodeMicroSpace.box`, all wet) since the same date: `revtime`
+is its decay x 0.5 and `revgain` 0.65, matched to the old LongReverb's tail and level; new controls
+`revsize`, `revposition`, `revspread`, `revhighdamp`, `revlowdamp`, `revmodfreq`, `revspin`, `revwander`.
+Compile with `./compile.sh`.
+
+**Sharp attacks (2026-11-14, optional).** `sharp` 1 switches the bank to `FormsSparseBank`'s mode 1
+(the node's "Sharp attacks" checkbox; 0 = everything above, unchanged). The node then reads every
+column the header crosses during a frame, in 4 groups, and sends each as a timestamped `/c_setn`
+for its own instant; the bank draws a straight line from one arrival to the next over `ramp` s, a
+partial coming out of silence rises in `attack` s with both its oscillators at phase 0 (the wave
+starts at a zero crossing, so even 1 ms has no step, and partials that start together are aligned),
+and `lag` only slows the falls. Offline (`test_formsBox_sharp_nrt.scd`): a 2.6 kHz partial reaches
+90% in 1.0 ms (classic 11.2 ms), a 1 s fade is 4 times closer to a straight line, classic mode is
+the same with the old and the new plugin. The offline export (formsGLExportMedia.h) still writes
+classic scores.
 Several banks write to the same `out` and add up there (`Out.ar`).
 
 ```

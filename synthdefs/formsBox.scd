@@ -34,7 +34,10 @@ SynthDef(\FormsBank512, {
 	// FormsSparseBank (ugens/FormsSparseBank): the 1024 sines, the amplitude Lag, the duck and the
 	// NaN / range guards in one unit that only runs the partials that sound. Same maths as the
 	// SinOsc graph it replaces (random start phases, gains ramped across the block).
-	sig = FormsSparseBank.ar(amps, pitch, gl, gr, duckw, \lag.kr(0.05), \bend.kr(0), \detune.kr(0.0746), duck);
+	// sharp (0 / 1): the bank's "sharp attacks" mode (amplitudes several times per frame, a line
+	// between them over `ramp` s, `attack` s and phase 0 out of silence); 0 = the bank as it was.
+	sig = FormsSparseBank.ar(amps, pitch, gl, gr, duckw, \lag.kr(0.05), \bend.kr(0), \detune.kr(0.0746), duck,
+		\sharp.kr(0), \ramp.kr(0.004), \attack.kr(0.001));
 
 	sig = Sanitize.ar(sig * \gain.kr(0.0216) * \level.kr(1));
 	send = \send.kr(0, 1/30).clip(0, 1) * 0.5pi;

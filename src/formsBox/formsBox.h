@@ -993,12 +993,18 @@ protected:   // (Forms GL Box derives from Forms Box)
     // pixel-pack state is set and restored around it: other nodes may leave a PBO bound (which
     // turns our pointer into an offset in GPU memory) or other row settings.
     static bool readColumn(ofFbo& f, int x, int y0, int rows, std::vector<unsigned short>& px){   // 16 bits per channel
-        if(!f.isAllocated() || rows < 1) return false;
+        return readStrip(f, x, 1, y0, rows, px);
+    }
+    // The same for `cols` columns from x: row-major, rows x cols pixels (sharp attacks: the columns
+    // the header crosses during a frame).
+    static bool readStrip(ofFbo& f, int x, int cols, int y0, int rows, std::vector<unsigned short>& px){
+        if(!f.isAllocated() || rows < 1 || cols < 1) return false;
         int w = (int)f.getWidth(), h = (int)f.getHeight();
         x = ofClamp(x, 0, w - 1);
+        if(x + cols > w) return false;   // the caller asks only for columns that exist
         y0 = ofClamp(y0, 0, h - 1);
         rows = std::min(rows, h - y0);
-        px.assign(rows * 4 + 64, 0);
+        px.assign((size_t)rows * cols * 4 + 64, 0);
         GLint prevFb = 0, prevPbo = 0, pAlign = 4, pRow = 0, pSkipR = 0, pSkipP = 0;
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevFb);
         glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &prevPbo);
@@ -1012,7 +1018,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         glPixelStorei(GL_PACK_SKIP_ROWS, 0);
         glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, f.getId());
-        glReadPixels(x, y0, 1, rows, GL_RGBA, GL_UNSIGNED_SHORT, px.data());   // FBO row 0 = the image's top
+        glReadPixels(x, y0, cols, rows, GL_RGBA, GL_UNSIGNED_SHORT, px.data());   // FBO row 0 = the image's top
         glBindFramebuffer(GL_READ_FRAMEBUFFER, prevFb);
         glPixelStorei(GL_PACK_ALIGNMENT, pAlign);
         glPixelStorei(GL_PACK_ROW_LENGTH, pRow);
@@ -1034,6 +1040,9 @@ protected:   // (Forms GL Box derives from Forms Box)
     forms::SoundSettings snd;
     forms::LRBalance lrBal;
     std::vector<std::vector<unsigned short>> cols = std::vector<std::vector<unsigned short>>(4);
+    // sharp attacks (snd.sharp): the beat under the header last frame (how far each layer moves per frame)
+    double lastSoundBeat = -1;
+    std::vector<unsigned short> soundStrip, soundGroup;
     struct LayerKey { int root = -1000, notegrid = -1, trans = 0; float q = -1; std::vector<float> scale; std::vector<float> settings; };
     std::vector<LayerKey> layerKeys = std::vector<LayerKey>(4);
     std::vector<forms::PartialLayout> layouts = std::vector<forms::PartialLayout>(4);
@@ -1193,6 +1202,16 @@ protected:   // (Forms GL Box derives from Forms Box)
 #ifdef FORMS_HAS_SC
         if(playing){
             float sideChain = forms::perfF(perf, "sideChain", 1);
+            // sharp attacks: on while the header moves forward at a normal pace (a pause, a jump or a
+            // repeat's jump back: this frame as the classic one column, still timestamped)
+            enum { SHARP_SLOTS = 4 };
+            const double sharpBeats = lastSoundBeat >= 0 ? scroller.headerBeat - lastSoundBeat : 0;
+            lastSoundBeat = scroller.headerBeat;
+            frame.sharp = snd.sharp;
+            frame.attack = snd.attack;
+            frame.lead = sound->leadSeconds(0.02);
+            frame.slotDt = dt > 0 ? dt / SHARP_SLOTS : 1.0f / 240;
+            const bool sharpNow = snd.sharp && dt > 0 && dt < 0.1f && sharpBeats > 0 && sharpBeats < 1;
             for(int l = 0; l < count; l++){
                 auto& L = frame.layers[l];
                 L.active = haveCol[l];
@@ -1210,6 +1229,32 @@ protected:   // (Forms GL Box derives from Forms Box)
                     L.pitch.clear();   // pitches again
                 }
                 forms::columnAmps(cols[l].data(), h, imageMul, lay, L.amps);
+                // Sharp attacks: instead of the one column under the header, the columns this layer
+                // moves through during the coming frame (it scrolls right to left: they are to the
+                // header's right), starting `lead` ahead so that their timestamps are in the future,
+                // in SHARP_SLOTS groups; each group is the brightest of its columns (a hit one pixel
+                // wide is never skipped) and is sent for its own instant (formsSound.h).
+                L.sub.clear();
+                if(sharpNow){
+                    double lenBeats = l == 0 ? scroller.headerLen : (rings[l - 1].current ? 4.0 * std::max(1.0 / forms::kBarGrid, rings[l - 1].current->bars) : scroller.headerLen);
+                    double pxPerFrame = sharpBeats * fbos[l]->getWidth() / std::max(1.0, lenBeats);
+                    int n = (int)ofClamp(std::ceil(pxPerFrame), 1, 32);
+                    int x0 = (int)std::floor(x + pxPerFrame * frame.lead / dt);
+                    if(x0 + n <= (int)fbos[l]->getWidth() && readStrip(*fbos[l], x0, n, 0, h, soundStrip)){
+                        soundGroup.resize((size_t)h * 4);
+                        for(int k = 0; k < SHARP_SLOTS; k++){
+                            int c0 = k * n / SHARP_SLOTS, c1 = std::max(c0 + 1, (k + 1) * n / SHARP_SLOTS);
+                            for(int r = 0; r < h; r++){
+                                const unsigned short* row = soundStrip.data() + ((size_t)r * n + c0) * 4;
+                                unsigned short* o = soundGroup.data() + (size_t)r * 4;
+                                o[0] = row[0]; o[1] = row[1]; o[2] = row[2]; o[3] = row[3];
+                                for(int c = c0 + 1; c < c1; c++){ row += 4; for(int q = 0; q < 4; q++) o[q] = std::max(o[q], row[q]); }
+                            }
+                            if(k == 0) forms::columnAmps(soundGroup.data(), h, imageMul, lay, L.amps);
+                            else { L.sub.emplace_back(); forms::columnAmps(soundGroup.data(), h, imageMul, lay, L.sub.back()); }
+                        }
+                    }
+                }
                 float sum = 0; for(float a : L.amps) sum += a;
                 soundView.layerLevel[l] = sum / forms::SOUND_PARTIALS;
                 // the partials' pitches, gains and duck weights: again when the harmony or the settings change

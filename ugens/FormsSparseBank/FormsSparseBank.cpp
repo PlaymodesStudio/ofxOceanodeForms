@@ -19,7 +19,20 @@
 //  SinOsc graph.
 //
 //  Inputs: 0 n (scalar, the number of partials), 1 lag, 2 bend, 3 detune, 4 duck, then n amps,
-//  n pitches, n left gains, n right gains, n duck weights (control rate).
+//  n pitches, n left gains, n right gains, n duck weights (control rate); then, optional (a SynthDef
+//  made before them has none and plays as above): mode, ramp, attack.
+//
+//  mode 1, "sharp attacks" (2026-11-14). The amplitudes arrive several times per video frame, each
+//  for its own instant (timestamped bundles), instead of once per frame, and here:
+//    - a change of amplitude is a straight line to the new value over `ramp` seconds (the time
+//      between two arrivals): the envelope goes through the values that were read, with no
+//      staircase to smooth away;
+//    - falling, the envelope is the slower of that line and the Lag (`lag` is the release);
+//    - a partial that comes out of silence does not wait for the line: it reaches its value in
+//      `attack` seconds (inside the block if that is shorter than a block), and its two
+//      oscillators start at phase 0, so the wave starts at a zero crossing: no step however
+//      short the attack, and partials that start together start aligned (a click, not a smear).
+//  mode 0 is exactly the bank as it was.
 //
 
 #include "SC_PlugIn.h"
@@ -47,6 +60,11 @@ struct FormsSparseBank : public Unit {
     unsigned char* fresh;                  // 2n: its rotation matches the current frequency
     float lastBend, lastDetune, lastLag, b1;
     bool first;
+    // mode 1
+    float *z, *dz, *lastX;                 // n: the amplitude on its line, the line's step per block, the input it goes to
+    int* rem;                              // n: blocks left on the line
+    float* AE;                             // 2n: packed, the gain each running oscillator ends the block at
+    bool hasMode;
 };
 
 static void FormsSparseBank_next(FormsSparseBank* unit, int inNumSamples);
@@ -58,8 +76,8 @@ static void FormsSparseBank_Ctor(FormsSparseBank* unit){
     unit->n = n;
     SETCALC(FormsSparseBank_next);
     if(n > 0){
-        const size_t floats = (size_t)n * 2 + (size_t)n * 2 * 5 + (size_t)n * 2 * 6;
-        const size_t bytes = floats * sizeof(float) + (size_t)n * 2 * sizeof(int) + (size_t)n * 2;
+        const size_t floats = (size_t)n * 2 + (size_t)n * 2 * 5 + (size_t)n * 2 * 6 + (size_t)n * 3 + (size_t)n * 2;
+        const size_t bytes = floats * sizeof(float) + (size_t)n * 3 * sizeof(int) + (size_t)n * 2;
         unit->mem = (float*)RTAlloc(unit->mWorld, bytes);
         if(!unit->mem){ unit->n = 0; }
         else{
@@ -68,16 +86,18 @@ static void FormsSparseBank_Ctor(FormsSparseBank* unit){
             unit->y = p; p += n; unit->lastPitch = p; p += n;
             unit->c = p; p += 2 * n; unit->s = p; p += 2 * n; unit->cw = p; p += 2 * n; unit->sw = p; p += 2 * n; unit->gPrev = p; p += 2 * n;
             unit->C = p; p += 2 * n; unit->S = p; p += 2 * n; unit->CW = p; p += 2 * n; unit->SW = p; p += 2 * n; unit->A = p; p += 2 * n; unit->DA = p; p += 2 * n;
-            unit->idx = (int*)p; unit->fresh = (unsigned char*)(unit->idx + 2 * n);
+            unit->z = p; p += n; unit->dz = p; p += n; unit->lastX = p; p += n; unit->AE = p; p += 2 * n;
+            unit->idx = (int*)p; unit->rem = unit->idx + 2 * n; unit->fresh = (unsigned char*)(unit->rem + n);
             RGen& rgen = *unit->mParent->mRGen;
             for(int o = 0; o < 2 * n; o++){
                 float ph = rgen.frand() * 6.2831853f;
                 unit->c[o] = std::cos(ph); unit->s[o] = std::sin(ph);
             }
-            for(int i = 0; i < n; i++) unit->y[i] = clip01(cleanf(IN0(5 + i)));   // Lag starts at its input
+            for(int i = 0; i < n; i++) unit->y[i] = unit->z[i] = unit->lastX[i] = clip01(cleanf(IN0(5 + i)));   // Lag starts at its input
         }
     }
     unit->lastBend = unit->lastDetune = 0; unit->lastLag = -1; unit->b1 = 0; unit->first = true;
+    unit->hasMode = n > 0 && (int)unit->mNumInputs >= 5 + 5 * n + 3;
     ClearUnitOutputs(unit, 1);
 }
 
@@ -116,6 +136,39 @@ static inline void runPacked(float* out, int numSamples, int from, int to,
     }
 }
 
+// mode 1: the same, each gain moving at its own slope and stopping at its end value (an attack
+// shorter than the block reaches its value inside it; the others arrive at the block's end as above)
+static inline void runPackedTo(float* out, int numSamples, int from, int to,
+                               float* C, float* S, const float* CW, const float* SW, float* A, const float* DA, const float* AE){
+#pragma clang fp reassociate(on) contract(fast)
+    enum { G = 16 };
+    memset(out, 0, (size_t)numSamples * sizeof(float));
+    for(int k0 = from; k0 < to; k0 += G){
+        const int cnt = std::min((int)G, to - k0);
+        float c[G], s[G], cw[G], sw[G], a[G], da[G], lo[G], hi[G];
+        for(int j = 0; j < G; j++){
+            const bool on = j < cnt;
+            c[j] = on ? C[k0 + j] : 1.f; s[j] = on ? S[k0 + j] : 0.f;
+            cw[j] = on ? CW[k0 + j] : 1.f; sw[j] = on ? SW[k0 + j] : 0.f;
+            a[j] = on ? A[k0 + j] : 0.f; da[j] = on ? DA[k0 + j] : 0.f;
+            const float e = on ? AE[k0 + j] : 0.f;
+            lo[j] = std::min(a[j], e); hi[j] = std::max(a[j], e);   // the gain stays between where it is and where it goes
+        }
+        for(int i = 0; i < numSamples; i++){
+            float acc = 0.f;
+            for(int j = 0; j < G; j++){
+                const float c0 = c[j], s0 = s[j];
+                acc += s0 * a[j];
+                a[j] = std::min(hi[j], std::max(lo[j], a[j] + da[j]));
+                c[j] = c0 * cw[j] - s0 * sw[j];
+                s[j] = s0 * cw[j] + c0 * sw[j];
+            }
+            out[i] += acc;
+        }
+        for(int j = 0; j < cnt; j++){ C[k0 + j] = c[j]; S[k0 + j] = s[j]; }
+    }
+}
+
 static void FormsSparseBank_next(FormsSparseBank* unit, int inNumSamples){
     float* outL = OUT(0);
     float* outR = OUT(1);
@@ -130,6 +183,16 @@ static void FormsSparseBank_next(FormsSparseBank* unit, int inNumSamples){
         unit->b1 = lag <= 0.f ? 0.f : (float)std::exp(std::log(0.001) / ((double)lag * unit->mRate->mBufRate));
     }
     const float b1 = unit->b1;
+    // mode 1 (see the top): the line's length in blocks, the attack out of silence in blocks / samples
+    const int modeBase = 5 + 5 * n;
+    const bool sharp = unit->hasMode && IN0(modeBase) > 0.5f;
+    const double kr = unit->mRate->mBufRate;
+    const int rampBlocks = sharp ? std::max(1, (int)std::lround(std::min(1.0, std::max(0.0, (double)cleanf(IN0(modeBase + 1)))) * kr)) : 1;
+    const double attackS = sharp ? std::min(1.0, std::max(0.0, (double)cleanf(IN0(modeBase + 2)))) : 0.0;
+    const int attackBlocks = std::max(1, (int)std::lround(attackS * kr));
+    const float attackSamples = (float)std::max(8.0, attackS * SAMPLERATE);   // at least 8 samples: the gain never jumps
+    float *z = unit->z, *dz = unit->dz, *lastX = unit->lastX, *AE = unit->AE;
+    int* rem = unit->rem;
     const bool allStale = unit->first || bend != unit->lastBend || detune != unit->lastDetune;
     unit->lastBend = bend; unit->lastDetune = detune; unit->first = false;
     if(allStale) memset(unit->fresh, 0, (size_t)2 * n);
@@ -152,8 +215,23 @@ static void FormsSparseBank_next(FormsSparseBank* unit, int inNumSamples){
             if(side == 0){
                 // the lagged amplitude (once per partial), then the duck
                 const float x = clip01(cleanf(*amps[i]));
-                float v = x + b1 * (y[i] - x);
-                if(x < kSilent && v < kSilent) v = 0.f;
+                float v;
+                if(sharp){
+                    if(x != lastX[i]){
+                        lastX[i] = x;
+                        // out of silence: over the attack; else a line over the time to the next arrival
+                        const int blocks = (y[i] <= 0.f && z[i] <= 0.f) ? attackBlocks : rampBlocks;
+                        rem[i] = blocks; dz[i] = (x - z[i]) / (float)blocks;
+                    }
+                    if(rem[i] > 0){ z[i] += dz[i]; if(--rem[i] == 0) z[i] = x; }
+                    const float zi = z[i];
+                    v = zi >= y[i] ? zi : zi + b1 * (y[i] - zi);   // rising: the line itself; falling: no faster than the Lag
+                    if(x < kSilent && zi < kSilent && v < kSilent){ v = 0.f; z[i] = 0.f; rem[i] = 0; }
+                }else{
+                    v = x + b1 * (y[i] - x);
+                    if(x < kSilent && v < kSilent) v = 0.f;
+                    z[i] = v; lastX[i] = x; rem[i] = 0;   // so that switching to mode 1 starts from here
+                }
                 y[i] = v;
                 const float pv = *pitch[i];
                 if(pv != lastPitch[i]){ lastPitch[i] = pv; fresh[i] = 0; fresh[n + i] = 0; }
@@ -172,15 +250,26 @@ static void FormsSparseBank_next(FormsSparseBank* unit, int inNumSamples){
                 fresh[o] = 1;
             }
             idx[m] = o;
+            if(sharp && g0 == 0.f){ unit->c[o] = 1.f; unit->s[o] = 0.f; }   // out of silence: the wave starts at its zero crossing
             C[m] = unit->c[o]; S[m] = unit->s[o]; CW[m] = unit->cw[o]; SW[m] = unit->sw[o];
             A[m] = g0; DA[m] = (g - g0) * slopeK;
+            if(sharp){
+                AE[m] = g;
+                // an attack shorter than the block: there inside it (attackBlocks is then 1: the envelope is already at its value)
+                if(g0 == 0.f && attackBlocks == 1 && attackSamples < (float)inNumSamples) DA[m] = g / attackSamples;
+            }
             m++;
         }
         if(side == 0) mLeft = m;
     }
 
-    runPacked(outL, inNumSamples, 0, mLeft, C, S, CW, SW, A, DA);
-    runPacked(outR, inNumSamples, mLeft, m, C, S, CW, SW, A, DA);
+    if(sharp){
+        runPackedTo(outL, inNumSamples, 0, mLeft, C, S, CW, SW, A, DA, AE);
+        runPackedTo(outR, inNumSamples, mLeft, m, C, S, CW, SW, A, DA, AE);
+    }else{
+        runPacked(outL, inNumSamples, 0, mLeft, C, S, CW, SW, A, DA);
+        runPacked(outR, inNumSamples, mLeft, m, C, S, CW, SW, A, DA);
+    }
 
     // back to their places, pulled onto the unit circle (the rotation drifts a little)
     for(int k = 0; k < m; k++){

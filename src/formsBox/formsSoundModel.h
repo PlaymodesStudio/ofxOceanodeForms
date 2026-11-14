@@ -49,6 +49,12 @@ struct SoundSettings {
     float detune = 0.0746f;           // semitones, right bank
     float loudnessBlend = 0.2f;       // 0 flat .. 1 the full equal-loudness curve
     float lag = 1.0f / 30;            // amplitude smoothing in the synth (s)
+    // Sharp attacks (2026-11-14, optional; off = the sonification as it was): the columns the header
+    // crosses during a frame are read in 4 groups and sent each for its own instant (timestamped), the
+    // bank draws a line between them, a partial out of silence rises in `attack` s from phase 0, and
+    // `lag` is the release only. See ugens/FormsSparseBank (mode 1).
+    bool sharp = false;
+    float attack = 0.001f;            // s
     float spreadLow = 40, spreadHigh = 100;   // MIDI: below spreadLow the partials stay centred
     // kick ducking of the partials
     float duckBelow = 64;             // MIDI: partials below this are ducked

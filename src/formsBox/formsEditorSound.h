@@ -53,6 +53,8 @@ struct SoundControls {
     ofParameter<float> bankGain, detune, loudness, lag, spreadLow, spreadHigh;
     ofParameter<float> duckBelow, duckDepth, duckShape, duckBeats, duckCurve;
     ofParameter<bool> duckFullBand;
+    ofParameter<bool> sharp;          // Sharp attacks (the new sonification; off = classic)
+    ofParameter<float> attack;        // its attack out of silence, ms
     ofParameter<float> kickThreshold, kickStrip, kickGap, kickTune, kickLevel;
     ofParameter<std::string> kickFolder;
     ofParameter<float> reverbMult, revTime, lowShelf, midLow, mid, midHigh, highShelf, lowpass;
@@ -102,6 +104,8 @@ struct SoundControls {
         duckBeats.set("Duck Beats", 2, 0.25f, 8);
         duckCurve.set("Duck Curve", -4, -10, 10);
         duckFullBand.set("Duck Full Image",true);
+        sharp.set("Sharp Attacks", false);
+        attack.set("Attack ms", 1, 0.2f, 30);
         kickOn.set("Kick On", true);
         kickThreshold.set("Kick Threshold", 0.5f, 0, 1);
         kickStrip.set("Kick Strip", 100.0f / 3840, 0.005f, 0.25f);
@@ -138,6 +142,7 @@ struct SoundControls {
                        &reverbMult, &revTime, &lowShelf, &midLow, &mid, &midHigh, &highShelf, &lowpass}) reg.reg(*p);
         reg.reg(kickFolder);
         reg.reg(duckFullBand);
+        reg.reg(sharp); reg.reg(attack);
         reg.reg(compOn); reg.reg(compAuto);
         for(auto* p : {&compThr, &compRatio, &compKnee, &compAtk, &compRel, &compMakeup, &compRms, &compHpf, &compMix}) reg.reg(*p);
     }
@@ -165,6 +170,7 @@ struct SoundControls {
         s.spreadLow = spreadLow; s.spreadHigh = spreadHigh;
         s.duckBelow = duckBelow; s.duckDepth = duckDepth; s.duckShape = duckShape; s.duckBeats = duckBeats; s.duckCurve = duckCurve;
         s.duckFullBand=duckFullBand;
+        s.sharp = sharp; s.attack = attack * 0.001f;
         s.kickOn = kickOn; s.kickThreshold = kickThreshold; s.kickStrip = kickStrip; s.kickMinGap = kickGap;
         s.kickTune = kickTune; s.kickGain = kickLevel; s.kickFolder = kickFolder;
         s.volume = volume; s.limit = limiter ? 1 : 0; s.lrBalance = lrBalance;
@@ -318,7 +324,15 @@ struct SoundControls {
         reg.slider(bankGain, "%.4f");
         reg.slider(detune, "%.4f st", "Detune R");
         reg.slider(loudness, "%.2f", "Equal loudness");
-        reg.slider(lag, "%.3f s", "Amp lag");
+        reg.check(sharp, "Sharp attacks");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The new sonification (off: the classic one, one column per frame smoothed by Amp lag).\n"
+                                                     "On: every column the header crosses is heard, each at its own instant (4 per frame),\n"
+                                                     "a note out of silence rises in the Attack time from a zero crossing, and Amp lag is the release only.\n"
+                                                     "Needs the FormsSparseBank plugin of 2026-11-14 in the server (restart the audio server after installing).");
+        ImGui::BeginDisabled(!sharp);
+        reg.slider(attack, "%.1f ms", "Attack");
+        ImGui::EndDisabled();
+        reg.slider(lag, "%.3f s", sharp ? "Release (amp lag)" : "Amp lag");
         reg.slider(spreadLow, "%.0f", "Spread from");
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("MIDI pitch: below it the partials stay centred (mono bass)");
         reg.slider(spreadHigh, "%.0f", "Spread full at");
