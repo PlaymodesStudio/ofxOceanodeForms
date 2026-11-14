@@ -167,7 +167,8 @@ inline void Editor::instrumentMenuItems(const std::string& ref, const std::strin
         if(ImGui::MenuItem("Mute", nullptr, (st & 1) != 0)) toggleInstMS(ref, 0);
         if(ImGui::MenuItem("Solo", nullptr, (st & 2) != 0)) toggleInstMS(ref, 1);
     }
-    if(isPreset && ImGui::MenuItem("Edit instrument")){ selPreset = ref; composeMode = 1; showTab = "Compose"; }
+    if(isPreset && ImGui::MenuItem("Edit this instrument")) sceneInstrumentEditRef = ref;   // its own window
+    if(isPreset && ImGui::MenuItem("Show in Library")){ selPreset = ref; composeMode = 1; showTab = "Compose"; }
     ImGui::Separator();
     if(inCell){
         const Scene& s = sit->second;
@@ -178,6 +179,24 @@ inline void Editor::instrumentMenuItems(const std::string& ref, const std::strin
         }
         if(ImGui::MenuItem("Move to a new layer")) instAction = {1, scene, ref, layer, cell, (int)s.layers.size()};
         ImGui::Separator();
+        if(ImGui::MenuItem("Replace instrument...")){
+            onPick = [this, scene, layer, cell](const std::string& m){
+                auto it2 = engine->scenes.find(scene);
+                if(it2 == engine->scenes.end() || layer >= (int)it2->second.layers.size() || cell >= (int)it2->second.layers[layer].cells.size()) return;
+                it2->second.layers[layer].cells[cell].item = m;
+                dirty.insert(scene);
+            };
+            openPicker = true;
+        }
+        if(cell < (int)s.layers[layer].cells.size() && ImGui::BeginMenu(("Group: G" + ofToString(s.layers[layer].cells[cell].group)).c_str())){
+            for(int g = 0; g < 7; g++)
+                if(ImGui::MenuItem(("G" + ofToString(g)).c_str(), nullptr, s.layers[layer].cells[cell].group == g)){
+                    sit->second.layers[layer].cells[cell].group = g;
+                    dirty.insert(scene);
+                }
+            ImGui::EndMenu();
+        }
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Its group: the layer's group chance (Layer options) gates the instruments of a group together");
         if(ImGui::MenuItem("Remove from this layer")) instAction = {3, scene, ref, layer, cell, -1};
     }else{
         // from the library: into the scene being edited
@@ -263,6 +282,22 @@ inline void Editor::drawInstDeleteModal(){
     }
     if(close){ instDeleteAsk.clear(); ImGui::CloseCurrentPopup(); }
     ImGui::EndPopup();
+}
+
+// The instrument editor in a floating window: opened from any instrument list, it stays while the
+// tabs change.
+inline void Editor::drawInstrumentWindow(){
+    if(sceneInstrumentEditRef.empty()) return;
+    auto pi = engine->presets.find(sceneInstrumentEditRef);
+    if(pi == engine->presets.end()){ sceneInstrumentEditRef.clear(); return; }
+    float zz = z();
+    bool open = true;
+    ImGui::SetNextWindowSize(ImVec2(560 * zz, 660 * zz), ImGuiCond_FirstUseEver);
+    std::string title = "Instrument: " + pi->second.name + (dirtyPresets.count(sceneInstrumentEditRef) ? " *" : "") + "###formsInstrumentWindow";
+    std::string ref = sceneInstrumentEditRef;   // the editor may change or clear it
+    if(ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse)) drawSceneInstrumentEditor(ref);
+    ImGui::End();
+    if(!open) sceneInstrumentEditRef.clear();
 }
 
 } // namespace forms
