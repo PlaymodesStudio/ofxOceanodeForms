@@ -619,6 +619,8 @@ protected:   // (Forms GL Box derives from Forms Box)
             r.sceneAt = [this](double beat){ return engine.sceneAtBeat(beat); };
         }
         scroller.defaultBars = forms::barCount(clock.bars);
+        // the live buffers' depth (Forms GL Box's option; 16 bits unless switched off)
+        { const int fmt = liveFormat(); scroller.bufferFormat = fmt; for(auto& r : rings) r.bufferFormat = fmt; layerFx.internalFormat = fmt; post.internalFormat = fmt; }
         scroller.update(L, clock.phase, head.headerPos, viewW, viewH);
         if(scroller.beatRebased){ feed.restart(); laneMemo.clear(); }
         engine.schedule->headerBeat = scroller.headerBeat;
@@ -683,7 +685,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         if(exportPending) exportCurrentFrame();
         if(saveOutputPending && output){   // and the final image as it is seen (Output)
             saveOutputPending = false;
-            ofPixels px;
+            ofShortPixels px;
             if(output == &compositeFbo.getTexture()) compositeFbo.readToPixels(px);
             else if(output == &bgFbo.getTexture()) bgFbo.readToPixels(px);
             else if(output == &post.featherFbo.getTexture()) post.featherFbo.readToPixels(px);
@@ -699,6 +701,12 @@ protected:   // (Forms GL Box derives from Forms Box)
 
     // ---------------------------------------------------------------- effects before the sound
 
+    // Live GPU buffers: 16 bits per channel (GL_RGBA16), or 8 (GL_RGBA) as a fallback if 16 costs
+    // frame rate. The scrollers, the layer rings, the layer effects, the composite, the background
+    // and the post-processing follow it. The images are drawn in 16 bits either way.
+    int liveBits = 16;
+    int liveFormat() const { return liveBits == 8 ? GL_RGBA : GL_RGBA16; }
+    int compositeFormat = 0, bgFormat = 0;
     forms::LayerGain layerGain;
     forms::LayerFx layerFx;
     // H blur, V blur and the trail on every layer's buffer; the trail's length is in beats, so
@@ -984,7 +992,7 @@ protected:   // (Forms GL Box derives from Forms Box)
     // Reads `rows` pixels of column x of an FBO, from row y0 (row 0 = top), as RGBA bytes. The
     // pixel-pack state is set and restored around it: other nodes may leave a PBO bound (which
     // turns our pointer into an offset in GPU memory) or other row settings.
-    static bool readColumn(ofFbo& f, int x, int y0, int rows, std::vector<unsigned char>& px){
+    static bool readColumn(ofFbo& f, int x, int y0, int rows, std::vector<unsigned short>& px){   // 16 bits per channel
         if(!f.isAllocated() || rows < 1) return false;
         int w = (int)f.getWidth(), h = (int)f.getHeight();
         x = ofClamp(x, 0, w - 1);
@@ -1004,7 +1012,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         glPixelStorei(GL_PACK_SKIP_ROWS, 0);
         glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, f.getId());
-        glReadPixels(x, y0, 1, rows, GL_RGBA, GL_UNSIGNED_BYTE, px.data());   // FBO row 0 = the image's top
+        glReadPixels(x, y0, 1, rows, GL_RGBA, GL_UNSIGNED_SHORT, px.data());   // FBO row 0 = the image's top
         glBindFramebuffer(GL_READ_FRAMEBUFFER, prevFb);
         glPixelStorei(GL_PACK_ALIGNMENT, pAlign);
         glPixelStorei(GL_PACK_ROW_LENGTH, pRow);
@@ -1025,7 +1033,7 @@ protected:   // (Forms GL Box derives from Forms Box)
     int kicksFired = 0;
     forms::SoundSettings snd;
     forms::LRBalance lrBal;
-    std::vector<std::vector<unsigned char>> cols = std::vector<std::vector<unsigned char>>(4);
+    std::vector<std::vector<unsigned short>> cols = std::vector<std::vector<unsigned short>>(4);
     struct LayerKey { int root = -1000, notegrid = -1, trans = 0; float q = -1; std::vector<float> scale; std::vector<float> settings; };
     std::vector<LayerKey> layerKeys = std::vector<LayerKey>(4);
     std::vector<forms::PartialLayout> layouts = std::vector<forms::PartialLayout>(4);
@@ -1150,12 +1158,12 @@ protected:   // (Forms GL Box derives from Forms Box)
             const forms::json kperf = livePerf(kimg);   // the kick scene's own detection settings
             const float kThreshold = forms::perfF(kperf, "kickThreshold", snd.kickThreshold);
             int strip = std::max(1, std::min(h, (int)std::lround(h * forms::perfF(kperf, "kickStrip", snd.kickStrip))));
-            const unsigned char* px = nullptr;
-            std::vector<unsigned char> sp;
+            const unsigned short* px = nullptr;
+            std::vector<unsigned short> sp;
             if(haveCol[kl]) px = cols[kl].data() + (h - strip) * 4;
             else if(readColumn(*kf, x, h - strip, strip, sp)) px = sp.data();
             double sum = 0;
-            if(px) for(int i = 0; i < strip; i++) sum += (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / (3 * 255.0);
+            if(px) for(int i = 0; i < strip; i++) sum += (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / (3 * 65535.0);
             kickLevel = (float)(sum / strip);
             bool on = forms::perfF(kperf, "kDetectOn", 1) > 0.5f;
             int k = (on && kickLevel > kThreshold) ? 1 : 0;
@@ -1379,7 +1387,7 @@ protected:   // (Forms GL Box derives from Forms Box)
 
     bool writeTexturePng(const ofTexture& texture, const std::filesystem::path& path, bool transparent){
         if(!texture.isAllocated() || exportWidth < 1 || exportHeight < 1) return false;
-        ofFboSettings st; st.width = exportWidth; st.height = exportHeight; st.internalformat = GL_RGBA;
+        ofFboSettings st; st.width = exportWidth; st.height = exportHeight; st.internalformat = GL_RGBA16;
         ofFbo fbo; fbo.allocate(st);
         if(!fbo.isAllocated()) return false;
         fbo.begin();
@@ -1387,14 +1395,14 @@ protected:   // (Forms GL Box derives from Forms Box)
         ofPushStyle(); ofEnableBlendMode(OF_BLENDMODE_DISABLED); ofSetColor(255);
         texture.draw(0, 0, exportWidth, exportHeight);
         ofPopStyle(); fbo.end();
-        ofPixels pixels; fbo.readToPixels(pixels);
+        ofShortPixels pixels; fbo.readToPixels(pixels);   // 16 bits per channel: a 16-bit PNG
         // The live layer buffers are premultiplied; PNG layers need straight alpha for normal compositing.
         if(transparent && pixels.getNumChannels() >= 4){
-            unsigned char* data = pixels.getData();
+            unsigned short* data = pixels.getData();
             size_t count = (size_t)exportWidth * exportHeight;
             for(size_t i = 0; i < count; i++){
-                unsigned char a = data[i * 4 + 3];
-                for(int c = 0; c < 3; c++) data[i * 4 + c] = a ? (unsigned char)std::min(255, (data[i * 4 + c] * 255 + a / 2) / a) : 0;
+                uint32_t a = data[i * 4 + 3];
+                for(int c = 0; c < 3; c++) data[i * 4 + c] = a ? (unsigned short)std::min<uint32_t>(65535u, ((uint32_t)data[i * 4 + c] * 65535u + a / 2) / a) : 0;
             }
         }
         return ofSaveImage(pixels, path.string());
@@ -1465,7 +1473,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         double ppb = viewW / std::max(1.0, lens.count(1) ? lens[1] : 32.0);   // layer 1's scale
         int W = std::min(16384, (int)std::lround((b1 - b0) * ppb)), H = viewH;
         if(W < 2) return "not enough played yet";
-        ofFboSettings st; st.width = W; st.height = H; st.internalformat = GL_RGBA;
+        ofFboSettings st; st.width = W; st.height = H; st.internalformat = GL_RGBA16;
         ofFbo comp; comp.allocate(st);
         comp.begin(); ofBackground(0); comp.end();
         size_t count=engine.schedule->layers.size();
@@ -1483,7 +1491,7 @@ protected:   // (Forms GL Box derives from Forms Box)
             bool any=false; double layerLen=32; formscover::Settings layerCover;
             for(auto& e:es){
                 if(e.layer!=(int)layer+1 || e.start+e.len<=b0 || e.start>=b1) continue;
-                ofImage im; if(!im.load(e.png)) continue;
+                ofShortImage im; if(!im.load(e.png)) continue;
                 float x=(e.start-b0)*ppb, width=e.len*ppb;
                 layerGain.draw(im.getTexture(),x,width,H,e.gain);
                 blends[layer]=e.blend; any=true; layerLen=e.len;
@@ -1521,7 +1529,7 @@ protected:   // (Forms GL Box derives from Forms Box)
             else {glBlendEquation(GL_MAX);glBlendFunc(GL_ONE,GL_ONE);}
             ofSetColor(255); frames[i].draw(0,0); glBlendEquation(GL_FUNC_ADD); ofPopStyle(); comp.end();
         }
-        ofPixels px;
+        ofShortPixels px;
         comp.readToPixels(px);
         px.setNumChannels(3);
         std::string out = (engine.sessionDir() / ("panorama_" + ofToString((int)b0) + "-" + ofToString((int)b1) + (withLook ? "" : "_raw") + ".png")).string();
@@ -1536,14 +1544,14 @@ protected:   // (Forms GL Box derives from Forms Box)
     // A rendered page (a Gallery print: k x the size) with its layer's effects, next to it as <name>_look.png.
     // Its layer and bars come from its sidecar; blur radii scale with the size (k).
     std::string lookPng(const std::string& png){
-        ofImage im;
+        ofShortImage im;
         if(!im.load(png)) return "";
         int W = (int)im.getWidth(), H = (int)im.getHeight();
         if(W < 1 || H < 1 || W > 16384 || H > 16384) return "";
         int layer = 0; double bars = 8;
         std::ifstream sj(ofFilePath::removeExt(png) + ".json");
         if(sj){ try { forms::json j; sj >> j; layer = std::max(0,j.value("layer", 1) - 1); ensureLayerCount(layer+1); bars = forms::barsFrom(j, "bars", 8); } catch(...) {} }
-        ofFboSettings st; st.width = W; st.height = H; st.internalformat = GL_RGBA;
+        ofFboSettings st; st.width = W; st.height = H; st.internalformat = GL_RGBA16;
         ofFbo lf; lf.allocate(st);
         lf.begin(); ofClear(0, 0, 0, 0);
         ofPushStyle(); ofEnableAlphaBlending();
@@ -1568,7 +1576,7 @@ protected:   // (Forms GL Box derives from Forms Box)
             ofFloatColor target = postCtl.paper && black ? ofFloatColor(1, 1, 1) : ofFloatColor(postCtl.bgR, postCtl.bgG, postCtl.bgB);
             exportTexture = post.feather(*exportTexture, target);
         }
-        ofPixels px;
+        ofShortPixels px;
         if(exportTexture == &post.featherFbo.getTexture()) post.featherFbo.readToPixels(px);
         else comp.readToPixels(px);
         px.setNumChannels(3);
@@ -1582,9 +1590,9 @@ protected:   // (Forms GL Box derives from Forms Box)
     void composite(int nLayers){
         int w = viewW, h = viewH;
         if(w < 1 || h < 1) return;
-        if(!compositeFbo.isAllocated() || (int)compositeFbo.getWidth() != w || (int)compositeFbo.getHeight() != h){
-            ofFboSettings st; st.width = w; st.height = h; st.internalformat = GL_RGBA;
-            compositeFbo.allocate(st);
+        if(!compositeFbo.isAllocated() || (int)compositeFbo.getWidth() != w || (int)compositeFbo.getHeight() != h || compositeFormat != liveFormat()){
+            ofFboSettings st; st.width = w; st.height = h; st.internalformat = liveFormat();
+            compositeFbo.allocate(st); compositeFormat = liveFormat();
         }
         compositeFbo.begin();
         ofBackground(0);
@@ -1648,9 +1656,10 @@ protected:   // (Forms GL Box derives from Forms Box)
             if(!bgOk) ofLogError("Forms Box") << "background shader failed: no background";
         }
         if(!bgOk) return &img;
-        ofFboSettings st; st.width = w; st.height = h; st.internalformat = GL_RGBA;
-        if(!coverageFbo.isAllocated() || (int)coverageFbo.getWidth() != w || (int)coverageFbo.getHeight() != h) coverageFbo.allocate(st);
-        if(!bgFbo.isAllocated() || (int)bgFbo.getWidth() != w || (int)bgFbo.getHeight() != h) bgFbo.allocate(st);
+        ofFboSettings st; st.width = w; st.height = h; st.internalformat = liveFormat();
+        const bool reformat = bgFormat != liveFormat(); bgFormat = liveFormat();
+        if(reformat || !coverageFbo.isAllocated() || (int)coverageFbo.getWidth() != w || (int)coverageFbo.getHeight() != h) coverageFbo.allocate(st);
+        if(reformat || !bgFbo.isAllocated() || (int)bgFbo.getWidth() != w || (int)bgFbo.getHeight() != h) bgFbo.allocate(st);
         // coverage: alpha only, a + d x (1 - a), order does not matter
         coverageFbo.begin();
         ofClear(0, 0, 0, 0);
@@ -1696,7 +1705,7 @@ protected:   // (Forms GL Box derives from Forms Box)
     // The composite, plus what every layer drew and where (to check alignment and alpha offline)
     void saveComposite(const std::string& base){
         if(!compositeFbo.isAllocated()) return;
-        ofPixels px;
+        ofShortPixels px;
         compositeFbo.readToPixels(px);
         ofSaveImage(px, base + ".png");
         ofBuffer info;

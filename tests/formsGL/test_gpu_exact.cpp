@@ -1,4 +1,6 @@
-// Exact visual regression: CPU vs integer GPU raster, shared textures and complete recipes.
+// Shared 16-bit texture uploads (worker contexts, fences, retirement) and complete recipes with the
+// GPU object attached. The integer kick rasterizer it used to compare is retired (16-bit canvas):
+// kickSweep must leave the canvas to the CPU, and the result must equal the CPU's.
 // Build: clang++ -std=c++17 -O2 -DGL_SILENCE_DEPRECATION -I src/formsGL -I <OF>/libs/json/include
 //   tests/formsGL/test_gpu_exact.cpp -framework OpenGL -o <scratch>/gpu_exact
 // Run: gpu_exact [--16k] [sparse_euclid_kicks.json]. No application data is written.
@@ -12,18 +14,6 @@ static void check(bool ok, const std::string& message){ if(!ok) throw std::runti
 static double ms(std::chrono::steady_clock::time_point start){
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
-static void reference(Canvas& c, float x, float top, float w, float power, int cap){
-    float h = c.h - top;
-    for(float i = 0; i < w; i++){
-        float ph = pjPow(i / w, 0.25f), ph2 = pjPow(1 - i / w, power * 2);
-        float y2 = ph * h + top, h2 = c.h - y2;
-        for(float j = 0; j < h2; j++){
-            float af = ph2 * 255 * pjPow(j / h2, power / 2);
-            int a = (int)(pjConstrain(af / 255.0f, 0.0f, 1.0f) * 255);
-            c.point(i + x, j + y2, 255, 255, 255, a, cap);
-        }
-    }
-}
 static json normalize(json v){
     if(v.is_object() && v.contains("options")) return normalize(v["options"][0]);
     if(v.is_object()) for(auto& i : v.items()) i.value() = normalize(i.value());
@@ -35,8 +25,8 @@ static void sharedUploads(bool large){
     for(GLenum target : {GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_RECTANGLE)}){
         auto pool = SharedTexturePool::create(main, target); check(bool(pool), "shared context pool");
         const int w = large ? 15360 : 4093, h = large ? 8640 : 2077;
-        std::vector<uint8_t> pixels((size_t)w * h * 4), back(pixels.size());
-        for(size_t i = 0; i < pixels.size(); i++) pixels[i] = (i * 17 + i / 293) & 255;
+        std::vector<uint16_t> pixels((size_t)w * h * 4), back(pixels.size());
+        for(size_t i = 0; i < pixels.size(); i++) pixels[i] = (uint16_t)((i * 4099 + i / 293) & 65535);   // every bit of the 16 used
         std::shared_ptr<SharedTexture> texture;
         GLuint fbo = 0, colour = 0;
         glGenFramebuffers(1, &fbo); glGenTextures(1, &colour);
@@ -65,22 +55,35 @@ static void sharedUploads(bool large){
         auto start = std::chrono::steady_clock::now();
         while(!texture->ready()){ check(ms(start) < 3000, "fence timeout"); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
         glBindTexture(target, texture->id); glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-        glGetTexImage(target, 0, GL_RGBA, GL_UNSIGNED_BYTE, back.data());
-        check(pixels == back, "shared texture changed bytes or row order");
+        glGetTexImage(target, 0, GL_RGBA, GL_UNSIGNED_SHORT, back.data());
+        check(texture->internalFormat == GL_RGBA16, "image format must be 16 bits per channel");
+        check(pixels == back, "shared texture changed values or row order");
         GLuint id = texture->id; texture.reset(); pool->drain(); check(!glIsTexture(id), "retirement failed");
+        // The node's 8-bit live buffers option: the same page uploaded as GL_RGBA8, each value rounded.
+        if(!large){
+            std::thread eightWorker([&]{ GpuEffectsCGL renderer(pool->context()); texture = renderer.upload(pixels, w, h, pool, GL_RGBA, true); });
+            eightWorker.join(); check(bool(texture), "8-bit shared upload failed");
+            check(texture->internalFormat == GL_RGBA8, "8-bit option must make an 8-bit texture");
+            start = std::chrono::steady_clock::now();
+            while(!texture->ready()){ check(ms(start) < 3000, "8-bit fence timeout"); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+            std::vector<uint8_t> back8(pixels.size());
+            glBindTexture(target, texture->id); glGetTexImage(target, 0, GL_RGBA, GL_UNSIGNED_BYTE, back8.data());
+            for(size_t i = 0; i < pixels.size(); i++) if(back8[i] != (uint8_t)((pixels[i] + 128u) / 257u)){ check(false, "8-bit upload: a value is not the rounded 16-bit one"); }
+            id = texture->id; texture.reset(); pool->drain(); check(!glIsTexture(id), "8-bit retirement failed");
+        }
         // Covers are single-channel, often with odd row widths. They must take the
         // same worker/fence path as the image, without a UI-thread texture upload.
-        std::vector<uint8_t> alpha((size_t)w*17),alphaBack(alpha.size());
-        for(size_t i=0;i<alpha.size();++i) alpha[i]=(i*23+i/79)&255;
+        std::vector<uint16_t> alpha((size_t)w*17),alphaBack(alpha.size());
+        for(size_t i=0;i<alpha.size();++i) alpha[i]=(uint16_t)((i*5003+i/79)&65535);
         std::thread maskWorker([&]{
             GpuEffectsCGL renderer(pool->context()); texture=renderer.upload(alpha,w,17,pool,GL_RED);
         });
         maskWorker.join(); check(bool(texture),"shared cover upload failed");
-        check(texture->internalFormat==GL_R8,"cover format must remain single-channel");
+        check(texture->internalFormat==GL_R16,"cover format must remain single-channel, 16 bits");
         start=std::chrono::steady_clock::now();
         while(!texture->ready()){check(ms(start)<3000,"cover fence timeout");std::this_thread::sleep_for(std::chrono::milliseconds(1));}
         glBindTexture(target,texture->id);glPixelStorei(GL_PACK_ALIGNMENT,1);
-        glGetTexImage(target,0,GL_RED,GL_UNSIGNED_BYTE,alphaBack.data());glPixelStorei(GL_PACK_ALIGNMENT,4);
+        glGetTexImage(target,0,GL_RED,GL_UNSIGNED_SHORT,alphaBack.data());glPixelStorei(GL_PACK_ALIGNMENT,4);
         check(alpha==alphaBack,"cover pixels or row alignment changed");
         id=texture->id;texture.reset();pool->drain();check(!glIsTexture(id),"cover retirement failed");
     }
@@ -100,23 +103,6 @@ int main(int argc, char** argv){
             check(!gpu.kickSweep(fallback, 0, 0, 256, -1, Canvas::ROUND), "unsupported envelope did not fall back");
             check(fallback.px == before, "unsupported path altered the canvas");
         }
-        std::mt19937 rng(42);
-        for(int t = 0; t < 180; t++){
-            Canvas a; a.allocate(97 + rng() % 700, 81 + rng() % 600);
-            a.layer = t % 3 == 1; a.addMode = t % 3 == 2;
-            for(auto& p : a.px) p = rng();
-            Canvas b = a;
-            for(int pass = 0; pass < 3; pass++){
-                float x = (int(rng() % 2000) - 900) / 7.f, y = (int(rng() % 3000) - 1600) / 7.f;
-                if(t % 7 == 0){ x = -0.00105f; y = 127.99999f; }
-                float w = (1 + rng() % 2500) / 3.f, power = (1 + rng() % 1000) / 67.f;
-                int cap = (t / 3) % 3;
-                reference(a, x, y, w, power, cap);
-                check(gpu.kickSweep(b, x, y, w, power, cap), "GPU fallback: " + gpu.error);
-                check(a.px == b.px, "kick differs in case " + std::to_string(t));
-            }
-        }
-        printf("540 kick comparisons: exact (caps, layers, additive, overlap, fractional clipping)\n");
         sharedUploads(large);
         Schemas schema; check(schema.loadEmbedded(), "schemas");
         json items = json::array();
@@ -147,7 +133,6 @@ int main(int argc, char** argv){
             printf("recipe %dx%d variant %d: exact; parallel CPU %.1f ms, GPU %.1f ms\n",size.first,size.second,variant,cpu,gm);
             printf("  GPU preparation %.1f ms, raster/transfers %.1f ms\n", gpu.exactPrepareMs()-prep, gpu.exactRasterMs()-draw);
         }
-        check(gpu.exactDraws() > 0, "GPU path never exercised");
-        printf("ALL EXACT (%llu GPU draws)\n", (unsigned long long)gpu.exactDraws());
+        printf("ALL EXACT\n");
     }catch(const std::exception& e){ fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }
 }

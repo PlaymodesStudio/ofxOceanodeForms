@@ -169,14 +169,14 @@ struct GpuEffects {
     // Optional exact raster paths. False leaves the canvas untouched for the CPU fallback.
     virtual bool kickSweep(Canvas&, float, float, float, float, int){ return false; }
     // cellX / cellY: the noise cell's width and height in px (square unless maskBars sets the width)
-    virtual bool mask(std::vector<uint32_t>& px, int W, int H, const SketchPRNG& prng, float ox, float oy, float cellX, float cellY,
+    virtual bool mask(std::vector<Canvas::Px>& px, int W, int H, const SketchPRNG& prng, float ox, float oy, float cellX, float cellY,
                       float gain, float con, float out, bool invert, float threshold, float amount, bool canvasMode) = 0;
 };
 
 struct RenderResult {
     std::vector<formscover::Mask> covers;
     std::string error;           // "" = drawn
-    std::vector<uint8_t> rgba;   // straight alpha, w x h x 4
+    std::vector<uint16_t> rgba;  // straight alpha, w x h x 4, 16 bits per channel
     int w = 0, h = 0;
     json itemResults = json::array();
     int renderMs = 0;
@@ -265,7 +265,7 @@ public:
             for(int i = 0; i < 5; i++) customColour[i] = 0xFF000000u | (uint32_t)std::stoul(cols[i % cols.size()].get<std::string>(), nullptr, 16);
         }
         style = Style();
-        style.strokeColor = 0xFFFFFFFFu; style.strokeWeight = UY;
+        setStroke(0xFFFFFFFFu); style.strokeWeight = UY;
         styleStack.clear();
         gc = &c;
         M = Mat(); matStack.clear();
@@ -281,7 +281,7 @@ public:
             if(item.contains("method")){ ir["method"] = item["method"]; err = "legacy methods are not ported"; }
             else if(item.contains("gen")){
                 ir["gen"] = item["gen"];
-                std::vector<uint32_t> snap;
+                std::vector<Canvas::Px> snap;
                 int cx0 = 0, cx1 = width;
                 if(item.contains("clipBars")){
                     auto& cb = item["clipBars"];
@@ -296,7 +296,7 @@ public:
                 // the scene cell's volume: the item's result is blended back toward the canvas
                 // before it (1 = as drawn, 0 = not there); effects act at that strength too
                 float igain = item.contains("gain") ? std::clamp(jf(item["gain"]), 0.0f, 1.0f) : 1.0f;
-                std::vector<uint32_t> before;
+                std::vector<Canvas::Px> before;
                 if(igain < 1) before = c.px;
                 hasShareKey = item.contains("shareKey");
                 itemShareKey = hasShareKey ? item.value("shareKey", std::string()) : std::string();
@@ -318,12 +318,11 @@ public:
                         // Retain at most an HD mask. Max pooling keeps fine strokes at print sizes.
                         float scale = std::min(1.f, std::min(1920.f / viewW, 1080.f / height));
                         mask.w = std::max(1, (int)std::lround(width * scale)); mask.h = std::max(1, (int)std::lround(height * scale));
-                        auto alpha = std::make_shared<std::vector<uint8_t>>((size_t)mask.w * mask.h, 0);
+                        auto alpha = std::make_shared<std::vector<uint16_t>>((size_t)mask.w * mask.h, 0);
                         for(int y=0; y<height; ++y) for(int x=cx0; x<cx1; ++x){
-                            uint32_t v = silhouette.c.px[(size_t)y * width + x];
-                            int a = (v>>24)&255u; // geometric coverage, independent of the ink colour
+                            int a = Canvas::pxA(silhouette.c.px[(size_t)y * width + x]); // geometric coverage, independent of the ink colour
                             size_t q=(size_t)std::min(mask.h-1,y*mask.h/height)*mask.w+std::min(mask.w-1,x*mask.w/width);
-                            (*alpha)[q]=std::max((*alpha)[q],(uint8_t)std::lround(a*igain));
+                            (*alpha)[q]=std::max((*alpha)[q],(uint16_t)std::lround(a*igain));
                         }
                         mask.alpha=alpha; out.covers.push_back(std::move(mask));
                     }
@@ -346,26 +345,25 @@ public:
                     mask.settings.growRight=mask.settings.growHeight=mask.settings.feather=mask.settings.release=0;
                     float scale=std::min(1.f,std::min(1920.f/viewW,1080.f/height));
                     mask.w=std::max(1,(int)std::lround(width*scale));mask.h=std::max(1,(int)std::lround(height*scale));
-                    auto alpha=std::make_shared<std::vector<uint8_t>>((size_t)mask.w*mask.h,0);
+                    auto alpha=std::make_shared<std::vector<uint16_t>>((size_t)mask.w*mask.h,0);
                     for(auto& span:clearSpans){
                         int x0=std::max(cx0,pjRound(span.first)),x1=std::min(cx1,pjRound(span.first+span.second));
                         int a=std::clamp((int)std::floor(x0*mask.w/(double)width),0,mask.w);
                         int b=std::clamp((int)std::ceil(x1*mask.w/(double)width),0,mask.w);
-                        for(int y=0;y<mask.h;++y)if(b>a)std::fill(alpha->begin()+y*mask.w+a,alpha->begin()+y*mask.w+b,255);
+                        for(int y=0;y<mask.h;++y)if(b>a)std::fill(alpha->begin()+y*mask.w+a,alpha->begin()+y*mask.w+b,(uint16_t)65535);
                     }
                     mask.alpha=alpha;out.covers.push_back(std::move(mask));
                 }
                 clipX0 = -1e9f; clipX1 = 1e9f; clipBar0 = -1; clipBar1 = -1;
                 hasShareKey = false; itemShareKey.clear(); blockOn = true;
                 if(!before.empty() && before.size() == c.px.size()){
-                    uint32_t gi = (uint32_t)std::lround(igain * 256);
                     for(size_t q = 0; q < c.px.size(); q++){
-                        uint32_t a0 = before[q], a1 = c.px[q];
+                        Canvas::Px a0 = before[q], a1 = c.px[q];
                         if(a0 == a1) continue;
-                        uint32_t r = 0;
-                        for(int sh = 0; sh < 32; sh += 8){
-                            int v0 = (a0 >> sh) & 255, v1 = (a1 >> sh) & 255;
-                            r |= (uint32_t)std::clamp(v0 + (((v1 - v0) * (int)gi) >> 8), 0, 255) << sh;
+                        Canvas::Px r = 0;
+                        for(int sh = 0; sh < 64; sh += 16){
+                            int v0 = (int)((a0 >> sh) & 0xFFFF), v1 = (int)((a1 >> sh) & 0xFFFF);
+                            r |= (Canvas::Px)std::clamp((int)std::lround(v0 + (v1 - v0) * igain), 0, 65535) << sh;
                         }
                         c.px[q] = r;
                     }
@@ -424,7 +422,14 @@ private:
     struct StepPattern;
     std::shared_ptr<StepPattern> lastPatternRef;                 // the last stack layer's pattern (per request)
     std::vector<std::shared_ptr<StepPattern>> patternHistory;    // every pattern layer of the image, in order
-    struct Style { uint32_t strokeColor = 0xFFFFFFFF, fillColor = 0xFFFFFFFF; bool stroke = true, fill = true; float strokeWeight = 1; int cap = Canvas::ROUND; };
+    // strokeColor / fillColor: 0xAARRGGBB as Processing holds them (the colour; their alpha byte is the
+    // alpha truncated to a level). strokeA / fillA: the alpha itself on the 0..255 scale, not rounded:
+    // what is drawn with (16 bits in the canvas). The setters below keep both.
+    struct Style { uint32_t strokeColor = 0xFFFFFFFF, fillColor = 0xFFFFFFFF; float strokeA = 255, fillA = 255; bool stroke = true, fill = true; float strokeWeight = 1; int cap = Canvas::ROUND; };
+    typedef Canvas::Px Px;
+    void setStroke(uint32_t argb){ style.strokeColor = argb; style.strokeA = (float)((argb >> 24) & 255); }
+    void setFill(uint32_t argb){ style.fillColor = argb; style.fillA = (float)((argb >> 24) & 255); }
+    static float clampA(float a){ return a > 255 ? 255.0f : a > 0 ? a : 0.0f; }
     Style style;
 
     // ---- Processing's random
@@ -436,24 +441,25 @@ private:
     // ---- style (Processing's stroke() variants)
     // stroke(int argb, float alpha) with a colour that has alpha bits (colorCalcARGB)
     void strokeARGB(uint32_t argb, float alpha){
-        if(alpha == 255.0f){ style.strokeColor = argb; return; }
-        int ai = (int)(((argb >> 24) & 255) * pjConstrain(alpha / 255.0f, 0.0f, 1.0f));
-        style.strokeColor = ((uint32_t)ai << 24) | (argb & 0xFFFFFF);
+        if(alpha == 255.0f){ setStroke(argb); return; }
+        float af = ((argb >> 24) & 255) * pjConstrain(alpha / 255.0f, 0.0f, 1.0f);
+        style.strokeColor = ((uint32_t)(int)af << 24) | (argb & 0xFFFFFF); style.strokeA = af;
     }
     // stroke(float gray, float alpha)
     void strokeGray(float gray, float alpha){
         int g = (int)(pjConstrain(gray / 255.0f, 0.0f, 1.0f) * 255);
-        int ai = (int)(pjConstrain(alpha / 255.0f, 0.0f, 1.0f) * 255);
-        style.strokeColor = ((uint32_t)ai << 24) | ((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g;
+        float af = pjConstrain(alpha / 255.0f, 0.0f, 1.0f) * 255;
+        style.strokeColor = ((uint32_t)(int)af << 24) | ((uint32_t)g << 16) | ((uint32_t)g << 8) | (uint32_t)g; style.strokeA = af;
     }
-    void strokeColour(uint32_t argb){ style.strokeColor = argb; style.stroke = true; }   // stroke(int) with a colour
+    void strokeColour(uint32_t argb){ setStroke(argb); style.stroke = true; }   // stroke(int) with a colour
     // stroke(float r, g, b, a) (colorCalc: each clamped, / 255, x 255, truncated)
     void strokeRGBA(float r, float g, float b, float a){
         auto ch = [](float v){ if(v > 255) v = 255; if(v < 0) v = 0; return (int)((v / 255.0f) * 255); };
         style.strokeColor = ((uint32_t)ch(a) << 24) | ((uint32_t)ch(r) << 16) | ((uint32_t)ch(g) << 8) | (uint32_t)ch(b);
+        style.strokeA = clampA(a);
         style.stroke = true;
     }
-    void fillColour(uint32_t argb){ style.fillColor = argb; style.fill = true; }
+    void fillColour(uint32_t argb){ setFill(argb); style.fill = true; }
     std::vector<Style> styleStack;
     void pushStyle(){ styleStack.push_back(style); }
     void popStyle(){ if(!styleStack.empty()){ style = styleStack.back(); styleStack.pop_back(); } }
@@ -475,21 +481,21 @@ private:
     void point(float x, float y){
         if(!style.stroke) return;
         uint32_t s = style.strokeColor;
-        if(sweepStep > 0){ gc->sweptPoint(x, y, std::max(1.0f, style.strokeWeight), sweepStep, red(s), green(s), blue(s), (s >> 24) & 255, style.cap, sweepSpan); return; }
-        if(style.strokeWeight > 1.0001f) gc->thickPoint(x, y, style.strokeWeight, red(s), green(s), blue(s), (s >> 24) & 255, style.cap);
-        else gc->point(x, y, red(s), green(s), blue(s), (s >> 24) & 255, style.cap);
+        if(sweepStep > 0){ gc->sweptPoint(x, y, std::max(1.0f, style.strokeWeight), sweepStep, red(s), green(s), blue(s), style.strokeA, style.cap, sweepSpan); return; }
+        if(style.strokeWeight > 1.0001f) gc->thickPoint(x, y, style.strokeWeight, red(s), green(s), blue(s), style.strokeA, style.cap);
+        else gc->point(x, y, red(s), green(s), blue(s), style.strokeA, style.cap);
     }
     // line(): horizontal / vertical lines of weight 1 by the measured rule; any other as a stroke
     void line(float x0, float y0, float x1, float y1){
         if(!style.stroke) return;
         uint32_t s = style.strokeColor;
         bool thin = style.strokeWeight <= 1.0001f;
-        if(thin && gc->lineAxis(x0, y0, x1, y1, red(s), green(s), blue(s), (s >> 24) & 255, style.cap)) return;
-        gc->strokePath({{x0, y0}, {x1, y1}}, std::max(1.0f, style.strokeWeight), style.cap, red(s), green(s), blue(s), (s >> 24) & 255);
+        if(thin && gc->lineAxis(x0, y0, x1, y1, red(s), green(s), blue(s), style.strokeA, style.cap)) return;
+        gc->strokePath({{x0, y0}, {x1, y1}}, std::max(1.0f, style.strokeWeight), style.cap, red(s), green(s), blue(s), style.strokeA);
     }
     // rect(x, y, w, h), CORNER mode, fill only (box coverage, as Java2D)
     void rect(float x, float y, float w, float h){
-        if(style.fill){ uint32_t f = style.fillColor; gc->fillRect(x, y, w, h, red(f), green(f), blue(f), (f >> 24) & 255); }
+        if(style.fill){ uint32_t f = style.fillColor; gc->fillRect(x, y, w, h, red(f), green(f), blue(f), style.fillA); }
     }
 
     void builtinScales(){
@@ -969,7 +975,7 @@ private:
             for(float j = 0; j < h2; j++){
                 float ph3 = pjPow(j / h2, power / 2);
                 float alphaFloat = (ph2 * 255 * ph3)*level;
-                int alpha = (int)(pjConstrain(alphaFloat / 255.0f, 0.0f, 1.0f) * 255);
+                float alpha = pjConstrain(alphaFloat / 255.0f, 0.0f, 1.0f) * 255;
                 if(draw) gc->point(i + x, j + y2, 255, 255, 255, alpha, cap);
             }
         });
@@ -1517,8 +1523,11 @@ private:
                     : anchorEnd ? bar * barSize + (s % steps + 1) * stepsize - noteLen + thick / 2
                                 : bar * barSize + (s % steps) * stepsize + thick / 2;
             if(!clearRep && clearChance > 0 && random(100) < clearChance){
-                float cw = clearLenR[1] > 0 ? drawIn(clearLenR) * stepsize : noteLen;
-                blankUnder(anchorEnd ? x - thick / 2 + noteLen - cw : x - thick / 2, cw + thick);
+                bool ownLen = clearLenR[1] > 0;
+                float cw = ownLen ? drawIn(clearLenR) * stepsize : noteLen;
+                // a blank with its own length ends where that length ends (on the grid); only the note's own
+                // blank takes the line thickness too. The extra pixels wiped the attack of the next beat.
+                blankUnder(anchorEnd ? x - thick / 2 + noteLen - cw : x - thick / 2, ownLen ? cw : cw + thick);
             }
             int nv, inc;
             if(chordStep && cNv[k] >= 0){ nv = cNv[k]; inc = cInc[k]; }
@@ -1611,43 +1620,40 @@ private:
         for(int t = 0; t < T; t++) th.emplace_back([&, t]{ for(int y = t; y < n; y += T) f(y); });
         for(auto& x : th) x.join();
     }
-    uint32_t scaleAlpha(uint32_t cc, float k) const {
-        if(procCanvas){
-            int r = pjConstrain(pjRound(((cc >> 16) & 0xFF) * k), 0, 255);
-            int gg = pjConstrain(pjRound(((cc >> 8) & 0xFF) * k), 0, 255);
-            int b = pjConstrain(pjRound((cc & 0xFF) * k), 0, 255);
-            return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)gg << 8) | (uint32_t)b;
-        }
-        int a = (cc >> 24) & 0xFF;
-        int na = pjConstrain(pjRound(a * k), 0, 255);
-        return ((uint32_t)na << 24) | (cc & 0x00FFFFFFu);
+    // (process pixels: 16 bits per channel, Canvas::Px)
+    static int ch16(float v){ return v <= 0 ? 0 : v >= 65535 ? 65535 : (int)(v + 0.5f); }
+    Px scaleAlpha(Px cc, float k) const {
+        if(procCanvas) return Canvas::mkPx(65535, ch16(Canvas::pxR(cc) * k), ch16(Canvas::pxG(cc) * k), ch16(Canvas::pxB(cc) * k));
+        return Canvas::withA(cc, ch16(Canvas::pxA(cc) * k));
     }
-    int level(uint32_t cc) const {
-        if(procCanvas) return std::max((int)((cc >> 16) & 0xFF), std::max((int)((cc >> 8) & 0xFF), (int)(cc & 0xFF)));
-        return (cc >> 24) & 0xFF;
+    int level(Px cc) const {
+        if(procCanvas) return std::max(Canvas::pxR(cc), std::max(Canvas::pxG(cc), Canvas::pxB(cc)));
+        return Canvas::pxA(cc);
     }
-    uint32_t silencePx() const { return procCanvas ? 0xFF000000u : 0u; }
+    Px silencePx() const { return procCanvas ? Canvas::BLACK : (Px)0; }
+    // `s` added to `d` at strength amp, pinned at white (an echo on the opaque canvas)
+    static Px addPx(Px d, Px s, float amp){
+        return Canvas::mkPx(65535, std::min(65535, Canvas::pxR(d) + ch16(Canvas::pxR(s) * amp)), std::min(65535, Canvas::pxG(d) + ch16(Canvas::pxG(s) * amp)), std::min(65535, Canvas::pxB(d) + ch16(Canvas::pxB(s) * amp)));
+    }
     // An echo copy (colour of `s`, alpha `sa`) onto a pixel of the instrument's own layer: the
     // level is the louder of the two, as before, and the colour goes gradually from one to the
     // other around the place where they are equally loud (weights: the alphas squared, so the
     // louder one still dominates away from there). Taking the whole pixel of the louder one
     // instead cut a hard outline where an echo crossed a note of another colour.
-    static uint32_t echoPx(uint32_t d, uint32_t s, int sa){
-        int da = (int)((d >> 24) & 0xFF);
+    static Px echoPx(Px d, Px s, int sa){
+        int da = Canvas::pxA(d);
         if(sa <= 0) return d;
-        if(da <= 0) return ((uint32_t)sa << 24) | (s & 0x00FFFFFFu);
-        const int wd = da * da, ws = sa * sa, wt = wd + ws;
-        uint32_t out = (uint32_t)std::max(da, sa) << 24;
-        for(int sh = 16; sh >= 0; sh -= 8)
-            out |= (uint32_t)(((int)((d >> sh) & 0xFF) * wd + (int)((s >> sh) & 0xFF) * ws + wt / 2) / wt) << sh;
-        return out;
+        if(da <= 0) return Canvas::withA(s, sa);
+        const double wd = (double)da * da, ws = (double)sa * sa, wt = wd + ws;
+        auto mixc = [&](int dc, int sc){ return (int)((dc * wd + sc * ws) / wt + 0.5); };
+        return Canvas::mkPx(std::max(da, sa), mixc(Canvas::pxR(d), Canvas::pxR(s)), mixc(Canvas::pxG(d), Canvas::pxG(s)), mixc(Canvas::pxB(d), Canvas::pxB(s)));
     }
-    int contentColumn(const std::vector<uint32_t>& px, int W, int H, int x0, int x1) const {
+    int contentColumn(const std::vector<Px>& px, int W, int H, int x0, int x1) const {
         for(int x = std::max(0, x0); x < std::min(W, x1); x++)
-            for(int y = 0; y < H; y++) if(level(px[(size_t)y * W + x]) > 0) return x;
+            for(int y = 0; y < H; y++) if(level(px[(size_t)y * W + x]) >= 257) return x;   // content: at least one 8-bit level (1/255), as when the pixels were 8 bits; fainter is not an onset
         return -1;
     }
-    int noteOnset(const std::vector<uint32_t>& px, int W, int H, int b, int steps, float stepsize){
+    int noteOnset(const std::vector<Px>& px, int W, int H, int b, int steps, float stepsize){
         int s0 = (int)random((float)steps);
         for(int k = 0; k < steps; k++){
             int s = (s0 + k) % steps;
@@ -1677,7 +1683,7 @@ private:
         return 1;
     }
 
-    void applyProcesses(std::vector<uint32_t>& px, int W, int H, GenParams& p, int steps){
+    void applyProcesses(std::vector<Px>& px, int W, int H, GenParams& p, int steps){
         procBarsMode = p.option("processBars");
         float stepsize = barSize / steps;
         float noteh = H / (float)notegrid;
@@ -1741,9 +1747,17 @@ private:
                 int x0 = fstart == 1 ? pjRound(b * barSize) : noteOnset(px, W, H, b, steps, stepsize);
                 int len = toEnd ? 0 : pjRound(drawIn(lenR) * barSize);
                 if(x0 < 0) continue;
+                // The held column is sampled a little inside the note (past its attack edge), but the
+                // hold keeps its place on the grid: it ends `len` after the onset / bar line, not after
+                // the sampled column (which made bar-long holds end 1/8 step past the bar line), and a
+                // hold from the bar start also covers the columns before the sampled one.
+                int xg = x0;
                 x0 += std::max(1, pjRound(stepsize / 8));
-                if(toEnd) len = pjRound((b + 1) * barSize) - x0;
-                if(x0 < W) hold(x0, std::min(W, x0 + len));
+                int xEnd = toEnd ? pjRound((b + 1) * barSize) : xg + len;
+                if(x0 < W){
+                    hold(x0, std::min(W, xEnd));
+                    if(fstart == 1) for(int x = std::max(0, xg); x < x0; x++) for(int y = 0; y < H; y++) px[(size_t)y * W + x] = px[(size_t)y * W + x0];
+                }
             }
         }
 
@@ -1781,7 +1795,7 @@ private:
                 // silence (sw * (1 - gate)) sits at the end of the clipped slice. Otherwise the tail stays original. No random drawn.
                 int nTot = (nf > 0 && cntR[0] == cntR[1] && pjRound(cntR[0]) > n) ? pjRound(cntR[0]) : n;
                 int xEnd = pjRound(xs + L);
-                std::vector<uint32_t> src = px;
+                std::vector<Px> src = px;
                 for(int i = 0; i < nTot; i++){
                     int dy = -pjRound(semis * (std::min(1.0f, i / (float)std::max(1, n - 1))) * noteh);
                     int dx0 = pjRound(xs + i * sw);
@@ -2054,7 +2068,7 @@ private:
             bool alongY = p.option("mirrorAxis") == 1;
             int srcMode = p.option("mirrorSource");
             int s = srcMode == 1 ? 0 : srcMode == 2 ? n - 1 : (int)random((float)n);
-            std::vector<uint32_t> src = px;
+            std::vector<Px> src = px;
             int len = alongY ? H : W;
             float sw = len / (float)n;
             for(int i = 0; i < n; i++){
@@ -2085,7 +2099,7 @@ private:
                 int dmode = p.option("cellDest");
                 int dx = same ? sx : (dmode == 2 ? std::min(sx, W - dw) : (int)random((float)(W - dw + 1)));
                 int dy = same ? sy : (dmode == 3 ? std::min(sy, H - dh) : (int)random((float)(H - dh + 1)));
-                std::vector<uint32_t> cell((size_t)w * h);
+                std::vector<Px> cell((size_t)w * h);
                 for(int y = 0; y < h; y++) for(int x = 0; x < w; x++) cell[(size_t)y * w + x] = px[(size_t)(sy + y) * W + sx + x];
                 for(int y = 0; y < dh && dy + y < H; y++)
                     for(int x = 0; x < dw && dx + x < W; x++)
@@ -2098,8 +2112,8 @@ private:
             float ghf = p.f("cellHeight") > 0 ? p.f("cellHeight") * noteh : (float)H;
             int gw = std::max(1, (int)gwf), gh = std::max(1, (int)ghf);
             int rows = std::max(1, (int)(H / ghf));
-            std::vector<uint32_t> cellBuf((size_t)gw * gh);
-            const uint32_t OUT = 1;   // outside (not copied)
+            std::vector<Px> cellBuf((size_t)gw * gh);
+            const Px OUT = 1;   // outside (not copied): alpha 0 with a colour bit, never a drawn pixel
             for(float cx = 0; cx < W; cx += gwf){
                 for(float cy = (float)H; cy > 0; cy -= ghf){
                     int sy = (int)(H - (int)random((float)rows) * ghf) - (int)safey;
@@ -2111,7 +2125,7 @@ private:
                     }
                     for(int y = 0; y < gh; y++) for(int x = 0; x < gw; x++){
                         int yd = dy + y, xd = x0 + x;
-                        uint32_t v = cellBuf[(size_t)y * gw + x];
+                        Px v = cellBuf[(size_t)y * gw + x];
                         if(v != OUT && yd >= 0 && yd < H && xd < W) px[(size_t)yd * W + xd] = v;
                     }
                 }
@@ -2120,7 +2134,7 @@ private:
             int gw = std::max(1, pjRound(p.f("cellWidth") * barSize));
             int gh = p.f("cellHeight") > 0 ? std::max(1, pjRound(p.f("cellHeight") * noteh)) : H;
             int cols = std::max(1, W / gw), rows = std::max(1, H / gh);
-            std::vector<uint32_t> src = px;
+            std::vector<Px> src = px;
             for(int r = 0; r < rows; r++)
                 for(int cc = 0; cc < cols; cc++){
                     int sc2 = (int)random((float)cols);
@@ -2134,7 +2148,7 @@ private:
         }
         int tiles = p.i("tileCount");
         if(tiles > 1){
-            std::vector<uint32_t> src = px;
+            std::vector<Px> src = px;
             int tw2 = std::max(1, W / tiles);
             for(int y = 0; y < H; y++)
                 for(int x = 0; x < W; x++) px[(size_t)y * W + x] = src[(size_t)y * W + std::min(W - 1, (x % tw2) * tiles)];
@@ -2154,7 +2168,7 @@ private:
                 for(auto& o : order) o = (int)random((float)cpb);
             }
             float sg = p.f("seqGate");
-            std::vector<uint32_t> src = px;
+            std::vector<Px> src = px;
             for(int d = 0; d < nch; d++){
                 int bar = (int)(d * sqc);
                 if(!procBarOk(bar)) continue;
@@ -2177,7 +2191,7 @@ private:
         if(trc > 0){
             std::vector<int> semis = p.list("transposeSemis");
             if(!semis.empty()){
-                std::vector<uint32_t> src = px;
+                std::vector<Px> src = px;
                 int tb = p.i("transposeBars");
                 for(int b = 0; b < nBars; b += tb){
                     if(barsOutsideClip(b, tb)) continue;
@@ -2206,7 +2220,7 @@ private:
                 int xs = pjRound(b * barSize + (int)random(4) * barSize / 4);
                 int seg = std::max(1, pjRound(drawIn(srcR) * stepsize));
                 int del = std::max(1, pjRound(drawIn(dR) * stepsize));
-                std::vector<uint32_t> src = px;
+                std::vector<Px> src = px;
                 if(duck > 0 && random(100) < duck)
                     for(int x = std::max(0, xs + seg); x < std::min(W, xs + seg + del * reps); x++) for(int y = 0; y < H; y++) px[(size_t)y * W + x] = silencePx();
                 for(int k = 1; k <= reps; k++){
@@ -2216,15 +2230,9 @@ private:
                         if(xd >= W || xsrc >= W) break;
                         if(xd < 0 || xsrc < 0) continue;
                         for(int y = 0; y < H; y++){
-                            uint32_t s = src[(size_t)y * W + xsrc], d = px[(size_t)y * W + xd];
-                            if(procCanvas){
-                                int r = std::min(255, (int)((d >> 16) & 0xFF) + pjRound(((s >> 16) & 0xFF) * amp));
-                                int gg = std::min(255, (int)((d >> 8) & 0xFF) + pjRound(((s >> 8) & 0xFF) * amp));
-                                int bb = std::min(255, (int)(d & 0xFF) + pjRound((s & 0xFF) * amp));
-                                px[(size_t)y * W + xd] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)gg << 8) | (uint32_t)bb;
-                            }else{
-                                px[(size_t)y * W + xd] = echoPx(d, s, pjRound(((s >> 24) & 0xFF) * amp));
-                            }
+                            Px s = src[(size_t)y * W + xsrc], d = px[(size_t)y * W + xd];
+                            if(procCanvas) px[(size_t)y * W + xd] = addPx(d, s, amp);
+                            else px[(size_t)y * W + xd] = echoPx(d, s, ch16(Canvas::pxA(s) * amp));
                         }
                     }
                 }
@@ -2236,7 +2244,7 @@ private:
         if(er > 0){
             float delay = quantizedEchoSteps(drawIn(p.range("echoDelay"))) * stepsize;
             float fb = p.f("echoFeedback");
-            std::vector<uint32_t> src = px;
+            std::vector<Px> src = px;
             for(int k = 1; k <= er; k++){
                 float amp = pjPow(fb, (float)k);
                 if(amp < 0.01f) break;
@@ -2246,16 +2254,9 @@ private:
                 for(int y = 0; y < H; y++){
                     size_t row = (size_t)y * W;
                     for(int x = dx; x < W; x++){
-                        uint32_t s = src[row + x - dx];
-                        if(procCanvas){
-                            uint32_t d = px[row + x];
-                            int r = std::min(255, (int)((d >> 16) & 0xFF) + pjRound(((s >> 16) & 0xFF) * amp));
-                            int gg = std::min(255, (int)((d >> 8) & 0xFF) + pjRound(((s >> 8) & 0xFF) * amp));
-                            int bb = std::min(255, (int)(d & 0xFF) + pjRound((s & 0xFF) * amp));
-                            px[row + x] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)gg << 8) | (uint32_t)bb;
-                        }else{
-                            px[row + x] = echoPx(px[row + x], s, pjRound(((s >> 24) & 0xFF) * amp));
-                        }
+                        Px s = src[row + x - dx];
+                        if(procCanvas) px[row + x] = addPx(px[row + x], s, amp);
+                        else px[row + x] = echoPx(px[row + x], s, ch16(Canvas::pxA(s) * amp));
                     }
                 }
             }
@@ -2364,11 +2365,8 @@ private:
                     }
                     size_t i = (size_t)y * W + x;
                     if(tcol && best >= 0){
-                        uint32_t cc = px[i], tcc = tcs[best];
-                        int r = (int)((cc >> 16) & 0xFF) * (int)((tcc >> 16) & 0xFF) / 255;
-                        int gg = (int)((cc >> 8) & 0xFF) * (int)((tcc >> 8) & 0xFF) / 255;
-                        int bb = (int)(cc & 0xFF) * (int)(tcc & 0xFF) / 255;
-                        px[i] = (cc & 0xFF000000u) | ((uint32_t)r << 16) | ((uint32_t)gg << 8) | (uint32_t)bb;
+                        Px cc = px[i]; uint32_t tcc = tcs[best];   // the pixel x the tear's colour (0xRRGGBB)
+                        px[i] = Canvas::mkPx(Canvas::pxA(cc), ch16(Canvas::pxR(cc) * (red(tcc) / 255.0f)), ch16(Canvas::pxG(cc) * (green(tcc) / 255.0f)), ch16(Canvas::pxB(cc) * (blue(tcc) / 255.0f)));
                     }
                     if(k < 1) px[i] = scaleAlpha(px[i], k);
                 }
@@ -2446,10 +2444,9 @@ private:
         float sat = p.f("saturation");
         if(sat < 1){
             for(auto& cc : px){
-                int r = (cc >> 16) & 0xFF, gg = (cc >> 8) & 0xFF, b = cc & 0xFF;
+                int r = Canvas::pxR(cc), gg = Canvas::pxG(cc), b = Canvas::pxB(cc);
                 float l = 0.299f * r + 0.587f * gg + 0.114f * b;
-                int nr = pjConstrain(pjRound(l + (r - l) * sat), 0, 255), ng = pjConstrain(pjRound(l + (gg - l) * sat), 0, 255), nb = pjConstrain(pjRound(l + (b - l) * sat), 0, 255);
-                cc = (cc & 0xFF000000u) | ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | (uint32_t)nb;
+                cc = Canvas::mkPx(Canvas::pxA(cc), ch16(l + (r - l) * sat), ch16(l + (gg - l) * sat), ch16(l + (b - l) * sat));
             }
         }
 
@@ -2486,7 +2483,7 @@ private:
         Style outer = style;
         std::vector<Style> outerStack = styleStack;
         style = Style();
-        style.strokeColor = 0xFF000000u; style.fillColor = 0xFFFFFFFFu; style.strokeWeight = UY; style.cap = Canvas::ROUND;
+        setStroke(0xFF000000u); setFill(0xFFFFFFFFu); style.strokeWeight = UY; style.cap = Canvas::ROUND;
         styleStack.clear();
         Canvas* prev = gc;
         gc = &layerC;
@@ -2524,7 +2521,7 @@ private:
         Style outer = style;
         std::vector<Style> outerStack = styleStack;
         style = Style();
-        style.strokeColor = 0xFF000000u; style.fillColor = 0xFFFFFFFFu; style.strokeWeight = UY; style.cap = Canvas::ROUND;
+        setStroke(0xFF000000u); setFill(0xFFFFFFFFu); style.strokeWeight = UY; style.cap = Canvas::ROUND;
         styleStack.clear();
         Canvas* prev = gc;
         gc = &layerC;
@@ -2547,7 +2544,7 @@ private:
     void bezier(float x1, float y1, float cx1, float cy1, float cx2, float cy2, float x2, float y2){
         if(!style.stroke) return;
         uint32_t s = style.strokeColor;
-        gc->strokeBezier({x1, y1}, {cx1, cy1}, {cx2, cy2}, {x2, y2}, style.strokeWeight, style.cap, red(s), green(s), blue(s), (s >> 24) & 255);
+        gc->strokeBezier({x1, y1}, {cx1, cy1}, {cx2, cy2}, {x2, y2}, style.strokeWeight, style.cap, red(s), green(s), blue(s), style.strokeA);
     }
     // Legacy.pde portamentoPG: a glide from (x0, y0) to (x1, y1) along a sigmoid, with vibrato and
     // a noise wobble, one vertex per pixel, stroked (SQUARE cap)
@@ -2573,7 +2570,7 @@ private:
         }
         if(style.stroke){
             uint32_t s = style.strokeColor;
-            gc->strokePath(pts, style.strokeWeight, style.cap, red(s), green(s), blue(s), (s >> 24) & 255);
+            gc->strokePath(pts, style.strokeWeight, style.cap, red(s), green(s), blue(s), style.strokeA);
         }
     }
 
@@ -2752,8 +2749,8 @@ private:
     void drawShape(const std::vector<Canvas::Pt>& user, bool closedShape){
         std::vector<Canvas::Pt> dev;
         for(auto& p : user) dev.push_back(xf(p.x, p.y));
-        if(style.fill && closedShape){ uint32_t f = style.fillColor; gc->fillPolygon(dev, red(f), green(f), blue(f), (f >> 24) & 255); }
-        if(style.stroke){ uint32_t s = style.strokeColor; gc->strokePath(dev, std::max(0.1f, style.strokeWeight), style.cap, red(s), green(s), blue(s), (s >> 24) & 255, true, closedShape); }
+        if(style.fill && closedShape){ uint32_t f = style.fillColor; gc->fillPolygon(dev, red(f), green(f), blue(f), style.fillA); }
+        if(style.stroke){ uint32_t s = style.strokeColor; gc->strokePath(dev, std::max(0.1f, style.strokeWeight), style.cap, red(s), green(s), blue(s), style.strokeA, true, closedShape); }
     }
     static std::vector<Canvas::Pt> ellipsePts(float cx, float cy, float w, float h){
         std::vector<Canvas::Pt> q;
@@ -2785,7 +2782,7 @@ private:
             }
             return out;
         };
-        if(style.fill){ uint32_t f = style.fillColor; gc->fillPolygon(flatten(dE, dC), red(f), green(f), blue(f), (f >> 24) & 255); }
+        if(style.fill){ uint32_t f = style.fillColor; gc->fillPolygon(flatten(dE, dC), red(f), green(f), blue(f), style.fillA); }
         if(style.stroke){
             Canvas::Pt sE[4], sC[4][2];
             for(int i = 0; i < 4; i++){ sE[i] = {Canvas::snapPC(dE[i].x, style.cap), Canvas::snapPC(dE[i].y, style.cap)}; }
@@ -2796,7 +2793,7 @@ private:
                 sC[i][1] = {dC[i][1].x + sE[j].x - dE[j].x, dC[i][1].y + sE[j].y - dE[j].y};
             }
             uint32_t st = style.strokeColor;
-            gc->strokePath(flatten(sE, sC), std::max(0.1f, style.strokeWeight), style.cap, red(st), green(st), blue(st), (st >> 24) & 255, false, true);
+            gc->strokePath(flatten(sE, sC), std::max(0.1f, style.strokeWeight), style.cap, red(st), green(st), blue(st), style.strokeA, false, true);
         }
     }
     static std::vector<Canvas::Pt> roundRectPts(float x, float y, float w, float h, float r){
@@ -3184,7 +3181,7 @@ private:
         }else{
             style.stroke = false;
             auto ch = [](float v){ if(v > 255) v = 255; if(v < 0) v = 0; return (int)((v / 255.0f) * 255); };
-            style.fillColor = ((uint32_t)ch(a) << 24) | ((uint32_t)ch(fr) << 16) | ((uint32_t)ch(fg) << 8) | (uint32_t)ch(fb);
+            style.fillColor = ((uint32_t)ch(a) << 24) | ((uint32_t)ch(fr) << 16) | ((uint32_t)ch(fg) << 8) | (uint32_t)ch(fb); style.fillA = clampA(a);
             style.fill = true;
         }
         if(k == 0) line(s.p0.x, s.p0.y, s.p1.x, s.p1.y);
@@ -3249,8 +3246,8 @@ private:
             }
             popMatrix();
             uint32_t f = style.fillColor;
-            if(style.fill) gc->fillPolygons(polys, red(f), green(f), blue(f), (f >> 24) & 255);
-            else { uint32_t st = style.strokeColor; for(auto& q : polys) gc->strokePath(q, std::max(0.1f, style.strokeWeight), style.cap, red(st), green(st), blue(st), (st >> 24) & 255, true, true); }
+            if(style.fill) gc->fillPolygons(polys, red(f), green(f), blue(f), style.fillA);
+            else { uint32_t st = style.strokeColor; for(auto& q : polys) gc->strokePath(q, std::max(0.1f, style.strokeWeight), style.cap, red(st), green(st), blue(st), style.strokeA, true, true); }
         }
     }
 

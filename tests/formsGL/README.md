@@ -3,6 +3,19 @@
 All headless; no audio, no app. `S` = a scratch folder, `D` = the app's data folder
 (`apps/Playmodes/OceanodeScroller/bin/data/Forms`), `G` = `$D/generators.json`.
 
+16 bits per channel (2026-11-14): the renderer draws into 16-bit pixels with fractional alpha
+(`formsGLCanvas.h`), `RenderResult::rgba` is `uint16_t` straight alpha, cover masks are 16-bit, and
+the app keeps 16 bits to its output (GL_RGBA16 textures and buffers, 16-bit session PNGs). The
+renders are therefore no longer byte-identical to the Processing sketch's 8-bit ones: against the
+8-bit renderer (kept in `tools/pre_16bit_2026-11-14`) every instrument at 1920x1080 and 1920x1920
+differs by 0.08 of an 8-bit level on average, with 1-3% more energy (faint stamps are no longer
+truncated to 0). The integer kick rasterizer (`formsGLExactRaster.h`) reproduced the 8-bit
+arithmetic and is not included any more.
+- `../test_chain16.cpp <generators.json> <request.json> src/formsBox/formsLayerFx.h [trail px] [level]`:
+  one layer's live path on the GPU at GL_RGBA16 (page -> layer buffer -> trail -> read-back): the
+  faint part of every note changes brightness almost every pixel and keeps its hue; the same page
+  through GL_RGBA8 is printed for comparison (plateaus of 100+ px, 15 levels). `-framework OpenGL`.
+
 Tests to run:
 - `render_requests.cpp`: draws request files to PNG with the renderer:
   `clang++ -std=c++17 -O2 -I src/formsGL -I <OF>/libs/json/include tests/formsGL/render_requests.cpp -lz`
@@ -28,10 +41,10 @@ Tests to run:
   UHD, DCI 4K and an odd-sized viewport. Build with the tests/stub, formsBox and OF JSON includes.
 - `test_thumbnails.cpp $D <sheet.ppm>`: Make thumbnails headless, every instrument.
 - `test_gpu.cpp <scale> <requests>`: the GPU noise mask against the CPU.
-- `test_gpu_exact.cpp [--16k] [sparse_euclid_kicks.json]`: byte-for-byte comparisons of exact kick
-  rasterization, transparent/additive blending, clipping and complete instrument recipes; shared
-  worker uploads are checked for both 2D and rectangle textures, including concurrent GL work,
-  fences and resource retirement. `--16k` includes native 15360 x 8640 uploads and renders.
+- `test_gpu_exact.cpp [--16k] [sparse_euclid_kicks.json]`: shared worker uploads of 16-bit pages
+  (GL_RGBA16) and cover masks (GL_R16), value for value, for both 2D and rectangle textures,
+  including concurrent GL work, fences and resource retirement; complete instrument recipes with
+  the GPU object attached equal the CPU's (the kick rasterizer is retired). `--16k` includes native 15360 x 8640 uploads and renders.
   Build with C++17, `-O2 -DGL_SILENCE_DEPRECATION`, the formsGL and OF JSON include paths,
   and `-framework OpenGL`. Output and binaries belong in a scratch directory.
 - `make_schemas.py $G`: regenerates `src/formsGL/formsGLSchemas.h` after a generator's parameters change.

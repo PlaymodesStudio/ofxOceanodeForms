@@ -22,9 +22,9 @@ int main(int argc, char** argv){
         tc += std::chrono::duration<double, std::milli>(t1 - t0).count(); tg += std::chrono::duration<double, std::milli>(t2 - t1).count(); n++;
         for(size_t k = 0; k < ra.rgba.size(); k += 4){
             int d = 0; for(int c = 0; c < 4; c++) d = std::max(d, std::abs((int)ra.rgba[k + c] - (int)rb.rgba[k + c]));
-            if(d) diff++; if(d > 2) diff2++; maxd = std::max(maxd, d); total++;
+            if(d) diff++; if(d > 2 * 257) diff2++; maxd = std::max(maxd, d); total++;   // 16-bit values; "2 levels" = 2 of 255
         }
     }
-    printf("x%d, %d images: CPU %.0f ms, GPU %.0f ms per image; pixels differing %.4f%% (> 2 levels %.4f%%), max %d%s\n",
+    printf("x%d, %d images: CPU %.0f ms, GPU %.0f ms per image; pixels differing %.4f%% (> 2 of 255: %.4f%%), max %d of 65535%s\n",
            scale, n, tc / n, tg / n, 100.0 * diff / total, 100.0 * diff2 / total, maxd, gpu.error.empty() ? "" : (" GPU error: " + gpu.error).c_str());
 }

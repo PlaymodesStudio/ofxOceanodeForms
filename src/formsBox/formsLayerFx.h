@@ -163,7 +163,7 @@ void main(){
 
 class LayerFx {
 public:
-    GLint internalFormat = GL_RGBA; // Export opts into floating-point blur/trail intermediates.
+    GLint internalFormat = GL_RGBA16; // 16 bits per channel, as the layer buffers. Export opts into floating-point blur/trail intermediates.
     bool ok = false, tried = false;
 
     // Processes `f` in place

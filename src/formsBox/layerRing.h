@@ -14,7 +14,7 @@
 #pragma once
 
 #include "ofMain.h"
-#include "ofxThreadedImageLoader.h"
+#include "formsShortLoader.h"
 #include "formsEngine.h"
 #include <chrono>
 
@@ -33,13 +33,18 @@ public:
     // Immediate replace: a ready image takes the slot under the header at once (see ScrollerCore)
     bool immediate = false;
 
+    // The buffer's format: GL_RGBA16 (16 bits per channel, as the images) unless the node's
+    // "16-bit live buffers" option is off (GL_RGBA: 8 bits). Changing it reallocates the buffer.
+    int bufferFormat = GL_RGBA16;
     void allocate(int w, int h){
         if(w < 1 || h < 1) return;
-        if(fbo.isAllocated() && (int)fbo.getWidth() == w && (int)fbo.getHeight() == h) return;
+        if(fbo.isAllocated() && (int)fbo.getWidth() == w && (int)fbo.getHeight() == h && fboFormat == bufferFormat) return;
         ofFboSettings st;
-        st.width = w; st.height = h; st.internalformat = GL_RGBA;
+        st.width = w; st.height = h; st.internalformat = bufferFormat;
         fbo.allocate(st);
+        fboFormat = bufferFormat;
     }
+    int fboFormat = 0;   // what the buffer was allocated with
 
     // The image under the header (for the composite settings), or null
     std::shared_ptr<Image> current;
@@ -246,12 +251,12 @@ public:
                 for(auto& sl : L.slots) if(sl.img && sl.img->png == p && sl.img->texture){ resident = true; break; }
                 if(resident) continue;
                 if(images.count(p)) continue;
-                auto im = std::make_shared<ofImage>();
+                auto im = std::make_shared<ofShortImage>();
                 images[p] = im;
                 // in memory (Forms GL Box): straight to a texture
                 std::shared_ptr<Image> src;
                 for(auto& sl : L.slots) if(sl.img && sl.img->png == p && (sl.img->stageRgba || sl.img->rgba)){ src = sl.img; break; }
-                const auto& pixels = src ? (src->stageRgba ? src->stageRgba : src->rgba) : std::shared_ptr<const std::vector<uint8_t>>{};
+                const auto& pixels = src ? (src->stageRgba ? src->stageRgba : src->rgba) : std::shared_ptr<const std::vector<uint16_t>>{};
                 int imageW = src ? (src->stageRgba ? src->stageW : src->pw) : 0;
                 int imageH = src ? (src->stageRgba ? src->stageH : src->ph) : 0;
                 if(src && pixels && imageW > 0 && imageH > 0 && pixels->size() >= (size_t)imageW * imageH * 4){
@@ -317,8 +322,8 @@ public:
     }
 
 private:
-    ofxThreadedImageLoader loader;
-    std::map<std::string, std::shared_ptr<ofImage>> images;   // by PNG path
+    ShortImageLoader loader;
+    std::map<std::string, std::shared_ptr<ofShortImage>> images;   // by PNG path
     std::string loadingPng;
     std::string onceId;                       // the last Switch now image, and where it was placed
     double onceStart = 0;

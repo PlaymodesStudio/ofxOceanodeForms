@@ -232,8 +232,8 @@ public:
     }
     const ofTexture* headerTexture(){
         if(headerGpuTexture) return headerGpuTexture.get();
-        ofImage& hi = headerFromMemory ? headerMemImage : headerImage;
-        return (hi.isAllocated() && hi.isUsingTexture()) ? &hi.getTexture() : nullptr;
+        if(headerFromMemory) return (headerMemImage.isAllocated() && headerMemImage.isUsingTexture()) ? &headerMemImage.getTexture() : nullptr;
+        return (headerImage.isAllocated() && headerImage.isUsingTexture()) ? &headerImage.getTexture() : nullptr;
     }
 
     // ------------------------------------------------ node face
@@ -396,7 +396,7 @@ public:
 
 private:
     ofxThreadedImageLoader headerLoader;
-    ofImage headerMemImage;          // the header image from memory (Forms GL Box)
+    ofShortImage headerMemImage;     // the header image from memory (Forms GL Box): 16 bits per channel
     std::shared_ptr<ofTexture> headerGpuTexture;
     bool headerFromMemory = false;
     ofImage headerImage;

@@ -22,6 +22,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <cstdio>
 #include <cstring>
 #include <nlohmann/json.hpp>
@@ -216,17 +217,21 @@ inline float duckEnvelope(double elapsed,double duration,float curve){
 }
 
 // Amplitudes from a column of RGBA pixels (row 0 = top), times `mul`: each partial the brightest
-// max(R,G,B) of its rows
-inline void columnAmps(const unsigned char* rgba, int h, float mul, const PartialLayout& L, std::vector<float>& amps){
+// max(R,G,B) of its rows. T: the pixels' channel type (16 bits live; 8 bits where a file gave them).
+// Silence floor: a 16-bit level under half an 8-bit step (-54 dB) is 0, as it was when the buffers
+// were 8 bits and rounded it away. Without it the faint ends of fades and trails (down to -96 dB,
+// inaudible) keep partials running: the sparse bank only skips a partial whose target is exactly 0.
+template<class T> inline void columnAmps(const T* rgba, int h, float mul, const PartialLayout& L, std::vector<float>& amps){
+    const int silent = (int)std::numeric_limits<T>::max() / 510;   // 16 bits: 128; 8 bits: 0 (no floor)
     amps.assign(L.rel.size(), 0);
     if(!rgba || h < 1) return;
     for(int i = 0; i < L.n; i++){
         int m = 0;
         for(int r = L.rowA[i]; r < L.rowB[i] && r < h; r++){
-            const unsigned char* px = rgba + r * 4;
+            const T* px = rgba + r * 4;
             m = std::max(m, (int)std::max(px[0], std::max(px[1], px[2])));
         }
-        amps[i] = m / 255.0f * mul;
+        amps[i] = m < silent ? 0.0f : m / (float)std::numeric_limits<T>::max() * mul;
     }
 }
 

@@ -19,9 +19,9 @@ int main(){
     assert(mask.settings.mode=="eraser" && mask.settings.target=="allBelow");
     assert(mask.settings.growRight==0 && mask.settings.growHeight==0 && mask.settings.feather==0 && mask.settings.release==0);
     for(int y=0;y<mask.h;++y)for(int x=0;x<mask.w;++x){
-        bool block=(x/40)%2==1;assert((*mask.alpha)[y*mask.w+x]==(block?255:0));
+        bool block=(x/40)%2==1;assert((*mask.alpha)[y*mask.w+x]==(block?65535:0));   // 16-bit masks
         // Apply the production eraser blend to a lower layer's alpha: no opaque black.
-        float belowAlpha=1-(*mask.alpha)[y*mask.w+x]/255.f;
+        float belowAlpha=1-(*mask.alpha)[y*mask.w+x]/65535.f;
         assert(belowAlpha==(block?0.f:1.f));
     }
     // Per-bar clipping and volume apply to the eraser as well as to the notes.
@@ -30,7 +30,7 @@ int main(){
     assert(clipped.covers[0].settings.amount==.5f);
     for(int y=0;y<180;++y)for(int x=0;x<320;++x){
         auto a=(*clipped.covers[0].alpha)[y*320+x];
-        assert(a==((x>=120&&x<160)?255:0));
+        assert(a==((x>=120&&x<160)?65535:0));
     }
     req["items"][0]["gain"]=0;
     assert(formsgl::Sketch(schemas).render(req).covers.empty());

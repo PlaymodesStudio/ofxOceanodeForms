@@ -237,7 +237,7 @@
             std::filesystem::create_directories(seedFolder());
             if(!std::filesystem::path(exportBase).parent_path().empty()) std::filesystem::create_directories(std::filesystem::path(exportBase).parent_path());
             for(auto& l : layers){
-                ofTexture tex; tex.allocate(w,h,GL_RGBA); tex.loadData(l.rgba.data(),w,h,GL_RGBA);
+                ofTexture tex; tex.allocate(w,h,GL_RGBA16); tex.loadData(l.rgba.data(),w,h,GL_RGBA);   // 16 bits per channel
                 ofFbo fbo; fbo.allocate(st); fbo.begin(); ofClear(0,0,0,0);
                 ofPushStyle(); ofEnableAlphaBlending(); glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
                 layerGain.draw(tex,0,w,h,l.gain); ofPopStyle(); fbo.end();
@@ -248,8 +248,8 @@
             ofPixels image=renderGLExportFrame(w,h,0);
             if(!ofSaveImage(glExportTiff,exportLibraryBase+".tif")) throw std::runtime_error("Cannot save 16-bit TIFF.");
             std::filesystem::copy_file(exportLibraryBase+".tif",exportBase+".tif",std::filesystem::copy_options::overwrite_existing);
+            if(!ofSaveImage(glExportTiff,exportLibraryBase+".png")) throw std::runtime_error("Cannot save export PNG.");   // 16 bits per channel too
             glExportTiff.clear();
-            if(!ofSaveImage(image,exportLibraryBase+".png")) throw std::runtime_error("Cannot save export PNG.");
             std::filesystem::copy_file(exportLibraryBase+".png",exportBase+".png",std::filesystem::copy_options::overwrite_existing);
             { std::ofstream out(exportLibraryBase+".json"); out<<exportRecipe.dump(2); if(!out) throw std::runtime_error("Cannot save seed recipe."); }
             std::filesystem::copy_file(exportLibraryBase+".json",exportBase+".json",std::filesystem::copy_options::overwrite_existing);
@@ -259,7 +259,7 @@
             if(exportRecipe.at("audio").get<bool>() || exportRecipe.at("video").get<bool>()){
                 auto wh=forms::exportmedia::videoSize(w,h);
                 for(auto& texture : glExportTextures){
-                    ofFbo small; small.allocate(wh.first,wh.second,GL_RGBA); small.begin(); ofClear(0,0,0,0);
+                    ofFbo small; small.allocate(wh.first,wh.second,GL_RGBA16); small.begin(); ofClear(0,0,0,0);
                     ofPushStyle(); ofEnableBlendMode(OF_BLENDMODE_DISABLED); ofSetColor(255); texture.draw(0,0,wh.first,wh.second); ofPopStyle(); small.end(); texture=small.getTexture();
                 }
                 glAudioLayers=std::move(layers);
@@ -300,12 +300,12 @@
     }
     static int postMaxTextureSize(){ GLint n=0; glGetIntegerv(GL_MAX_TEXTURE_SIZE,&n); return n; }
     ofPixels renderGLExportFrame(int w, int h, double t, bool capture=false){
-        auto allocate=[&](ofFbo& f){ if(!f.isAllocated() || (int)f.getWidth()!=w || (int)f.getHeight()!=h || f.getTexture().getTextureData().glInternalFormat != (capture ? GL_RGBA : GL_RGBA32F)){
-            ofFboSettings st; st.width=w; st.height=h; st.internalformat=capture ? GL_RGBA : GL_RGBA32F; f.allocate(st);
+        auto allocate=[&](ofFbo& f){ if(!f.isAllocated() || (int)f.getWidth()!=w || (int)f.getHeight()!=h || f.getTexture().getTextureData().glInternalFormat != (capture ? GL_RGBA16 : GL_RGBA32F)){
+            ofFboSettings st; st.width=w; st.height=h; st.internalformat=capture ? GL_RGBA16 : GL_RGBA32F; f.allocate(st);
             if(!f.isAllocated()) throw std::runtime_error("Cannot allocate export framebuffer");
         }};
-        glExportPost.internalFormat=capture ? GL_RGBA : GL_RGBA32F;
-        glExportLayerFx.internalFormat=capture ? GL_RGBA : GL_RGBA32F;
+        glExportPost.internalFormat=capture ? GL_RGBA16 : GL_RGBA32F;
+        glExportLayerFx.internalFormat=capture ? GL_RGBA16 : GL_RGBA32F;
         allocate(glExportComposite); allocate(glExportCoverage); allocate(glExportBackground);
         allocate(glExportLayerFrame);
         glExportComposite.begin(); ofClear(0,0,0,255); glExportComposite.end();
@@ -347,7 +347,7 @@
         for(size_t i=0;i<glExportTextures.size();++i){
             auto& meta=exportRecipe.at("layers").at(i); auto& glExportLayerFrame=glExportFrames[i];
             if(capture){
-                auto& l=glAudioLayers[i]; std::vector<unsigned char> column;
+                auto& l=glAudioLayers[i]; std::vector<unsigned short> column;
                 if(!readColumn(glExportLayerFrame,w/4,0,h,column)) throw std::runtime_error("Cannot read export sonification column");
                 auto layout=forms::partialLayout(h,l.recipe.value("notegrid",100),l.recipe.at("size").at(1).get<int>());
                 std::vector<float> amps; forms::columnAmps(column.data(),h,exportRecipe.value("imageMul",1.f),layout,amps);
@@ -356,7 +356,7 @@
                 float stripH=settings.kickStrip;   // the scene's own strip (its recipe's performance), else the node's
                 if(l.recipe.contains("performance")&&l.recipe["performance"].is_object()) stripH=l.recipe["performance"].value("kickStrip",stripH);
                 int strip=std::clamp((int)std::lround(h*stripH),1,h); double sum=0;
-                for(int y=h-strip;y<h;++y) for(int c=0;c<3;++c) sum+=column[y*4+c]/(3.0*255*strip);
+                for(int y=h-strip;y<h;++y) for(int c=0;c<3;++c) sum+=column[y*4+c]/(3.0*65535*strip);
                 l.kickLevels.push_back((float)sum);
             }else if(exportRecipe.at("separate").get<bool>()){
                 ofShortPixels straight; readTextureStrips(glExportLayerFrame.getTexture(),straight,GL_UNSIGNED_SHORT); auto* p=straight.getData();
@@ -366,8 +366,7 @@
                 }
                 std::string layerBase=exportBase+"_L"+std::to_string(meta.at("index").get<int>()+1);
                 if(!ofSaveImage(straight,layerBase+".tif")) throw std::runtime_error("Cannot save 16-bit layer TIFF.");
-                ofPixels png=straight;
-                if(!ofSaveImage(png,layerBase+".png")) throw std::runtime_error("Cannot save layer PNG.");
+                if(!ofSaveImage(straight,layerBase+".png")) throw std::runtime_error("Cannot save layer PNG.");
             }
             std::string blend=meta.at("blend");
             glExportComposite.begin(); ofPushStyle(); ofEnableBlendMode(OF_BLENDMODE_DISABLED); glEnable(GL_BLEND);
@@ -411,5 +410,6 @@
         }
         if(look.edges.active()) final=look.feather(*final,ofFloatColor(bg[0],bg[1],bg[2]));
         if(!capture) readTextureStrips(*final,glExportTiff,GL_UNSIGNED_SHORT);
+        // 8 bits only here, at the very end: the preview and the frames handed to the video encoder
         ofPixels image; readTextureStrips(*final,image,GL_UNSIGNED_BYTE); return image;
     }

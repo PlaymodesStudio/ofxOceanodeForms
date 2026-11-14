@@ -20,16 +20,16 @@ public:
     static ofTexture* texture(Mask& m){
         if(m.texture && m.texture->isAllocated()) return m.texture.get();
         if(!m.alpha && !m.png.empty()){
-            ofPixels p;
+            ofShortPixels p;   // 16 bits (an older 8-bit mask is widened)
             if(ofLoadImage(p,m.png)){
-                auto a=std::make_shared<std::vector<uint8_t>>((size_t)p.getWidth()*p.getHeight());
+                auto a=std::make_shared<std::vector<uint16_t>>((size_t)p.getWidth()*p.getHeight());
                 for(size_t i=0;i<a->size();++i) (*a)[i]=p[i*p.getNumChannels()];
                 m.w=p.getWidth(); m.h=p.getHeight(); m.alpha=a;
             }
         }
         if(!m.alpha || m.w<1 || m.h<1) return nullptr;
         m.texture=std::make_shared<ofTexture>();
-        m.texture->allocate(m.w,m.h,GL_R8,false);
+        m.texture->allocate(m.w,m.h,GL_R16,false);
         m.texture->loadData(m.alpha->data(),m.w,m.h,GL_RED);
         m.texture->setTextureMinMagFilter(GL_LINEAR,GL_LINEAR);
         m.texture->setTextureWrap(GL_CLAMP_TO_EDGE,GL_CLAMP_TO_EDGE);

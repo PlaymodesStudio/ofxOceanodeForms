@@ -26,8 +26,8 @@
 namespace forms {
 
 struct Post {
-    // Export can retain floating-point intermediates; live rendering keeps its existing format.
-    GLint internalFormat = GL_RGBA;
+    // 16 bits per channel (the layers and the composite are too); export can ask for floating point.
+    GLint internalFormat = GL_RGBA16;
     // settings
     bool enabled = true;
     bool stretch = true;

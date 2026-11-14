@@ -62,12 +62,12 @@ struct Image {
     std::string blend = "lighten";
     float gain = 1;
     // The rendered pixels, when the renderer is inside the app (Forms GL Box): straight-alpha RGBA,
-    // pw x ph. The scrollers upload them directly instead of loading the PNG (which may still be
+    // 16 bits per channel, pw x ph. The scrollers upload them directly instead of loading the PNG (which may still be
     // being written, or not written at all when archiving is off). Shared by repeat copies.
-    std::shared_ptr<const std::vector<uint8_t>> rgba;
+    std::shared_ptr<const std::vector<uint16_t>> rgba;
     int pw = 0, ph = 0;
     // CPU fallback for the live scrollers. Exact GPU mode instead retains a native-size texture.
-    std::shared_ptr<const std::vector<uint8_t>> stageRgba;
+    std::shared_ptr<const std::vector<uint16_t>> stageRgba;
     int stageW = 0, stageH = 0;
     // Shared worker GL texture, published only after its upload fence signals.
     std::shared_ptr<ofTexture> texture;
@@ -1227,7 +1227,7 @@ public:
 
     // Ready with its pixels in memory (Forms GL Box): the scrollers use them, the files follow
     void onReady(const std::string& id, const std::string& png, const std::string& jsonPath,
-                 std::shared_ptr<const std::vector<uint8_t>> rgba, int pw, int ph){
+                 std::shared_ptr<const std::vector<uint16_t>> rgba, int pw, int ph){
         auto it = pending.find(id);
         if(it != pending.end()){ it->second->rgba = std::move(rgba); it->second->pw = pw; it->second->ph = ph; }
         onReady(id, png, jsonPath);

@@ -53,7 +53,7 @@ private:
 struct SharedTexture {
     GLuint id = 0;
     GLenum target = GL_TEXTURE_2D;
-    GLenum internalFormat = GL_RGBA8;
+    GLenum internalFormat = GL_RGBA16;
     int w = 0, h = 0;
     GLsync fence = nullptr;
     std::shared_ptr<SharedTexturePool> pool;

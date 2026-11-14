@@ -6,7 +6,13 @@
 //  drawn the way Processing's Java2D renderer draws (measured, tests/formsGL/j2dpoint): a point
 //  of stroke weight 1 is NOT anti-aliased (Java2D's stroke normalization): it fills the pixel
 //  (floor(x + snap), floor(y + snap); snap ~0.001 px, none with ROUND), at the stroke alpha with the PROJECT cap, at 181/255 of it with ROUND, and
-//  not at all with SQUARE. Everything blends source-over with Java2D's 8-bit arithmetic.
+//  not at all with SQUARE.
+//  16 bits per channel (2026-11-14): the pixels hold 16-bit colour and alpha, and a stamp's alpha
+//  and coverage stay fractional until they are blended. With Java2D's 8-bit arithmetic a faint
+//  stamp's alpha was a whole level (0, 1, 2 of 255) and its colour rounded per channel, so a row
+//  of overlapping stamps fading out went down in steps (bands tens of pixels wide, and their hue
+//  drifting: 255,192,0 at alpha 1 adds 1,1,0). Colours and alphas are still given on the 0..255
+//  scale (alpha as a float); geometry and coverage are as measured from Java2D.
 //  (FastDraw.pde's diamond model, used only by requests that ask for "fastDraw", is pointAA.)
 //  No openFrameworks: it renders on any thread and in the headless tests.
 //
@@ -28,46 +34,42 @@ struct RasterError : std::runtime_error { using std::runtime_error::runtime_erro
 class Canvas {
 public:
     int w = 0, h = 0;
-    std::vector<uint32_t> px;   // 0xFFRRGGBB
+    typedef uint64_t Px;        // 0xAAAA'RRRR'GGGG'BBBB: 16 bits per channel
+    std::vector<Px> px;
+    static constexpr Px BLACK = 0xFFFF000000000000ull;   // opaque black
+    static inline int pxA(Px p){ return (int)(p >> 48); }
+    static inline int pxR(Px p){ return (int)((p >> 32) & 0xFFFF); }
+    static inline int pxG(Px p){ return (int)((p >> 16) & 0xFFFF); }
+    static inline int pxB(Px p){ return (int)(p & 0xFFFF); }
+    static inline Px mkPx(int a, int r, int g, int b){ return ((Px)(uint16_t)a << 48) | ((Px)(uint16_t)r << 32) | ((Px)(uint16_t)g << 16) | (Px)(uint16_t)b; }
+    static inline Px withA(Px p, int a){ return (p & 0x0000FFFFFFFFFFFFull) | ((Px)(uint16_t)a << 48); }
+    // an 8-bit colour (0xRRGGBB, any alpha bits ignored) as an opaque pixel / a channel 0..255 as 16 bits
+    static inline int c16(int c8){ return std::min(255, std::max(0, c8)) * 257; }
+    static inline Px fromRGB8(uint32_t rgb){ return mkPx(65535, (int)((rgb >> 16) & 255) * 257, (int)((rgb >> 8) & 255) * 257, (int)(rgb & 255) * 257); }
+    // an alpha on the 0..255 scale (fractional) as 16 bits
+    static inline int a16(float a){ return a <= 0 ? 0 : a >= 255 ? 65535 : (int)(a * 257.0f + 0.5f); }
 
     bool layer = false;         // a transparent ARGB layer (straight alpha), as createGraphics() makes
-    void allocate(int W, int H){ w = W; h = H; layer = false; px.assign((size_t)W * H, 0xFF000000u); }
-    void allocateLayer(int W, int H){ w = W; h = H; layer = true; px.assign((size_t)W * H, 0u); }
-    void background(uint32_t rgb){ std::fill(px.begin(), px.end(), 0xFF000000u | (rgb & 0xFFFFFF)); }
+    void allocate(int W, int H){ w = W; h = H; layer = false; px.assign((size_t)W * H, BLACK); }
+    void allocateLayer(int W, int H){ w = W; h = H; layer = true; px.assign((size_t)W * H, (Px)0); }
+    void background(uint32_t rgb){ std::fill(px.begin(), px.end(), fromRGB8(rgb)); }
 
-    // Java2D's 8-bit multiply (a * b / 255, rounded)
-    static inline int mul8(int a, int b){ int t = a * b + 128; return (t + (t >> 8)) >> 8; }
+    // a * b / 65535, rounded (a, b in 0..65535)
+    static inline uint32_t mul16(uint32_t a, uint32_t b){ uint64_t t = (uint64_t)a * b + 32768u; return (uint32_t)((t + (t >> 16)) >> 16); }
+    // (a * x + (65535 - a) * y) / 65535, rounded: one rounding for the mix
+    static inline int mix16(uint32_t a, uint32_t x, uint32_t y){ uint64_t t = (uint64_t)a * x + (uint64_t)(65535u - a) * y + 32768u; return (int)((t + (t >> 16)) >> 16); }
 
-    // Java2D's AlphaMath tables (mul8 is the same as the formula above, checked for all pairs)
-    static const uint8_t* div8row(int a){
-        static const std::vector<uint8_t> t = []{
-            std::vector<uint8_t> v(256 * 256, 0);
-            for(unsigned i = 1; i < 256; i++){
-                unsigned inc = ((0xffu << 24) + i / 2) / i, val = 1u << 23;
-                for(unsigned j = 0; j < i; j++){ v[i * 256 + j] = (uint8_t)(val >> 24); val += inc; }
-                for(unsigned j = i; j < 256; j++) v[i * 256 + j] = 255;
-            }
-            return v;
-        }();
-        return &t[(size_t)a * 256];
-    }
-    // Source-over onto a non-premultiplied ARGB pixel (Java2D's IntArgb loops; measured exact)
+    // Source-over onto a non-premultiplied ARGB pixel (r, g, b, a: 16 bits)
     inline void blendLayer(size_t i, int r, int g, int b, int a){
-        int sR = mul8(a, r), sG = mul8(a, g), sB = mul8(a, b);
-        int rA = a, rR = sR, rG = sG, rB = sB;
-        int dF = 255 - a;
-        if(dF){
-            uint32_t d = px[i];
-            int dFA = mul8(dF, (d >> 24) & 255);
-            rA += dFA;
-            if(dFA){
-                int dR = (d >> 16) & 255, dG = (d >> 8) & 255, dB = d & 255;
-                if(dFA != 255){ dR = mul8(dFA, dR); dG = mul8(dFA, dG); dB = mul8(dFA, dB); }
-                rR += dR; rG += dG; rB += dB;
-            }
-        }
-        if(rA && rA < 255){ const uint8_t* dv = div8row(rA); rR = dv[rR]; rG = dv[rG]; rB = dv[rB]; }
-        px[i] = ((uint32_t)rA << 24) | ((uint32_t)rR << 16) | ((uint32_t)rG << 8) | (uint32_t)rB;
+        Px d = px[i];
+        int dA = pxA(d);
+        if(a >= 65535 || dA == 0){ px[i] = mkPx(a, r, g, b); return; }
+        uint32_t dFA = mul16(65535u - (uint32_t)a, (uint32_t)dA);   // what is left of the destination
+        uint32_t rA = (uint32_t)a + dFA;
+        if(rA == 0){ px[i] = 0; return; }
+        const double inv = 1.0 / rA;
+        auto ch = [&](int s, int dc){ return (int)std::min(65535.0, ((double)s * a + (double)dc * dFA) * inv + 0.5); };
+        px[i] = mkPx((int)std::min(65535u, rA), ch(r, pxR(d)), ch(g, pxG(d)), ch(b, pxB(d)));
     }
     // rows split over the CPU cores (each pixel on its own: the same result as in order)
     template<class F> static void parallelFor(size_t n, F f, size_t minWork = 200000){
@@ -78,43 +80,36 @@ public:
         for(unsigned t = 0; t < T; t++){ size_t a = t * step, b = std::min(n, a + step); if(a < b) th.emplace_back([=, &f]{ f(a, b); }); }
         for(auto& x : th) x.join();
     }
-    // image(layer, 0, 0) onto this (opaque) canvas: Java2D's IntArgb -> IntRgb source-over (measured exact)
+    // image(layer, 0, 0) onto this (opaque) canvas: straight-alpha source-over
     void drawLayer(const Canvas& L){
         size_t n = std::min(px.size(), L.px.size());
         parallelFor(n, [&](size_t i0, size_t i1){ for(size_t i = i0; i < i1; i++){
-            uint32_t s = L.px[i];
-            int a = (s >> 24) & 255;
+            Px s = L.px[i];
+            int a = pxA(s);
             if(a == 0) continue;
             if(layer){ // Cover silhouettes retain geometric alpha, including black ink.
-                blendLayer(i,(s>>16)&255,(s>>8)&255,s&255,a);
+                blendLayer(i, pxR(s), pxG(s), pxB(s), a);
                 continue;
             }
-            uint32_t d = px[i];
-            int nr = mul8(a, (s >> 16) & 255) + mul8(255 - a, (d >> 16) & 255);
-            int ng = mul8(a, (s >> 8) & 255) + mul8(255 - a, (d >> 8) & 255);
-            int nb = mul8(a, s & 255) + mul8(255 - a, d & 255);
-            px[i] = 0xFF000000u | ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | (uint32_t)nb;
+            Px d = px[i];
+            px[i] = mkPx(65535, mix16(a, pxR(s), pxR(d)), mix16(a, pxG(s), pxG(d)), mix16(a, pxB(s), pxB(d)));
         } });
     }
 
-    bool addMode = false;   // blendMode(ADD): Processing's blend_add_pin
+    bool addMode = false;   // blendMode(ADD): the colour x alpha is added, pinned at white
     inline void blendAdd(size_t i, int r, int g, int b, int a){
-        uint32_t d = px[i];
-        int sa = a + (a >= 0x7F ? 1 : 0);
-        int nr = std::min(255, (int)((d >> 16) & 255) + ((r * sa) >> 8));
-        int ng = std::min(255, (int)((d >> 8) & 255) + ((g * sa) >> 8));
-        int nb = std::min(255, (int)(d & 255) + ((b * sa) >> 8));
-        int na = std::min(255, (int)((d >> 24) & 255) + a);
-        px[i] = ((uint32_t)na << 24) | ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | (uint32_t)nb;
+        Px d = px[i];
+        px[i] = mkPx(std::min(65535, pxA(d) + a), std::min(65535, pxR(d) + (int)mul16(r, a)), std::min(65535, pxG(d) + (int)mul16(g, a)), std::min(65535, pxB(d) + (int)mul16(b, a)));
     }
-    inline void blend(size_t i, int r, int g, int b, int a){
-        if(a <= 0) return;
-        if(addMode){ blendAdd(i, r, g, b, a); return; }
-        if(layer){ blendLayer(i, r, g, b, a); return; }
-        uint32_t d = px[i];
-        int dr = (d >> 16) & 255, dg = (d >> 8) & 255, db = d & 255, ia = 255 - a;
-        int nr = mul8(a, r) + mul8(ia, dr), ng = mul8(a, g) + mul8(ia, dg), nb = mul8(a, b) + mul8(ia, db);
-        px[i] = 0xFF000000u | ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | (uint32_t)nb;
+    // r, g, b: 0..255; a: 0..255, fractional (a stamp's alpha x its coverage, never rounded to a level)
+    inline void blend(size_t i, int r, int g, int b, float a){
+        const int A = a16(a);
+        if(A <= 0) return;
+        const int R = c16(r), G = c16(g), B = c16(b);
+        if(addMode){ blendAdd(i, R, G, B, A); return; }
+        if(layer){ blendLayer(i, R, G, B, A); return; }
+        Px d = px[i];
+        px[i] = mkPx(65535, mix16(A, R, pxR(d)), mix16(A, G, pxG(d)), mix16(A, B, pxB(d)));
     }
 
     // Coverage (0..255) of the 45-degree unit square centred at (fx, fy) in [0, 1) on the 3 x 3
@@ -132,40 +127,40 @@ public:
     int penX0 = -(1 << 30), penX1 = 1 << 30;
     static float snapOf(int cap){ return cap == ROUND ? 0.0f : 0.00105f; }
     // One Java2D point of weight 1
-    void point(float x, float y, int r, int g, int b, int a, int cap){
+    void point(float x, float y, int r, int g, int b, float a, int cap){
         if(a <= 0 || cap == SQUARE) return;
         // Java2D snaps a coordinate less than ~0.001 px below a whole pixel up to it with the PROJECT
         // and SQUARE caps (not with ROUND): measured, the same in x and y
         const float SNAP = snapOf(cap);
         int ix = (int)std::floor(x + SNAP), iy = (int)std::floor(y + SNAP);
         if(ix < 0 || iy < 0 || ix >= w || iy >= h || ix < penX0 || ix >= penX1) return;
-        blend((size_t)iy * w + ix, r, g, b, cap == ROUND ? mul8(181, a) : a);
+        blend((size_t)iy * w + ix, r, g, b, cap == ROUND ? a * (181.0f / 255.0f) : a);
     }
 
     // A horizontal or vertical line of weight 1 (measured): its ends snap to pixel centres; the
     // pixels between them are filled; the end pixels get the cap: PROJECT whole, SQUARE half,
     // ROUND 218/255. A zero-length line is a point. Other directions are not used by the ported
     // generators (returns false).
-    bool lineAxis(float x0, float y0, float x1, float y1, int r, int g, int b, int a, int cap){
+    bool lineAxis(float x0, float y0, float x1, float y1, int r, int g, int b, float a, int cap){
         const float SNAP = snapOf(cap);
         if(a <= 0) return true;
         bool vertical = x0 == x1, horizontal = y0 == y1;
         if(!vertical && !horizontal) return false;
-        int endCov = cap == PROJECT ? 255 : cap == SQUARE ? 128 : 218;
+        const float endA = a * ((cap == PROJECT ? 255 : cap == SQUARE ? 128 : 218) / 255.0f);
         if(vertical){
             int cx = (int)std::floor(x0 + SNAP), p = (int)std::floor(y0 + SNAP), q = (int)std::floor(y1 + SNAP);
             if(p > q) std::swap(p, q);
             if(p == q && horizontal){ point(x0, y0, r, g, b, a, cap); return true; }
             if(cx < 0 || cx >= w || cx < penX0 || cx >= penX1) return true;
             for(int k = std::max(0, p); k <= std::min(h - 1, q); k++)
-                blend((size_t)k * w + cx, r, g, b, (k == p || k == q) ? mul8(endCov, a) : a);
+                blend((size_t)k * w + cx, r, g, b, (k == p || k == q) ? endA : a);
         }else{
             int cy = (int)std::floor(y0 + SNAP), p = (int)std::floor(x0 + SNAP), q = (int)std::floor(x1 + SNAP);
             if(p > q) std::swap(p, q);
             if(cy < 0 || cy >= h) return true;
             size_t row = (size_t)cy * w;
             for(int k = std::max(std::max(0, penX0), p); k <= std::min(std::min(w, penX1) - 1, q); k++)
-                blend(row + k, r, g, b, (k == p || k == q) ? mul8(endCov, a) : a);
+                blend(row + k, r, g, b, (k == p || k == q) ? endA : a);
         }
         return true;
     }
@@ -173,27 +168,27 @@ public:
     // A point thicker than 1 (measured): centred on the pixel centre it snaps to; PROJECT is an
     // axis-aligned square with box coverage (within 1 level of Java2D), ROUND a disc (coverage by
     // 16 x 16 samples: close to Java2D, not exact), SQUARE draws nothing
-    void thickPoint(float x, float y, float wgt, int r, int g, int b, int a, int cap){
+    void thickPoint(float x, float y, float wgt, int r, int g, int b, float a, int cap){
         const float SNAP = snapOf(cap);
         if(a <= 0 || cap == SQUARE) return;
         float cx = std::floor(x + SNAP) + 0.5f, cy = std::floor(y + SNAP) + 0.5f, hw = wgt / 2;
         int x0 = std::max(std::max(0, penX0), (int)std::floor(cx - hw)), x1 = std::min(std::min(w, penX1) - 1, (int)std::ceil(cx + hw));
         int y0 = std::max(0, (int)std::floor(cy - hw)), y1 = std::min(h - 1, (int)std::ceil(cy + hw));
         for(int yy = y0; yy <= y1; yy++) for(int xx = x0; xx <= x1; xx++){
-            int cov;
+            float cov;   // 0..1
             if(cap == PROJECT){
                 float ox = std::max(0.0f, std::min(xx + 1.0f, cx + hw) - std::max((float)xx, cx - hw));
                 float oy = std::max(0.0f, std::min(yy + 1.0f, cy + hw) - std::max((float)yy, cy - hw));
-                cov = (int)(ox * oy * 255 + 0.5f);
+                cov = ox * oy;
             }else{
                 // the 16 x 16 samples depend only on the pixel's offset from the (pixel-centred)
                 // point and on hw: counted once per width and kept (the same arithmetic, exact at
                 // these magnitudes, so the same coverage)
                 const RoundKernel& K = roundKernel(hw);
                 int ky = yy - (int)(cy - 0.5f) - K.o, kx = xx - (int)(cx - 0.5f) - K.o;
-                cov = (ky >= 0 && ky < K.n && kx >= 0 && kx < K.n) ? K.cov[(size_t)ky * K.n + kx] : 0;
+                cov = (ky >= 0 && ky < K.n && kx >= 0 && kx < K.n) ? K.cov[(size_t)ky * K.n + kx] / 256.0f : 0.0f;
             }
-            if(cov > 0) blend((size_t)yy * w + xx, r, g, b, mul8(cov, a));
+            if(cov > 0) blend((size_t)yy * w + xx, r, g, b, cov * a);
         }
     }
 
@@ -209,7 +204,7 @@ public:
     // is drawn as several pieces per step, each where the curve is there, instead of one flat
     // block per step (stair-steps as wide as the step at large sizes). The shares are still those
     // of the whole step, so the pieces of one step add up to the same opacity.
-    void sweptPoint(float x, float y, float wgt, float step, int r, int g, int b, int a, int cap, float span = 0){
+    void sweptPoint(float x, float y, float wgt, float step, int r, int g, int b, float a, int cap, float span = 0){
         if(a <= 0 || cap == SQUARE || step <= 0) return;
         const float SNAP = snapOf(cap);
         float cy = std::floor(y + SNAP) + 0.5f, hw = wgt / 2;
@@ -253,7 +248,7 @@ public:
                 float covx = std::max(0.0f, std::min(1.0f, std::min(xx + 1.0f, X1 + c) - std::max((float)xx, X0 - c)));
                 int k = std::min(64, (int)(len / step / wmax * 64 + 0.5f));
                 if(k == 0 && a >= 255 && covy >= 0.999f) k = 1;   // opaque: any share covers
-                int A = (int)(t[k] * covx * 255 + 0.5f);
+                float A = t[k] * covx * 255;
                 if(A > 0) blend(row + xx, r, g, b, A);
             }
         }
@@ -289,7 +284,7 @@ public:
                     if(dx * dx + dy * dy <= r2) n++;
                 }
             }
-            K.cov[(size_t)(yy - K.o) * K.n + (xx - K.o)] = (int)(n * 255.0f / 256 + 0.5f);
+            K.cov[(size_t)(yy - K.o) * K.n + (xx - K.o)] = n;   // samples inside, of 256
         }
         roundIndex[hw] = roundKernels.size();
         roundKernels.push_back({hw, std::move(K)});
@@ -302,7 +297,7 @@ public:
     // filled together (nonzero winding = their union) with 8 x 8 samples per pixel, then blended.
     struct Pt { float x, y; };
     static float snapPC(float v, int cap){ return std::floor(v + snapOf(cap)) + 0.5f; }
-    void strokePath(std::vector<Pt> pts, float width, int cap, int r, int g, int b, int a, bool normalize = true, bool closed = false){
+    void strokePath(std::vector<Pt> pts, float width, int cap, int r, int g, int b, float a, bool normalize = true, bool closed = false){
         if(a <= 0 || pts.empty() || width <= 0) return;
         if(normalize) for(auto& p : pts){ p.x = snapPC(p.x, cap); p.y = snapPC(p.y, cap); }
         // drop repeated points
@@ -370,7 +365,7 @@ public:
     }
     // A cubic Bezier as a stroke: the end points snapped like the vertices, the control points moved
     // with their end point, flattened finely
-    void strokeBezier(Pt a0, Pt c0, Pt c1, Pt a1, float width, int cap, int r, int g, int b, int a){
+    void strokeBezier(Pt a0, Pt c0, Pt c1, Pt a1, float width, int cap, int r, int g, int b, float a){
         Pt s0 = {snapPC(a0.x, cap), snapPC(a0.y, cap)}, s1 = {snapPC(a1.x, cap), snapPC(a1.y, cap)};
         c0.x += s0.x - a0.x; c0.y += s0.y - a0.y; c1.x += s1.x - a1.x; c1.y += s1.y - a1.y;
         float est = std::fabs(c0.x - s0.x) + std::fabs(c0.y - s0.y) + std::fabs(c1.x - c0.x) + std::fabs(c1.y - c0.y) + std::fabs(s1.x - c1.x) + std::fabs(s1.y - c1.y);
@@ -384,10 +379,10 @@ public:
         strokePath(pts, width, cap, r, g, b, a, false);
     }
     // a filled shape (no stroke normalization for fills, as Java2D)
-    void fillPolygon(const std::vector<Pt>& poly, int r, int g, int b, int a){ fillUnion({poly}, r, g, b, a); }
-    void fillPolygons(const std::vector<std::vector<Pt>>& polys, int r, int g, int b, int a){ fillUnion(polys, r, g, b, a); }
+    void fillPolygon(const std::vector<Pt>& poly, int r, int g, int b, float a){ fillUnion({poly}, r, g, b, a); }
+    void fillPolygons(const std::vector<std::vector<Pt>>& polys, int r, int g, int b, float a){ fillUnion(polys, r, g, b, a); }
     // the union of polygons, 8 x 8 samples per pixel, composited once
-    void fillUnion(const std::vector<std::vector<Pt>>& polys, int r, int g, int b, int a){
+    void fillUnion(const std::vector<std::vector<Pt>>& polys, int r, int g, int b, float a){
         if(polys.empty()) return;
         float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
         for(auto& q : polys) for(auto& p : q){ x0 = std::min(x0, p.x); y0 = std::min(y0, p.y); x1 = std::max(x1, p.x); y1 = std::max(y1, p.y); }
@@ -431,13 +426,12 @@ public:
         for(int yy = 0; yy < bh; yy++) for(int xx = 0; xx < bw; xx++){
             int n = cov[(size_t)yy * bw + xx];
             if(!n) continue;
-            int cv = (int)(n * 255.0f / (S * S) + 0.5f);
-            blend((size_t)(py0 + yy) * w + px0 + xx, r, g, b, mul8(std::min(255, cv), a));
+            blend((size_t)(py0 + yy) * w + px0 + xx, r, g, b, std::min(1.0f, n / (float)(S * S)) * a);
         }
     }
 
     // One point (FastDraw fdPoint: the anti-aliased diamond)
-    void pointAA(float x, float y, int r, int g, int b, int a){
+    void pointAA(float x, float y, int r, int g, int b, float a){
         if(a <= 0) return;
         const auto& cov = coverage(x - std::floor(x), y - std::floor(y));
         int ix = (int)std::floor(x) - 1, iy = (int)std::floor(y) - 1;
@@ -450,13 +444,13 @@ public:
                 if(c == 0) continue;
                 int xx = ix + pxx;
                 if(xx < 0 || xx >= w) continue;
-                blend(row + xx, r, g, b, mul8(c, a));
+                blend(row + xx, r, g, b, c * a / 255.0f);
             }
         }
     }
 
     // A filled axis-aligned rectangle, anti-aliased on fractional edges (box coverage)
-    void fillRect(float x, float y, float rw, float rh, int r, int g, int b, int a){
+    void fillRect(float x, float y, float rw, float rh, int r, int g, int b, float a){
         if(a <= 0 || rw <= 0 || rh <= 0) return;
         float x1 = x + rw, y1 = y + rh;
         int ix0 = std::max(0, (int)std::floor(x)), ix1 = std::min(w, (int)std::ceil(x1));
@@ -465,39 +459,29 @@ public:
             float cy = std::min((float)yy + 1, y1) - std::max((float)yy, y);
             for(int xx = ix0; xx < ix1; xx++){
                 float cx = std::min((float)xx + 1, x1) - std::max((float)xx, x);
-                int cov = (int)(cx * cy * 255 + 0.5f);
-                blend((size_t)yy * w + xx, r, g, b, mul8(cov, a));
+                blend((size_t)yy * w + xx, r, g, b, cx * cy * a);
             }
         }
     }
 
     // Straight alpha, as the sketch writes its PNGs (Render.pde toStraightAlpha): a = max(R,G,B),
-    // colour = round(c x 255 / a); a = 0 -> transparent. RGBA bytes.
-    std::vector<uint8_t> straightAlpha() const {
-        std::vector<uint8_t> out((size_t)w * h * 4);
+    // colour = round(c x 65535 / a); a = 0 -> transparent. RGBA, 16 bits per channel.
+    std::vector<uint16_t> straightAlpha() const {
+        std::vector<uint16_t> out((size_t)w * h * 4);
         parallelFor(px.size(), [&](size_t i0, size_t i1){ for(size_t i = i0; i < i1; i++){
-            int r = (px[i] >> 16) & 255, g = (px[i] >> 8) & 255, b = px[i] & 255;
+            int r = pxR(px[i]), g = pxG(px[i]), b = pxB(px[i]);
             int a = std::max(r, std::max(g, b));
-            uint8_t* o = &out[i * 4];
+            uint16_t* o = &out[i * 4];
             if(a == 0){ o[0] = o[1] = o[2] = o[3] = 0; continue; }
-            const uint8_t* t = &straightTable()[(size_t)a << 8];
-            o[0] = t[r]; o[1] = t[g]; o[2] = t[b];
-            o[3] = (uint8_t)a;
+            if(a == 65535){ o[0] = (uint16_t)r; o[1] = (uint16_t)g; o[2] = (uint16_t)b; o[3] = 65535; continue; }
+            const double k = 65535.0 / a;
+            o[0] = (uint16_t)std::min(65535, (int)(r * k + 0.5)); o[1] = (uint16_t)std::min(65535, (int)(g * k + 0.5)); o[2] = (uint16_t)std::min(65535, (int)(b * k + 0.5));
+            o[3] = (uint16_t)a;
         } });
         return out;
     }
 
 private:
-    // round(c x 255 / a), clamped, for every a, c (the same float formula, computed once)
-    static const std::vector<uint8_t>& straightTable(){
-        static const std::vector<uint8_t> t = []{
-            std::vector<uint8_t> v(256 * 256, 0);
-            for(int a = 1; a < 256; a++) for(int c = 0; c < 256; c++)
-                v[(size_t)a * 256 + c] = (uint8_t)std::min(255, (int)std::floor(c * 255.0f / a + 0.5f));
-            return v;
-        }();
-        return t;
-    }
     static const std::vector<std::array<int, 9>>& covTable(){
         static const std::vector<std::array<int, 9>> t = []{
             std::vector<std::array<int, 9>> v(64 * 64);

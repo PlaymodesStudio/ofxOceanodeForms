@@ -1,5 +1,9 @@
 #pragma once
 
+// NOT INCLUDED since 2026-11-14: the canvas holds 16 bits per channel (formsGLCanvas.h), and this
+// rasterizer reproduces the former 8-bit arithmetic (256 alpha levels, uint32 pixels). Kept for
+// reference; it does not compile against the 16-bit canvas.
+
 // Exact GPU rasterization of the kick sweep. All pow/envelope calculations stay on the CPU:
 // each column stores the first sample reaching each of the 256 alpha levels. The GPU finds
 // that level with integer searches and reproduces Canvas's Java2D integer source-over.

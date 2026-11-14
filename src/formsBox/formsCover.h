@@ -71,7 +71,7 @@ inline bool affects(const Settings& s, int source, int dest){
 struct Mask {
     Settings settings;
     int w=0,h=0;
-    std::shared_ptr<const std::vector<uint8_t>> alpha;
+    std::shared_ptr<const std::vector<uint16_t>> alpha;
     std::shared_ptr<ofTexture> texture;
     std::string png;
 };

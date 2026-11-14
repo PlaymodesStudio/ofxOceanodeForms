@@ -42,12 +42,12 @@ int main(int, char** argv){
         for(auto& ir : r.itemResults) if(ir.contains("error")){ itemErr = true; if(errs < 8) printf("  %s: %s\n", variants[i].first.c_str(), ir["error"].get<std::string>().c_str()); }
         if(!r.error.empty() || itemErr){ errs++; continue; }
         long lit = 0;
-        for(size_t k = 0; k < (size_t)r.w * r.h; k++) if(r.rgba[k * 4 + 3] > 8) lit++;
+        for(size_t k = 0; k < (size_t)r.w * r.h; k++) if(r.rgba[k * 4 + 3] > 8 * 257) lit++;
         if(lit == 0){ empty++; if(empty < 12) printf("  empty: %s\n", variants[i].first.c_str()); }
         int cx = (int)(i % COLS) * TW, cy = (int)(i / COLS) * TH;
         for(int y = 0; y < TH; y++) for(int x = 0; x < TW; x++){
-            const uint8_t* s = &r.rgba[((size_t)(y * r.h / TH) * r.w + x * r.w / TW) * 4];
-            for(int c = 0; c < 3; c++) sheet[((size_t)(cy + y) * COLS * TW + cx + x) * 3 + c] = (uint8_t)(s[c] * s[3] / 255);
+            const uint16_t* s = &r.rgba[((size_t)(y * r.h / TH) * r.w + x * r.w / TW) * 4];
+            for(int c = 0; c < 3; c++) sheet[((size_t)(cy + y) * COLS * TW + cx + x) * 3 + c] = (uint8_t)((uint64_t)s[c] * s[3] / 65535 / 257);
         }
     }
     FILE* o = fopen(argv[2], "wb"); fprintf(o, "P6 %d %d 255\n", COLS * TW, rows * TH); fwrite(sheet.data(), 1, sheet.size(), o); fclose(o);

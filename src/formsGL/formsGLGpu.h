@@ -2,8 +2,11 @@
 //  formsGLGpu.h
 //  ofxOceanodeForms — ESPECTRES 2027, Phase 7 (Forms GL Box)
 //
-//  Worker GPU contexts (macOS CGL): exact integer kick rasterization and full-resolution texture
-//  uploads shared with the app. The UI polls upload fences with zero timeout and attaches finished
+//  Worker GPU contexts (macOS CGL): full-resolution texture uploads shared with the app (16 bits
+//  per channel: GL_RGBA16 / GL_R16), and the opt-in approximate noise mask on 16-bit integer pixels.
+//  The exact kick rasterizer (formsGLExactRaster.h) reproduced Java2D's 8-bit arithmetic through a
+//  table of 256 alpha levels; the canvas is 16 bits per channel since 2026-11-14, so it is not used
+//  (kickSweep returns false: the CPU draws the kick). The UI polls upload fences with zero timeout and attaches finished
 //  textures directly, preserving every source pixel without a large upload on the scrolling thread.
 //  Other drawing keeps the CPU reference. The old approximate noise shader is opt-in only.
 //  The includer provides the OpenGL declarations (the app: openFrameworks' GLEW); without them (the
@@ -18,7 +21,6 @@
 #include <OpenGL/gl3.h>
 #endif
 #include <string>
-#include "formsGLExactRaster.h"
 #include "formsGLSharedTexture.h"
 
 namespace formsgl {
@@ -30,7 +32,6 @@ public:
         if(ctx){
             CGLContextObj prev = CGLGetCurrentContext();   // whatever thread this runs on, its context is put back
             CGLSetCurrentContext(ctx);
-            raster.release();
             if(prog) glDeleteProgram(prog);
             if(vao) glDeleteVertexArrays(1, &vao);
             if(fbo) glDeleteFramebuffers(1, &fbo);
@@ -44,19 +45,17 @@ public:
     std::string error;
 
     bool kickSweep(Canvas& canvas, float x, float top, float width, float power, int cap) override {
-        if(!enableExactRaster) return false;
-        if(!init()) return false;
-        CGLSetCurrentContext(ctx);
-        bool done = raster.kick(canvas, x, top, width, power, cap);
-        if(!done && !raster.error.empty()) error = raster.error;
-        return done;
+        return false;   // 16-bit canvas: the CPU draws it (see the note at the top)
     }
-    uint64_t exactDraws() const { return raster.draws; }
+    uint64_t exactDraws() const { return 0; }
     bool enableExactRaster = true;
-    double exactPrepareMs() const { return raster.prepareMs; }
-    double exactRasterMs() const { return raster.rasterMs; }
-    std::shared_ptr<SharedTexture> upload(const std::vector<uint8_t>& rgba, int w, int h,
-                                        const std::shared_ptr<SharedTexturePool>& pool, GLenum format=GL_RGBA){
+    double exactPrepareMs() const { return 0; }
+    double exactRasterMs() const { return 0; }
+    // 16 bits per channel: RGBA (straight alpha) or one channel (GL_RED: a cover mask).
+    // eightBit: the texture is made with 8 bits per channel (the node's 8-bit live buffers option);
+    // the 16-bit values are rounded to 8 here, on the worker.
+    std::shared_ptr<SharedTexture> upload(const std::vector<uint16_t>& rgba, int w, int h,
+                                        const std::shared_ptr<SharedTexturePool>& pool, GLenum format=GL_RGBA, bool eightBit=false){
         size_t channels=format==GL_RED?1:4;
         if(!pool || !init() || w <= 0 || h <= 0 || rgba.size() < (size_t)w * h * channels) return {};
         CGLSetCurrentContext(ctx);
@@ -65,15 +64,23 @@ public:
         glGetIntegerv(target == GL_TEXTURE_RECTANGLE ? GL_MAX_RECTANGLE_TEXTURE_SIZE : GL_MAX_TEXTURE_SIZE, &maxTexture);
         if(w > maxTexture || h > maxTexture) return {};
         auto t = std::make_shared<SharedTexture>(); t->pool = pool; t->w = w; t->h = h; t->target = target;
-        t->internalFormat=format==GL_RED?GL_R8:GL_RGBA8;
+        t->internalFormat=eightBit?(format==GL_RED?GL_R8:GL_RGBA8):(format==GL_RED?GL_R16:GL_RGBA16);
         glGenTextures(1, &t->id);
         glActiveTexture(GL_TEXTURE0); glBindTexture(target, t->id);
         glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0); glPixelStorei(GL_UNPACK_ALIGNMENT, channels==1?1:4);
-        glTexImage2D(target, 0, t->internalFormat, w, h, 0, format, GL_UNSIGNED_BYTE, rgba.data());
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        if(eightBit){
+            std::vector<uint8_t> b8((size_t)w*h*channels);
+            for(size_t i=0;i<b8.size();++i) b8[i]=(uint8_t)((rgba[i]+128u)/257u);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, channels==1?1:4);
+            glTexImage2D(target, 0, t->internalFormat, w, h, 0, format, GL_UNSIGNED_BYTE, b8.data());
+        }else{
+            glPixelStorei(GL_UNPACK_ALIGNMENT, channels==1?2:4);
+            glTexImage2D(target, 0, t->internalFormat, w, h, 0, format, GL_UNSIGNED_SHORT, rgba.data());
+        }
         if(glGetError() != GL_NO_ERROR){ error = "shared texture upload failed"; return {}; }
         t->fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         if(!t->fence){ error = "shared texture fence allocation failed"; return {}; }
@@ -81,7 +88,7 @@ public:
         return t;
     }
 
-    bool mask(std::vector<uint32_t>& px, int W, int H, const SketchPRNG& prng, float ox, float oy, float cellX, float cellY,
+    bool mask(std::vector<Canvas::Px>& px, int W, int H, const SketchPRNG& prng, float ox, float oy, float cellX, float cellY,
               float gain, float con, float out, bool invert, float threshold, float amount, bool canvasMode) override {
         // The historical shader's floating-point noise differs by up to a few levels.
         // Exact rendering always retains the CPU noise path.
@@ -117,13 +124,13 @@ public:
         int rowsPer = std::max(1, std::min(H, 4000000 / std::max(1, W)));
         for(int y0 = 0; y0 < H; y0 += rowsPer){
             int h = std::min(rowsPer, H - y0);
-            uint32_t* strip = px.data() + (size_t)y0 * W;
-            // the image: 0xAARRGGBB words = BGRA bytes
+            Canvas::Px* strip = px.data() + (size_t)y0 * W;
+            // the image: 0xAAAARRRRGGGGBBBB words = B, G, R, A 16-bit values
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texIn);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, W, h, 0, GL_BGRA_INTEGER, GL_UNSIGNED_BYTE, strip);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16UI, W, h, 0, GL_BGRA_INTEGER, GL_UNSIGNED_SHORT, strip);
             glBindTexture(GL_TEXTURE_2D, texOut);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI, W, h, 0, GL_BGRA_INTEGER, GL_UNSIGNED_BYTE, nullptr);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16UI, W, h, 0, GL_BGRA_INTEGER, GL_UNSIGNED_SHORT, nullptr);
             glBindTexture(GL_TEXTURE_2D, texIn);
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texOut, 0);
@@ -131,7 +138,7 @@ public:
             glViewport(0, 0, W, h);
             glUniform1i(glGetUniformLocation(prog, "rowOffset"), y0);
             glDrawArrays(GL_TRIANGLES, 0, 3);
-            glReadPixels(0, 0, W, h, GL_BGRA_INTEGER, GL_UNSIGNED_BYTE, strip);
+            glReadPixels(0, 0, W, h, GL_BGRA_INTEGER, GL_UNSIGNED_SHORT, strip);
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         GLenum e = glGetError();
@@ -144,7 +151,6 @@ private:
 public:
     bool allowApproximateNoise = false;
 private:
-    ExactRasterGL raster;
     CGLContextObj ctx = nullptr;
     GLuint prog = 0, vao = 0, fbo = 0, texIn = 0, texOut = 0, texPerm = 0;
     bool tried = false, good = false;
@@ -195,7 +201,7 @@ float perlin(float x, float y){
     float top = lerpV(a, b, u), bottom = lerpV(c, d, u);
     return (lerpV(top, bottom, v) + bound) / (bound + bound);
 }
-uint scaleK(uint c, float k){ return uint(clamp(floor(float(c) * k + 0.5), 0.0, 255.0)); }
+uint scaleK(uint c, float k){ return uint(clamp(floor(float(c) * k + 0.5), 0.0, 65535.0)); }
 void main(){
     ivec2 q = ivec2(gl_FragCoord.xy);
     uvec4 c = texelFetch(img, q, 0);   // r, g, b, a (uploaded and read back as BGRA bytes)
@@ -206,7 +212,7 @@ void main(){
     if(invert == 1) nv = 1.0 - nv;
     if(shape.w > 0.0) nv = nv >= shape.w ? 1.0 : 0.0;
     float k = 1.0 - amount + amount * nv;
-    if(canvasMode == 1) color = uvec4(scaleK(c.r, k), scaleK(c.g, k), scaleK(c.b, k), 255u);
+    if(canvasMode == 1) color = uvec4(scaleK(c.r, k), scaleK(c.g, k), scaleK(c.b, k), 65535u);
     else color = uvec4(c.r, c.g, c.b, scaleK(c.a, k));
 }
 )";

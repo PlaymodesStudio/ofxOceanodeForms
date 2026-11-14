@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cmath>
 #define GL_RGBA 0x1908
+#define GL_RGBA16 0x805B
+#define FORMS_STUB_OF 1
 #define GL_SRC_ALPHA 0x0302
 #define GL_ONE_MINUS_SRC_ALPHA 0x0303
 #define GL_ONE 1
@@ -23,16 +25,19 @@ struct ofFbo {
     float getWidth() const { return (float)w; } float getHeight() const { return (float)h; }
     void begin(){} void end(){}
     void readToPixels(struct ofPixels&) const {}
+    void readToPixels(struct ofShortPixels&) const {}
 };
 struct ofPixels {};
+struct ofShortPixels {};
 struct ofBuffer { void append(const std::string&){} };
 inline void ofBufferToFile(const std::string&, const ofBuffer&){}
 inline void ofSaveImage(const ofPixels&, const std::string&){}
+inline void ofSaveImage(const ofShortPixels&, const std::string&){}
 enum ofImageType { OF_IMAGE_GRAYSCALE, OF_IMAGE_COLOR, OF_IMAGE_COLOR_ALPHA };
 struct ofTexture {
     bool isAllocated() const { return true; }
     void draw(float, float, float, float){}
-    void drawSubsection(float, float, float, float, float, float, float, float){}
+    void drawSubsection(float, float, float, float, float, float, float, float) const {}
     float getWidth() const { return 1920; } float getHeight() const { return 1080; }
 };
 struct ofImage {
@@ -40,12 +45,14 @@ struct ofImage {
     ofTexture& getTexture(){ return texture; }
     bool loaded = false; std::string path;
     void setFromPixels(const unsigned char*, int, int, ofImageType){ loaded = true; }
+    void setFromPixels(const unsigned short*, int, int, ofImageType){ loaded = true; }
     bool load(const std::string& p){ path = p; loaded = true; return true; }
     bool isAllocated() const { return loaded; } bool isUsingTexture() const { return loaded; }
     void clear(){ loaded = false; path.clear(); }
     void draw(float, float, float, float){} void drawSubsection(float, float, float, float, float, float, float, float){}
     float getWidth() const { return 1920; } float getHeight() const { return 1080; }
 };
+typedef ofImage ofShortImage;
 inline void ofClear(int, int, int, int){} inline void ofBackground(int){}
 inline void ofPushStyle(){} inline void ofPopStyle(){} inline void ofEnableAlphaBlending(){}
 inline void ofSetColor(int, int = 0, int = 0, int = 255){}

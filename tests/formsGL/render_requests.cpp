@@ -1,5 +1,5 @@
 // Renders request files with the C++ port (Forms GL Box's renderer), headless, to PNG next to a
-// given folder: <out>/<request name>.png (straight alpha, as the sketch writes).
+// given folder: <out>/<request name>.png (straight alpha, 16 bits per channel, as the renderer draws).
 // Build: clang++ -std=c++17 -O2 -ffp-contract=off -I src/formsGL -I <OF>/libs/json/include tests/formsGL/render_requests.cpp -lz
 //        (letters: -DWITH_FONT -I <freetype2 headers> -lfreetype, and FORMSGL_FONT=<FuturaStd-Bold.otf>)
 // Run:   ./a.out <generators.json> <out dir> <request.json>...
@@ -18,13 +18,13 @@ static void chunk(FILE* f, const char* type, const std::vector<uint8_t>& data){
     uint32_t crc = crc32(0, c.data() + 4, (uInt)(c.size() - 4)); put32(c, crc);
     fwrite(c.data(), 1, c.size(), f);
 }
-static bool writePng(const std::string& path, const std::vector<uint8_t>& rgba, int w, int h){
+static bool writePng(const std::string& path, const std::vector<uint16_t>& rgba, int w, int h){
     FILE* f = fopen(path.c_str(), "wb"); if(!f) return false;
     const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10}; fwrite(sig, 1, 8, f);
-    std::vector<uint8_t> ih; put32(ih, w); put32(ih, h); ih.push_back(8); ih.push_back(6); ih.push_back(0); ih.push_back(0); ih.push_back(0);
+    std::vector<uint8_t> ih; put32(ih, w); put32(ih, h); ih.push_back(16); ih.push_back(6); ih.push_back(0); ih.push_back(0); ih.push_back(0);
     chunk(f, "IHDR", ih);
-    std::vector<uint8_t> raw; raw.reserve((size_t)h * (w * 4 + 1));
-    for(int y = 0; y < h; y++){ raw.push_back(0); raw.insert(raw.end(), rgba.begin() + (size_t)y * w * 4, rgba.begin() + (size_t)(y + 1) * w * 4); }
+    std::vector<uint8_t> raw; raw.reserve((size_t)h * (w * 8 + 1));
+    for(int y = 0; y < h; y++){ raw.push_back(0); for(int x = 0; x < w * 4; x++){ uint16_t v = rgba[(size_t)y * w * 4 + x]; raw.push_back(v >> 8); raw.push_back(v & 255); } }   // big-endian samples
     uLongf n = compressBound(raw.size()); std::vector<uint8_t> z(n);
     compress2(z.data(), &n, raw.data(), raw.size(), 6); z.resize(n);
     chunk(f, "IDAT", z); chunk(f, "IEND", {});

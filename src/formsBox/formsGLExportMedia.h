@@ -113,7 +113,7 @@ struct Score {
         for(float f : v) a.push_back(f); add(t, a);
     }
 };
-struct Layer { std::vector<formscover::Mask> covers; json recipe; std::vector<uint8_t> rgba; int w = 0, h = 0, index = 0, root = 24; float gain = 1; std::vector<float> scanAmps, kickLevels; };
+struct Layer { std::vector<formscover::Mask> covers; json recipe; std::vector<uint16_t> rgba; int w = 0, h = 0, index = 0, root = 24; float gain = 1; std::vector<float> scanAmps, kickLevels; };
 inline int sampleChannels(const std::string& path){
     int n=wavChannels(path); if(n) return n;
     std::ifstream in(path,std::ios::binary); char header[12]; in.read(header,12);
@@ -209,8 +209,8 @@ inline std::string render(const json& manifest, const std::vector<Layer>& layers
                 auto& l = layers[li]; auto& layout = layouts[li];
                 double layerPhase = std::fmod(.25 + t * manifest.at("bpm").get<double>() / (240.0 * l.recipe.value("bars", 8.0)), 1.0);
                 int x = std::min(l.w - 1, (int)(layerPhase * l.w));
-                std::vector<uint8_t> col(l.h * 4);
-                if(!captured) for(int y = 0; y < l.h; ++y) std::memcpy(col.data() + y * 4, &l.rgba[((size_t)y * l.w + x) * 4], 4);
+                std::vector<uint16_t> col(l.h * 4);   // 16 bits per channel
+                if(!captured) for(int y = 0; y < l.h; ++y) std::memcpy(col.data() + y * 4, &l.rgba[((size_t)y * l.w + x) * 4], 4 * sizeof(uint16_t));
                 int bar = std::min(std::max(1, (int)std::ceil(l.recipe.value("bars", 8.0) - 1e-9)) - 1, (int)(layerPhase * l.recipe.value("bars", 8.0)));
                 if(lastBars[li] != bar){
                 lastBars[li] = bar;
@@ -231,7 +231,7 @@ inline std::string render(const json& manifest, const std::vector<Layer>& layers
                 json a = json::array({"/c_setn", l.index * 512, (int)amps.size()}); for(float v : amps) a.push_back(v); score.add(t, a);
                 if(kick && l.index == manifest.value("kickLayer", 0)){
                     int strip = std::clamp((int)std::lround(l.h * f("kickStrip", snd.kickStrip)), 1, l.h); double sum = 0;
-                    for(int y = l.h - strip; y < l.h; ++y) for(int c = 0; c < 3; ++c) sum += col[y * 4 + c] / (3.0 * 255 * strip);
+                    for(int y = l.h - strip; y < l.h; ++y) for(int c = 0; c < 3; ++c) sum += col[y * 4 + c] / (3.0 * 65535 * strip);
                     if(captured) sum = l.kickLevels.at(tick);
                     bool on = f("kDetectOn", 1) > .5f && sum > f("kickThreshold", snd.kickThreshold);
                     if(on && !wasKick && t - lastKick >= f("kickMinGap", snd.kickMinGap)){

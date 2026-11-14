@@ -12,7 +12,7 @@
 #pragma once
 
 #include "ofMain.h"
-#include "ofxThreadedImageLoader.h"
+#include "formsShortLoader.h"
 #include "formsEngine.h"
 #include <chrono>
 
@@ -55,13 +55,18 @@ public:
     struct Span { float x; double bars; };
     std::vector<Span> lastSpans;
 
+    // The buffer's format: GL_RGBA16 (16 bits per channel, as the images) unless the node's
+    // "16-bit live buffers" option is off (GL_RGBA: 8 bits). Changing it reallocates the buffer.
+    int bufferFormat = GL_RGBA16;
     void allocate(int w, int h){
         if(w < 1 || h < 1) return;
-        if(fbo.isAllocated() && (int)fbo.getWidth() == w && (int)fbo.getHeight() == h) return;
+        if(fbo.isAllocated() && (int)fbo.getWidth() == w && (int)fbo.getHeight() == h && fboFormat == bufferFormat) return;
         ofFboSettings st;
-        st.width = w; st.height = h; st.internalformat = GL_RGBA;
+        st.width = w; st.height = h; st.internalformat = bufferFormat;
         fbo.allocate(st);
+        fboFormat = bufferFormat;
     }
+    int fboFormat = 0;   // what the buffer was allocated with
 
     // One frame: load, wrap on phase, draw into the FBO, report the header image to L
     void update(Schedule::Layer* L, float phase, float headerPos, int w, int h){
@@ -221,7 +226,7 @@ public:
     // Saves the current output and which images were showing (for checks)
     void saveFrame(const std::string& base, float phase){
         if(!fbo.isAllocated()) return;
-        ofPixels px;
+        ofShortPixels px;   // 16 bits per channel, as the buffer
         fbo.readToPixels(px);
         ofSaveImage(px, base + ".png");
         ofBuffer info;
@@ -232,8 +237,8 @@ public:
     }
 
 private:
-    ofxThreadedImageLoader loader;
-    ofImage images[3];
+    ShortImageLoader loader;
+    ofShortImage images[3];               // 16 bits per channel (in memory: the renderer's pixels; from disk: the PNG)
     std::shared_ptr<Image> entries[3];
     int leavingIndex = 0, appearingIndex = 1, loadingIndex = 2;
     bool isLoading = false;

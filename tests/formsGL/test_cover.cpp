@@ -27,8 +27,8 @@ int main(int argc,char** argv){
     auto ink=formsgl::Sketch(schemas).render(black); assert(ink.covers.size()==1);
     int darkLit=0;for(auto a:*ink.covers[0].alpha) darkLit+=a>0;assert(darkLit>0);
     formsgl::Canvas dst,src;dst.allocateLayer(2,2);src.allocateLayer(2,2);
-    src.blendLayer(0,0,0,0,128);dst.drawLayer(src);
-    assert((dst.px[0]>>24)==128 && dst.px[1]==0); // black shapes survive process-layer compositing
+    src.blendLayer(0,0,0,0,32896);dst.drawLayer(src);   // 16 bits per channel: alpha 128/255
+    assert(formsgl::Canvas::pxA(dst.px[0])==32896 && dst.px[1]==0); // black shapes survive process-layer compositing
 
     auto multi=withCover; multi["items"].insert(multi["items"].begin(),{{"gen","masses"},{"params",json::object()}});
     auto combined=formsgl::Sketch(schemas).render(multi); assert(combined.covers.size()==1);

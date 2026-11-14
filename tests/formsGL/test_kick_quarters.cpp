@@ -7,7 +7,7 @@
 struct GpuFallbackProbe:formsgl::GpuEffects {
     int calls=0;
     bool kickSweep(formsgl::Canvas&,float,float,float,float,int) override {++calls;return false;}
-    bool mask(std::vector<uint32_t>&,int,int,const formsgl::SketchPRNG&,float,float,float,float,float,float,float,bool,float,float,bool) override {return false;}
+    bool mask(std::vector<formsgl::Canvas::Px>&,int,int,const formsgl::SketchPRNG&,float,float,float,float,float,float,float,bool,float,float,bool) override {return false;}
 };
 int main(int argc,char** argv){
     assert(argc==2);forms::Engine engine;engine.rendererFolder=argv[1];engine.loadAll();engine.itemBars=2;
@@ -19,7 +19,7 @@ int main(int argc,char** argv){
     auto implicit=request;implicit["items"][0]["params"].erase("level");
     assert(formsgl::Sketch(schemas).render(implicit).rgba==image.rgba);
     auto energy=[](const formsgl::RenderResult& r){
-        double sum=0;for(size_t i=0;i<r.rgba.size();i+=4)sum+=(r.rgba[i]+r.rgba[i+1]+r.rgba[i+2])*r.rgba[i+3]/255.;return sum;
+        double sum=0;for(size_t i=0;i<r.rgba.size();i+=4)sum+=(double)(r.rgba[i]+r.rgba[i+1]+r.rgba[i+2])*r.rgba[i+3]/65535.;return sum;
     };
     auto boosted=request;boosted["items"][0]["params"]["level"]=2;
     auto bright=formsgl::Sketch(schemas).render(boosted);assert(bright.error.empty());
@@ -40,7 +40,7 @@ int main(int argc,char** argv){
             double sum=0;
             for(int y=image.h-strip;y<image.h;++y){
                 size_t i=((size_t)y*image.w+x)*4;
-                sum+=(image.rgba[i]+image.rgba[i+1]+image.rgba[i+2])/(3*255.)*image.rgba[i+3]/255.;
+                sum+=(image.rgba[i]+image.rgba[i+1]+image.rgba[i+2])/(3*65535.)*image.rgba[i+3]/65535.;
             }
             float level=sum/strip;minimum=std::min(minimum,level);maximum=std::max(maximum,level);
             bool on=level>threshold;if(on&&!previous)++hits;previous=on;

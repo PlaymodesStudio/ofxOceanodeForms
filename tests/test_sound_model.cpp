@@ -162,7 +162,7 @@ int main(int argc, char** argv){
     int lit = 0; for(float a : amps) if(a > 0) lit++;
     CHECK(lit >= 1 && lit <= 2, "a 1-row line lights 1-2 partials (%d)", lit);
     // empty-safe
-    columnAmps(nullptr, 0, 1, lay, amps);
+    columnAmps<unsigned short>(nullptr, 0, 1, lay, amps);
     CHECK((int)amps.size() == 512 && amps[0] == 0, "empty column");
 
     // ---- L/R balance

@@ -96,11 +96,18 @@ public:
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("Full-resolution texture uploads on worker GL contexts.\n"
                                                          "Finished GPU textures enter the scrollers without an upload on the UI thread.\n"
                                                          "Native pixels, filtering and texture coordinates are preserved.");
+            bool deep = live16.load();
+            if(ImGui::Checkbox("16-bit live buffers", &deep)){ live16 = deep; liveBits = deep ? 16 : 8; }
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("On (default): page textures, layer buffers, layer effects, composite and post-processing\n"
+                                                         "hold 16 bits per channel. Off: 8 bits, a fallback if 16 costs frame rate; faint trails\n"
+                                                         "and fades then step again on the GPU side. The images are drawn in 16 bits either way;\n"
+                                                         "pages already on stage keep the depth they were uploaded with.");
             bool kicks = gpuKicks.load();
-            if(ImGui::Checkbox("GPU kick rasterization (exact)", &kicks)) gpuKicks = kicks;
-            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Uses the byte-exact integer kick shader when GPU streaming is enabled.\n"
-                                                         "Off by default: the parallel CPU kick renderer benchmarks faster on this Mac.\n"
-                                                         "GPU texture streaming works with either drawing backend.");
+            ImGui::BeginDisabled();
+            if(ImGui::Checkbox("GPU kick rasterization (8-bit, retired)", &kicks)) gpuKicks = kicks;
+            ImGui::EndDisabled();
+            if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The integer kick shader reproduced the former 8-bit arithmetic.\n"
+                                                         "Images are drawn with 16 bits per channel now: the CPU draws the kicks.");
             if(!gpuError.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "GPU: %s", gpuError.c_str());
             ImGui::TextDisabled("Generators: %s, every process.%s", portedList().c_str(), font ? "" : " Font not found: letters are left out.");
             if(!lastWhyNot.empty()) ImGui::TextDisabled("last: %s", lastWhyNot.c_str());
@@ -113,6 +120,7 @@ public:
         j["formsGLExport"]={{"width",exportWidth},{"height",exportHeight},{"audio",glExportAudio},{"video",glExportVideo},{"layers",glExportSeparate}};
         j["formsGLExactGpu"] = useGpu.load();
         j["formsGLExactGpuKicks"] = gpuKicks.load();
+        j["formsGLLive16"] = live16.load();
         j["formsGLArchive"] = archive.load();
         j["formsGLImmediate"] = immediateOn;
     }
@@ -124,6 +132,8 @@ public:
         }
         if(j.contains("formsGLExactGpu") && j["formsGLExactGpu"].is_boolean()) useGpu = j["formsGLExactGpu"].get<bool>();
         if(j.contains("formsGLExactGpuKicks") && j["formsGLExactGpuKicks"].is_boolean()) gpuKicks = j["formsGLExactGpuKicks"].get<bool>();
+        if(j.contains("formsGLLive16") && j["formsGLLive16"].is_boolean()) live16 = j["formsGLLive16"].get<bool>();
+        liveBits = live16.load() ? 16 : 8;
         if(j.contains("formsGLArchive") && j["formsGLArchive"].is_boolean()) archive = j["formsGLArchive"].get<bool>();
         if(j.contains("formsGLImmediate") && j["formsGLImmediate"].is_boolean()) immediateOn = j["formsGLImmediate"].get<bool>();
     }
@@ -274,7 +284,7 @@ private:
     struct Done { std::vector<formscover::Mask> covers; std::string id, png, json, error, thumbRef;
                   std::vector<std::shared_ptr<formsgl::SharedTexture>> coverTextures;
                   std::shared_ptr<formsgl::SharedTexture> texture;
-                  std::shared_ptr<const std::vector<uint8_t>> rgba, stageRgba; int w = 0, h = 0, stageW = 0, stageH = 0; double queueMs = -1, renderMs = 0;
+                  std::shared_ptr<const std::vector<uint16_t>> rgba, stageRgba; int w = 0, h = 0, stageW = 0, stageH = 0; double queueMs = -1, renderMs = 0;
                   int kind = 0; std::shared_ptr<formsgl::json> recipe; uint64_t filterGen = 0; };
 
     #include "formsGLExport.h"
@@ -378,7 +388,7 @@ private:
     // ---- audition
     std::shared_ptr<formsgl::json> auditionRecipe;
     std::shared_ptr<forms::Image> auditionImg;
-    ofImage auditionTex;
+    ofShortImage auditionTex;   // 16 bits per channel
     bool auditionBusy = false, auditionDirty = false, auditionSeedSet = false;
     unsigned auditionItemsSeed = 0, auditionSeed = 0;
     forms::Harmony auditionHarmony;
@@ -696,8 +706,8 @@ private:
             int x0 = tx * r.w / TW, x1 = std::max(x0 + 1, (tx + 1) * r.w / TW), y0 = ty * r.h / TH, y1 = std::max(y0 + 1, (ty + 1) * r.h / TH);
             unsigned sum[3] = {0, 0, 0}, n = 0;
             for(int y = y0; y < y1; y++) for(int x = x0; x < x1; x++){
-                const uint8_t* s = &r.rgba[((size_t)y * r.w + x) * 4];
-                for(int c = 0; c < 3; c++) sum[c] += s[c] * s[3] / 255;
+                const uint16_t* s = &r.rgba[((size_t)y * r.w + x) * 4];   // 16-bit straight alpha -> 8-bit over black
+                for(int c = 0; c < 3; c++) sum[c] += (unsigned)(((uint64_t)s[c] * s[3] + 32767) / 65535 + 128) / 257;
                 n++;
             }
             for(int c = 0; c < 3; c++) px.getData()[((size_t)ty * TW + tx) * 3 + c] = (unsigned char)(sum[c] / std::max(1u, n));
@@ -711,6 +721,7 @@ private:
     }
     std::shared_ptr<const formsgl::Sketch::GlyphFont> font;
     std::atomic<bool> useGpu{true};
+    std::atomic<bool> live16{true};   // 16-bit live GPU buffers and page textures (off: 8 bits); saved with the patch
     std::atomic<bool> gpuKicks{false}; // exact shader retained; CPU wins the measured live workload
     std::shared_ptr<formsgl::SharedTexturePool> texturePool;
     std::string gpuError;
@@ -732,7 +743,7 @@ private:
     std::mutex largeRenderMutex; // keep multiple print-size canvases from exhausting RAM together
     bool quit = false;
     // the archive: PNG + sidecar written after the image is handed over
-    struct ArchiveJob { std::vector<formscover::Mask> covers; std::shared_ptr<const std::vector<uint8_t>> rgba; int w = 0, h = 0; formsgl::json sidecar; std::string png, json, dir, base,appendPath,appendLine; };
+    struct ArchiveJob { std::vector<formscover::Mask> covers; std::shared_ptr<const std::vector<uint16_t>> rgba; int w = 0, h = 0; formsgl::json sidecar; std::string png, json, dir, base,appendPath,appendLine; };
     std::mutex am;
     std::condition_variable acv;
     std::deque<ArchiveJob> archiveJobs;
@@ -828,13 +839,13 @@ private:
         std::error_code ec;
         std::filesystem::create_directories(a.dir, ec);
         std::filesystem::path pngTmp = std::filesystem::path(a.dir) / ("." + a.base + ".tmp.png"), jsonTmp = std::filesystem::path(a.dir) / ("." + a.base + ".tmp.json");
-        ofPixels px;
+        ofShortPixels px;   // the page as it was drawn: a 16-bit PNG
         px.setFromPixels(a.rgba->data(), a.w, a.h, OF_PIXELS_RGBA);
         if(!ofSaveImage(px, pngTmp.string())){ err = "cannot write " + pngTmp.string(); return false; }
         double pngMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         for(size_t i=0;i<a.covers.size();++i){
             auto& mask=a.covers[i]; if(!mask.alpha) continue;
-            ofPixels pixels; pixels.setFromPixels(mask.alpha->data(),mask.w,mask.h,OF_PIXELS_GRAY);
+            ofShortPixels pixels; pixels.setFromPixels(mask.alpha->data(),mask.w,mask.h,OF_PIXELS_GRAY);
             std::string name=a.base+"_cover"+std::to_string(i)+".png";
             auto tmp=std::filesystem::path(a.dir)/("."+name+".tmp.png");
             if(!ofSaveImage(pixels,tmp.string())){err="cannot write cover mask";return false;}
@@ -906,7 +917,7 @@ private:
         if(j.kind == KIND_AUDITION){
             if(!r.error.empty()){ d.error = r.error; return d; }
             d.recipe = std::make_shared<formsgl::json>(req);
-            d.rgba = std::make_shared<const std::vector<uint8_t>>(std::move(r.rgba)); d.w = r.w; d.h = r.h;
+            d.rgba = std::make_shared<const std::vector<uint16_t>>(std::move(r.rgba)); d.w = r.w; d.h = r.h;
             prepareTexture(d, wi);
             if(d.texture) d.rgba.reset(); // release the large CPU buffer on this worker
             return d;
@@ -940,7 +951,7 @@ private:
         }
         req["result"] = res;
         d.recipe = j.original ? j.original : std::make_shared<formsgl::json>(req);   // the whole recipe (mute / solo)
-        auto pixels = std::make_shared<const std::vector<uint8_t>>(std::move(r.rgba));
+        auto pixels = std::make_shared<const std::vector<uint16_t>>(std::move(r.rgba));
         d.rgba = pixels; d.w = r.w; d.h = r.h;
         d.renderMs = r.renderMs + prepareTexture(d, wi);
         ArchiveJob a;
@@ -989,11 +1000,12 @@ private:
             auto& gpu=gpus[wi];
             if(!gpu) gpu=std::make_unique<formsgl::GpuEffectsCGL>(texturePool->context());
             if(gpu->ok()){
-                d.texture=gpu->upload(*d.rgba,d.w,d.h,texturePool);
+                const bool eight=!live16.load();
+                d.texture=gpu->upload(*d.rgba,d.w,d.h,texturePool,GL_RGBA,eight);
                 d.coverTextures.resize(d.covers.size());
                 for(size_t i=0;i<d.covers.size();++i){
                     auto& mask=d.covers[i];
-                    if(mask.alpha) d.coverTextures[i]=gpu->upload(*mask.alpha,mask.w,mask.h,texturePool,GL_RED);
+                    if(mask.alpha) d.coverTextures[i]=gpu->upload(*mask.alpha,mask.w,mask.h,texturePool,GL_RED,eight);
                 }
             }
             if(!d.texture){

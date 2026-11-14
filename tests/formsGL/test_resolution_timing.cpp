@@ -6,7 +6,7 @@
 using namespace forms;
 static std::vector<double> envelope(const formsgl::RenderResult& r){
     std::vector<double> v(1920,0);
-    for(int x=0;x<r.w;++x)for(int y=0;y<r.h;++y){size_t i=((size_t)y*r.w+x)*4;v[x*1920/r.w]+=(r.rgba[i]+r.rgba[i+1]+r.rgba[i+2])*r.rgba[i+3]/255.;}
+    for(int x=0;x<r.w;++x)for(int y=0;y<r.h;++y){size_t i=((size_t)y*r.w+x)*4;v[x*1920/r.w]+=(double)(r.rgba[i]+r.rgba[i+1]+r.rgba[i+2])*r.rgba[i+3]/65535./257.;}
     double mx=*std::max_element(v.begin(),v.end());for(auto& x:v)x/=std::max(1.,mx);return v;
 }
 static void checkTiming(const std::string& label,const std::vector<double>& a,const std::vector<double>& b){
