@@ -192,6 +192,62 @@ public:
         }
     }
 
+    // A thick point that is one stamp of a row of stamps `step` pixels apart (a note drawn at more
+    // than 1080 lines: weight and step both grow with the image). Separate squares or discs overlap
+    // unevenly there (stripes every `step` pixels, scalloped edges). This draws the point swept
+    // across its own step instead: each pixel gets the share `len / step` of the sweep that covers
+    // it, and the alpha that share of a stamp gives (1 - (1 - a)^share), so a row of stamps adds up
+    // to the same opacity everywhere and the envelope glides from one stamp to the next. The cells
+    // of consecutive stamps meet on whole pixels.
+    void sweptPoint(float x, float y, float wgt, float step, int r, int g, int b, int a, int cap){
+        if(a <= 0 || cap == SQUARE || step <= 0) return;
+        const float SNAP = snapOf(cap);
+        float cy = std::floor(y + SNAP) + 0.5f, hw = wgt / 2;
+        int X0 = (int)std::floor(x - step / 2 + 0.5f), X1 = (int)std::floor(x + step / 2 + 0.5f);
+        if(X1 <= X0) X1 = X0 + 1;
+        // a stamp narrower than its step (a thin line) still fills the step along x: only its height is thin
+        float widen = hw < step / 2 ? step / (2 * hw) : 1;
+        float wmax = std::max(1e-6f, std::min((float)(X1 - X0), 2 * hw * widen) / step);
+        // the alpha a share of the sweep gives, for a stamp of alpha `af` (0..1): a table per alpha
+        float lut[65], rowLut[65], lutFor = -1;
+        auto fill = [&](float* t, float af){
+            for(int k = 0; k <= 64; k++){
+                float wk = wmax * k / 64;
+                t[k] = addMode ? std::min(1.0f, af * wk) : (af >= 0.998f ? (k ? 1.0f : 0.0f) : 1 - std::pow(1 - af, wk));
+            }
+        };
+        fill(lut, a / 255.0f);
+        int y0 = std::max(0, (int)std::floor(cy - hw)), y1 = std::min(h - 1, (int)std::ceil(cy + hw));
+        for(int yy = y0; yy <= y1; yy++){
+            float c, covy;
+            if(cap == PROJECT){
+                c = hw;
+                covy = std::max(0.0f, std::min(yy + 1.0f, cy + hw) - std::max((float)yy, cy - hw));
+            }else{
+                float dy = yy + 0.5f - cy;
+                c = std::sqrt(std::max(0.0f, hw * hw - dy * dy));
+                covy = std::max(0.0f, std::min(1.0f, hw - std::fabs(dy) + 0.5f));
+            }
+            if(covy <= 0 || c <= 0) continue;
+            c *= widen;
+            // a partly covered row (the stamp's top and bottom edge) is a fainter stamp: its own table
+            const float* t = lut;
+            if(covy < 0.999f){ float af = a / 255.0f * covy; if(af != lutFor){ fill(rowLut, af); lutFor = af; } t = rowLut; }
+            int xs = std::max(0, (int)std::floor(X0 - c)), xe = std::min(w - 1, (int)std::ceil(X1 + c));
+            size_t row = (size_t)yy * w;
+            for(int xx = xs; xx <= xe; xx++){
+                float pc = xx + 0.5f;
+                float len = std::min((float)X1, pc + c) - std::max((float)X0, pc - c);
+                if(len <= 0) continue;
+                float covx = std::max(0.0f, std::min(1.0f, std::min(xx + 1.0f, X1 + c) - std::max((float)xx, X0 - c)));
+                int k = std::min(64, (int)(len / step / wmax * 64 + 0.5f));
+                if(k == 0 && a >= 255 && covy >= 0.999f) k = 1;   // opaque: any share covers
+                int A = (int)(t[k] * covx * 255 + 0.5f);
+                if(A > 0) blend(row + xx, r, g, b, A);
+            }
+        }
+    }
+
     // coverage of a ROUND point of half-width hw, per pixel offset from its pixel (kernel n x n,
     // offsets o .. o + n - 1), made with the same sampling as the loop it replaces
     struct RoundKernel { int o = 0, n = 0; std::vector<int> cov; };

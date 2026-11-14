@@ -223,7 +223,9 @@ public:
             w = ji(sz[0]); h = ji(sz[1]);
         }
         width = w; height = h;
-        UX = width / 1920.0f; UY = height / 1080.0f;
+        // a phrase (several pages drawn as one wide image): pixel sizes follow the view, not the canvas
+        viewW = req.contains("viewWidth") ? std::clamp(ji(req["viewWidth"]), 16, w) : w;
+        UX = viewW / 1920.0f; UY = height / 1080.0f;
         c.allocate(w, h);
         // reset (resetRenderState) and the musical frame
         P.randomSeed(seed);
@@ -238,6 +240,7 @@ public:
         selsc = req.value("scale", 5);
         bpm = req.value("bpm", bpm);
         bassDegree = req.value("bassDegree", 0);
+        lineWeight = std::clamp(req.value("lineWeight", 1.0f), 0.1f, 16.0f);
         if(req.contains("scaleNotes")){
             std::vector<int> notes;
             for(auto& n : req["scaleNotes"]) notes.push_back(ji(n));
@@ -311,7 +314,7 @@ public:
                     if(maskError.empty()){
                         formscover::Mask mask; mask.settings = cover;
                         // Retain at most an HD mask. Max pooling keeps fine strokes at print sizes.
-                        float scale = std::min(1.f, std::min(1920.f / width, 1080.f / height));
+                        float scale = std::min(1.f, std::min(1920.f / viewW, 1080.f / height));
                         mask.w = std::max(1, (int)std::lround(width * scale)); mask.h = std::max(1, (int)std::lround(height * scale));
                         auto alpha = std::make_shared<std::vector<uint8_t>>((size_t)mask.w * mask.h, 0);
                         for(int y=0; y<height; ++y) for(int x=cx0; x<cx1; ++x){
@@ -323,8 +326,15 @@ public:
                         mask.alpha=alpha; out.covers.push_back(std::move(mask));
                     }
                 }
+                // An item with its own seed (a scene-wide effect at one bar of the timeline) draws from that
+                // seed and leaves the image's random stream as it was: what it does depends on the bar
+                // alone, not on the image it lands in.
+                const bool ownSeed = item.contains("seed") && item["seed"].is_number();
+                PRandom keptRandom = P;
+                if(ownSeed){ long itemSeed = (long)item["seed"].get<double>(); P.randomSeed(itemSeed); P.noiseSeed(itemSeed); }
                 err = runGenerator(item.value("gen", std::string()), item.value("params", json::object()),
                                    item.contains("process") ? item["process"] : json());
+                if(ownSeed) P = keptRandom;
                 // Legacy blank/solo blocks clear their own image to black, which becomes
                 // transparent on export. Carry the block as an explicit lower-layer eraser
                 // instead of losing its solo behavior when the instrument moves layers.
@@ -332,7 +342,7 @@ public:
                     formscover::Mask mask;mask.settings.enabled=true;
                     mask.settings.amount=igain;
                     mask.settings.growRight=mask.settings.growHeight=mask.settings.feather=mask.settings.release=0;
-                    float scale=std::min(1.f,std::min(1920.f/width,1080.f/height));
+                    float scale=std::min(1.f,std::min(1920.f/viewW,1080.f/height));
                     mask.w=std::max(1,(int)std::lround(width*scale));mask.h=std::max(1,(int)std::lround(height*scale));
                     auto alpha=std::make_shared<std::vector<uint8_t>>((size_t)mask.w*mask.h,0);
                     for(auto& span:clearSpans){
@@ -388,6 +398,7 @@ private:
     SketchPRNG prng;
     int renderMillis = 0;
     int width = 1920, height = 1080;
+    int viewW = 1920;                  // the view's width (= width, or a page of a phrase: viewWidth)
     std::vector<std::pair<float,float>> clearSpans;
     float UX = 1, UY = 1;
     float bars = 4, safey = 10, barSize = 480, refScale = 1;
@@ -398,6 +409,7 @@ private:
     uint32_t customColour[5] = {0xFFFFFFFF, 0xFFBF0000, 0xFFFFCC00, 0xFF00139F, 0xFF065535};
     int rootList[60] = {}, transposeList[60] = {};
     int bassDegree = 0;
+    float lineWeight = 1;   // the scene's Line weight: multiplies the stroke of the line instruments (notes, harmonics, flow lines, shape outlines)
     // scale degree idx (any sign) as semitones: past the last degree up an octave, below 0 down one
     int degreeSemis(int idx, int len) const { int o = (int)std::floor(idx / (double)std::max(1, len)); return scale[idx - o * len] + 12 * o; }   // the scene's bass degree: bass instruments add it to the bar's degree
     float clipX0 = -1e9f, clipX1 = 1e9f;
@@ -443,9 +455,14 @@ private:
     void pushStyle(){ styleStack.push_back(style); }
     void popStyle(){ if(!styleStack.empty()){ style = styleStack.back(); styleStack.pop_back(); } }
     // point(x, y) with the stroke: weight 1 (or less) one pixel, thicker a square / disc
+    // > 0 inside a loop that stamps points every `sweepStep` pixels (images taller than 1080 lines):
+    // point() then draws swept stamps (Canvas::sweptPoint). 1080-line images keep the measured path.
+    float sweepStep = 0;
+    struct SweepScope { float& v; SweepScope(float& ref, float step) : v(ref) { v = step > 1.0001f ? step : 0; } ~SweepScope(){ v = 0; } };
     void point(float x, float y){
         if(!style.stroke) return;
         uint32_t s = style.strokeColor;
+        if(sweepStep > 0){ gc->sweptPoint(x, y, std::max(1.0f, style.strokeWeight), sweepStep, red(s), green(s), blue(s), (s >> 24) & 255, style.cap); return; }
         if(style.strokeWeight > 1.0001f) gc->thickPoint(x, y, style.strokeWeight, red(s), green(s), blue(s), (s >> 24) & 255, style.cap);
         else gc->point(x, y, red(s), green(s), blue(s), (s >> 24) & 255, style.cap);
     }
@@ -504,6 +521,20 @@ private:
     // ---- generators
 
     float drawIn(const std::array<float, 2>& r){ return r[0] == r[1] ? r[0] : r[0] + random(r[1] - r[0]); }
+    // a length from its range: free, whole numbers of steps, or the shortest doubled (x1, x2, x4...) so that
+    // an end-anchored note still starts on the grid; one random draw in every mode, none for a fixed length
+    float drawLen(const std::array<float, 2>& r, int snap){
+        if(snap == 0 || r[0] == r[1]) return drawIn(r);
+        float u = random(1);
+        if(snap == 1){
+            int lo = (int)std::ceil(r[0] - 1e-4f), hi = (int)std::floor(r[1] + 1e-4f);
+            if(hi < lo) return r[0];
+            return (float)(lo + std::min(hi - lo, (int)(u * (hi - lo + 1))));
+        }
+        int n = 1;
+        while(r[0] * (float)(1 << n) <= r[1] * 1.0001f && n < 16) n++;
+        return r[0] * (float)(1 << std::min(n - 1, (int)(u * n)));
+    }
     int drawInt(const std::array<float, 2>& r){ int lo = pjRound(r[0]), hi = pjRound(r[1]); return lo == hi ? lo : lo + (int)random((float)(hi - lo + 1)); }
     uint32_t pickColour(int mode){
         if(mode == 3) return genImageColour;
@@ -626,6 +657,7 @@ private:
         std::shared_ptr<StepPattern> src, fsrc;
         bool noRepeat = false, lastPlayed = false;
         int follow = 0, startOff = 0, stepBars = 1;
+        bool imageSteps = false;   // "span 0 bars": the steps divide the whole image, whatever its length
 
         void init(Sketch* s, GenParams& p, const std::shared_ptr<StepPattern>& self){
             sk = s;
@@ -646,10 +678,10 @@ private:
             stepChances = p.list("stepChances");
             pat.assign(lanes, std::vector<char>(P, 0));
             stepBars = p.i("stepBars");
+            if(stepBars <= 0){ imageSteps = true; stepBars = std::max(1, pjRound((float)sk->bars)); }
             log.assign(std::max(1, total()), 0);
             elig.assign(log.size(), 0);
             noRepeat = p.b("noRepeat");
-            stepBars = p.i("stepBars");
             startOff = pjRound(p.f("patternStart") * steps / stepBars);
             follow = p.option("follow");
             int back = p.i("followBack");
@@ -680,10 +712,10 @@ private:
                 }
             }
         }
-        int total() const { return stepBars == 1 ? (int)std::ceil(sk->bars * steps) : (int)std::ceil(sk->bars * steps / stepBars); }
-        int barOf(int s) const { return stepBars == 1 ? s / steps : (s * stepBars) / steps; }
-        float stepSize() const { return stepBars == 1 ? sk->barSize / steps : sk->barSize * stepBars / steps; }
-        float xOf(int s) const { return stepBars == 1 ? (s / steps) * sk->barSize + (s % steps) * (sk->barSize / steps) : s * stepSize(); }
+        int total() const { return imageSteps ? steps : stepBars == 1 ? (int)std::ceil(sk->bars * steps) : (int)std::ceil(sk->bars * steps / stepBars); }
+        int barOf(int s) const { return imageSteps ? (int)(s * sk->bars / steps) : stepBars == 1 ? s / steps : (s * stepBars) / steps; }
+        float stepSize() const { return imageSteps ? sk->width / (float)steps : stepBars == 1 ? sk->barSize / steps : sk->barSize * stepBars / steps; }
+        float xOf(int s) const { return imageSteps ? s * stepSize() : stepBars == 1 ? (s / steps) * sk->barSize + (s % steps) * (sk->barSize / steps) : s * stepSize(); }
         void advance(int s){
             int u = startOff == 0 ? s / P : floorDiv(s - startOff, P);
             entered = false;
@@ -1057,12 +1089,14 @@ private:
         auto spp = newPattern(p);
         StepPattern& sp = *spp;
         int steps = sp.steps;
-        float stepsize = sp.stepBars == 1 ? barSize / steps : sp.stepSize();
+        float stepsize = sp.imageSteps ? sp.stepSize() : sp.stepBars == 1 ? barSize / steps : sp.stepSize();
+        float lenUnit = sp.imageSteps ? barSize : stepsize;   // image steps: lengths are in bars
         bool bandRep = p.option("bandPick") == 1;
         int bandU = INT32_MIN;
         float bandJ = 0, bandHJ = 0;
         auto lenR = p.range("length");
         auto lenImgR = p.range("lengthImage");
+        int lenSnap = p.option("lengthSnap");
         auto jitR = p.range("bandJitter");
         auto hjR = p.range("heightJitter");
         auto levelJR = p.range("levelJitter");
@@ -1085,7 +1119,7 @@ private:
             if(clearRep && clearChance > 0 && sp.entered && sp.repOk && sp.barPlays(bar) && random(100) < clearChance)
                 blankUnder((s / P) * P * stepsize, P * stepsize);
             if(!sp.plays(s)) continue;
-            float w = lenImgR[1] > 0 ? drawIn(lenImgR) * width : drawIn(lenR) * stepsize;
+            float w = lenImgR[1] > 0 ? drawIn(lenImgR) * width : drawLen(lenR, lenSnap) * lenUnit;
             float j, yTop, yBot;
             if(bandRep){
                 if(sp.curU != bandU){
@@ -1106,7 +1140,7 @@ private:
                 float hj = drawIn(hjR);
                 yBot = height * (1 - pjConstrain(lo + j - hj, 0.0f, 1.0f));
             }
-            float x = sp.stepBars != 1 ? (anchorEnd ? sp.xOf(s) + stepsize - w : sp.xOf(s))
+            float x = (sp.stepBars != 1 || sp.imageSteps) ? (anchorEnd ? sp.xOf(s) + stepsize - w : sp.xOf(s))
                     : anchorEnd ? bar * barSize + (s % steps + 1) * stepsize - w : bar * barSize + (s % steps) * stepsize;
             if(!clearRep && clearChance > 0 && random(100) < clearChance){
                 float cw = clearLenR[1] > 0 ? drawIn(clearLenR) * stepsize : w;
@@ -1272,6 +1306,7 @@ private:
                 }
                 if(n.lfoCycHi > 0) lc = n.lfoCycLo + random(n.lfoCycHi - n.lfoCycLo);
                 if(n.taper > 0) style.strokeWeight = baseWeight * pjPow(std::max(0.0f, 1 - ph1), n.taper);
+                SweepScope sweep(sweepStep, UY);
                 for(float i = 0; i < L; i += UY){
                     float ph2 = i / L;
                     float ySum = 0;
@@ -1296,7 +1331,7 @@ private:
                     else { ya = (int)(y0 + n.detune); yb = (int)(y0 - n.detune); }
                     if(n.pgStyle){
                         strokeARGB(n.col, alpha);
-                        style.strokeWeight = 2 * (height / 1080.0f);
+                        style.strokeWeight = 2 * (height / 1080.0f) * lineWeight;
                         point(n.x + xo + i, ya + vib + partYoffset - tr);
                         point(n.x + xo + i, yb + vib + partYoffset - tr);
                         strokeColour(n.col);
@@ -1315,7 +1350,7 @@ private:
     };
     void drawAdditive(const AdditiveCell& a){
         style.cap = Canvas::ROUND;
-        style.strokeWeight = 2 * (height / 1080.0f);
+        style.strokeWeight = 2 * (height / 1080.0f) * lineWeight;
         float f = p2f(a.p);
         float noteheight = height / (float)notegrid;
         float x0 = a.x, x1 = x0 + a.w;
@@ -1334,6 +1369,7 @@ private:
                 case 3: pinta = (int)random(2) != 0; break;
             }
             if(pinta){
+                SweepScope sweep(sweepStep, UY);
                 for(float j = x0; j < x1; j += UY){
                     float ph = 1 - ((j - x0) / (x1 - x0));
                     if(a.envmode == 1) ph = pjPow(ph, a.pow);
@@ -1355,9 +1391,11 @@ private:
         int steps = sp.steps;
         int P = sp.P;
         float noteh = height / (float)notegrid;
-        float stepsize = sp.stepBars == 1 ? barSize / steps : sp.stepSize();
+        float stepsize = sp.imageSteps ? sp.stepSize() : sp.stepBars == 1 ? barSize / steps : sp.stepSize();
+        float lenUnit = sp.imageSteps ? barSize : stepsize;   // image steps: lengths are in bars
         auto lenR = p.range("length");
         auto lenImgR = p.range("lengthImage");
+        int lenSnap = p.option("lengthSnap");
         auto glideR = p.range("glide");
         auto partR = p.range("partials");
         float skew = p.f("partialsSkew");
@@ -1365,13 +1403,13 @@ private:
         std::vector<float> len(P);
         std::vector<int> parts(P), oct(P);
         for(int k = 0; k < P; k++){
-            len[k] = lenImgR[1] > 0 ? drawIn(lenImgR) * width : drawIn(lenR) * stepsize;
+            len[k] = lenImgR[1] > 0 ? drawIn(lenImgR) * width : drawLen(lenR, lenSnap) * lenUnit;
             parts[k] = pjRound(partR[0] + pjPow(random(1), skew) * (partR[1] - partR[0]));
             oct[k] = random(100) < octUp ? 12 : 0;
         }
         int cell = p.option("cell");
         int colourMode = p.option("colour");
-        float thick = p.f("thickness") * UY;
+        float thick = p.f("thickness") * UY * lineWeight;
         int degree = p.i("degree");
         int octave = p.i("octave");
         int len0 = (int)scales[selsc].size();
@@ -1448,7 +1486,7 @@ private:
                     idx = rootPart + cStart[k];
                 }else idx = rootPart + (int)random((float)len0);
             }
-            float x = sp.stepBars != 1 ? (anchorEnd ? sp.xOf(s) + stepsize - noteLen + thick / 2 : sp.xOf(s) + thick / 2)
+            float x = (sp.stepBars != 1 || sp.imageSteps) ? (anchorEnd ? sp.xOf(s) + stepsize - noteLen + thick / 2 : sp.xOf(s) + thick / 2)
                     : anchorEnd ? bar * barSize + (s % steps + 1) * stepsize - noteLen + thick / 2
                                 : bar * barSize + (s % steps) * stepsize + thick / 2;
             if(!clearRep && clearChance > 0 && random(100) < clearChance){
@@ -1557,6 +1595,21 @@ private:
         return (cc >> 24) & 0xFF;
     }
     uint32_t silencePx() const { return procCanvas ? 0xFF000000u : 0u; }
+    // An echo copy (colour of `s`, alpha `sa`) onto a pixel of the instrument's own layer: the
+    // level is the louder of the two, as before, and the colour goes gradually from one to the
+    // other around the place where they are equally loud (weights: the alphas squared, so the
+    // louder one still dominates away from there). Taking the whole pixel of the louder one
+    // instead cut a hard outline where an echo crossed a note of another colour.
+    static uint32_t echoPx(uint32_t d, uint32_t s, int sa){
+        int da = (int)((d >> 24) & 0xFF);
+        if(sa <= 0) return d;
+        if(da <= 0) return ((uint32_t)sa << 24) | (s & 0x00FFFFFFu);
+        const int wd = da * da, ws = sa * sa, wt = wd + ws;
+        uint32_t out = (uint32_t)std::max(da, sa) << 24;
+        for(int sh = 16; sh >= 0; sh -= 8)
+            out |= (uint32_t)(((int)((d >> sh) & 0xFF) * wd + (int)((s >> sh) & 0xFF) * ws + wt / 2) / wt) << sh;
+        return out;
+    }
     int contentColumn(const std::vector<uint32_t>& px, int W, int H, int x0, int x1) const {
         for(int x = std::max(0, x0); x < std::min(W, x1); x++)
             for(int y = 0; y < H; y++) if(level(px[(size_t)y * W + x]) > 0) return x;
@@ -2135,8 +2188,7 @@ private:
                                 int bb = std::min(255, (int)(d & 0xFF) + pjRound((s & 0xFF) * amp));
                                 px[(size_t)y * W + xd] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)gg << 8) | (uint32_t)bb;
                             }else{
-                                int sa = pjRound(((s >> 24) & 0xFF) * amp);
-                                if(sa > (int)((d >> 24) & 0xFF)) px[(size_t)y * W + xd] = ((uint32_t)sa << 24) | (s & 0x00FFFFFFu);
+                                px[(size_t)y * W + xd] = echoPx(d, s, pjRound(((s >> 24) & 0xFF) * amp));
                             }
                         }
                     }
@@ -2167,8 +2219,7 @@ private:
                             int bb = std::min(255, (int)(d & 0xFF) + pjRound((s & 0xFF) * amp));
                             px[row + x] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)gg << 8) | (uint32_t)bb;
                         }else{
-                            int sa = pjRound(((s >> 24) & 0xFF) * amp);
-                            if(sa > (int)((px[row + x] >> 24) & 0xFF)) px[row + x] = ((uint32_t)sa << 24) | (s & 0x00FFFFFFu);
+                            px[row + x] = echoPx(px[row + x], s, pjRound(((s >> 24) & 0xFF) * amp));
                         }
                     }
                 }
@@ -2386,7 +2437,49 @@ private:
     }
 
     // a generator through its own layer when a process is on (Generators.pde genWithProcesses)
+    // "tileBars" (process: rearrange): the instrument is drawn as if the image were that many bars
+    // long (its pattern, its harmony, its processes: page window, mask...), and that drawing is
+    // repeated across the whole image. Every repetition is the same picture, whatever the image's
+    // length: an instrument made for a short page keeps its rhythm on a longer one (Bar Multiplier).
+    void genTiled(const std::string& gen, GenParams& p, GenParams& q, float tileBars){
+        const int fullW = width; const float fullBars = bars;
+        const double tilePx = (double)fullW * tileBars / fullBars;
+        const int tw = std::max(1, (int)std::ceil(tilePx - 1e-6));
+        int steps = p.has("steps") ? p.i("steps") : 16;
+        Canvas layerC;
+        layerC.allocateLayer(tw, height);
+        Style outer = style;
+        std::vector<Style> outerStack = styleStack;
+        style = Style();
+        style.strokeColor = 0xFF000000u; style.fillColor = 0xFFFFFFFFu; style.strokeWeight = UY; style.cap = Canvas::ROUND;
+        styleStack.clear();
+        Canvas* prev = gc;
+        gc = &layerC;
+        width = tw; bars = tileBars;                // (barSize is the same: the bars keep their width)
+        auto restore = [&](){ gc = prev; style = outer; styleStack = outerStack; width = fullW; bars = fullBars; };
+        try {
+            genDraw(gen, p);
+            gc = prev; style = outer; styleStack = outerStack;
+            if(processActive(q)) applyProcesses(layerC.px, tw, height, q, steps);
+        } catch(...) { restore(); throw; }
+        restore();
+        Canvas full;
+        full.allocateLayer(fullW, height);
+        for(int k = 0; ; k++){
+            const int x0 = (int)std::lround(k * tilePx);
+            if(x0 >= fullW) break;
+            const int n = std::min({tw, fullW - x0, std::max(1, (int)std::lround((k + 1) * tilePx) - x0)});
+            for(int y = 0; y < height; y++)
+                std::copy_n(layerC.px.begin() + (size_t)y * tw, n, full.px.begin() + (size_t)y * fullW + x0);
+        }
+        c.drawLayer(full);
+    }
+
     void genWithProcesses(const std::string& gen, GenParams& p, GenParams& q){
+        {
+            const float tileBars = q.has("tileBars") ? q.f("tileBars") : 0;
+            if(tileBars > 0 && tileBars < bars - 1e-4f){ genTiled(gen, p, q, tileBars); return; }
+        }
         if(!processActive(q)){ genDraw(gen, p); return; }
         int steps = p.has("steps") ? p.i("steps") : 16;
         if(q.option("processOn") == 1){ genDraw(gen, p); processCanvas(q, steps); return; }
@@ -2499,7 +2592,7 @@ private:
         int nBars = std::max(1, (int)std::ceil(bars));
         uint32_t col = pickColour(p.option("colour"));
         style.fill = false;
-        style.strokeWeight = p.f("thickness") * UY;
+        style.strokeWeight = p.f("thickness") * UY * lineWeight;
         std::vector<float> xs;
         xs.push_back(0);
         for(float b = off > 0 ? off : segBars; b < bars; b += segBars) xs.push_back(b);
@@ -2518,7 +2611,7 @@ private:
                     y[e] = height - f2p(p2f(base) * hn) * noteh - safey;
                 }
                 strokeRGBA((float)red(col), (float)green(col), (float)blue(col), 255 * a);
-                if(p.f("harmonicsTaper") > 0) style.strokeWeight = p.f("thickness") * UY * (1 - p.f("harmonicsTaper") * pjPow(j / (float)n, p.f("harmonicsTaperPower")));
+                if(p.f("harmonicsTaper") > 0) style.strokeWeight = p.f("thickness") * UY * lineWeight * (1 - p.f("harmonicsTaper") * pjPow(j / (float)n, p.f("harmonicsTaperPower")));
                 for(int c2 = 0; c2 < copies; c2++){
                     float dy = copies == 1 ? 0 : pjMap((float)c2, 0, (float)(copies - 1), -spread, spread);
                     if(glide) portamentoPG(x0, y[0] + dy, x1, y[1] + dy, p.f("glideTension"), p.f("vibrato"), p.f("wobbleFreq"), p.f("wobble"));
@@ -2560,7 +2653,7 @@ private:
         float dashC = p.f("dashChance");
         int nSeg = std::max(1, (int)std::ceil(bars / segBars));
         style.fill = false;
-        style.strokeWeight = p.f("thickness") * UY;
+        style.strokeWeight = p.f("thickness") * UY * lineWeight;
         for(int j = 0; j < nSeg; j++){
             float x0 = j * segBars * barSize;
             float x1 = std::min((float)width, (j + 1) * segBars * barSize);
@@ -2797,7 +2890,7 @@ private:
             int steps = std::max(1, drawInt(stR));
             uint32_t col = pickColour(colourMode);
             float a = drawIn(alphaR);
-            style.strokeWeight = std::max(UY, drawIn(thickR) * noteH);
+            style.strokeWeight = std::max(UY, drawIn(thickR) * noteH) * lineWeight;
             for(int s = 0; s < steps; s++){
                 float ang = prng.perlin(oz + x / sc, oz + y / sc) * P_TWO_PI * str;
                 x += pjCos(ang) * UY;
@@ -3052,7 +3145,7 @@ private:
         if(open || !fillIt){
             style.fill = false;
             strokeRGBA(fr, fg, fb, a);
-            style.strokeWeight = std::max(0.1f, s.weight);
+            style.strokeWeight = std::max(0.1f, s.weight * lineWeight);
         }else{
             style.stroke = false;
             auto ch = [](float v){ if(v > 255) v = 255; if(v < 0) v = 0; return (int)((v / 255.0f) * 255); };
