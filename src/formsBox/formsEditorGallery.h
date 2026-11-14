@@ -122,7 +122,7 @@ inline void Editor::drawGalleryTab(){
             ImGui::Text("%s", r.value("scene", std::string("?")).c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("layer %d  |  image %s  |  seed %u", r.value("layer", 1), r.value("id", std::string()).c_str(), r.value("seed", 0u));
-            ImGui::TextDisabled("%d bars  |  %d BPM  |  %s  |  %s", r.value("bars", 0), r.value("bpm", 0), r.value("scaleName", std::string()).c_str(), r.value("paletteName", std::string()).c_str());
+            ImGui::TextDisabled("%g bars  |  %d BPM  |  %s  |  %s", r.value("bars", 0.0), r.value("bpm", 0), r.value("scaleName", std::string()).c_str(), r.value("paletteName", std::string()).c_str());
             std::string harm;
             auto roots = r.value("roots", std::vector<int>()), trans = r.value("trans", std::vector<int>());
             for(size_t b = 0; b < roots.size(); b++) harm += (b ? "  " : "") + ofToString(roots[b]) + (b < trans.size() && trans[b] ? (trans[b] > 0 ? "+" : "") + ofToString(trans[b]) : "");

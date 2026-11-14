@@ -145,12 +145,12 @@ inline bool Editor::drawHarmonyText(Scene& s){
     if(!harmonyBuf[0]) return false;
     HarmonyText h = parseHarmonyText(harmonyBuf);
     if(!h.error.empty()){ ImGui::TextColored(theme::rgb(theme::WARN), "%s", h.error.c_str()); return false; }
-    auto roots = h.rootsFor(l.bars);
-    ImGui::TextDisabled("Layer %d, %d bars: %s", li + 1, l.bars, harmonyToText(roots).c_str());
+    auto roots = h.rootsFor(barCount(l.bars));
+    ImGui::TextDisabled("Layer %d, %s bars: %s", li + 1, barsText(l.bars).c_str(), harmonyToText(roots).c_str());
     if(frozen){
         if(ImGui::Button("Write the roots into this frozen layer")){
             l.fixed["roots"] = roots;
-            l.fixed["trans"] = std::vector<int>(l.bars, 0);
+            l.fixed["trans"] = std::vector<int>(barCount(l.bars), 0);
             changed = true;
         }
         ImGui::SameLine();
@@ -398,11 +398,7 @@ inline std::string Editor::assistCurrent() const {
 inline void Editor::sendAssist(const std::string& user, bool retry){
     if(!retry){ aiProblems.clear(); aiRetried = false; aiUser = user; }
     std::string u = assistV1UserPrompt((AssistV1Mode)aiMode, user, assistCurrent());
-    if(retry){
-        u += "\n\nYOUR PREVIOUS ANSWER WAS REJECTED:";
-        for(auto& p : aiProblems) u += "\n- " + p;
-        u += "\nAnswer again with one corrected JSON object.";
-    }
+    if(retry) u += assistV1RetryPrompt(*engine, aiAnswer, aiProblems);
     try {
         aiFuture = ai.generateText(assistV1SystemPrompt(*engine), u, 8000);
         aiBusy = true;
@@ -421,11 +417,14 @@ inline void Editor::pollAssistant(){
 
 inline void Editor::handleAssistAnswer(const std::string& text){
     aiAnswer = text;
+    aiNotes.clear();
     auto m = (AssistV1Mode)aiMode;
     json j;
     std::vector<std::string> bad;
     if(!extractJsonObject(text, j)) bad.push_back("no JSON object in the answer");
     else {
+        // the obvious slips are fixed first (a bare number for a range, a label as key...) and listed as ADJUSTED
+        if(!assistV1IsScene(m)) normalizePresetV1(*engine, j, aiNotes);
         if(m == AssistV1Mode::ModifyPreset){
             auto it = engine->presets.find(selPreset);
             if(it == engine->presets.end()) bad.push_back("no preset selected (Instruments tab)");
@@ -434,6 +433,8 @@ inline void Editor::handleAssistAnswer(const std::string& text){
                 // what the answer leaves out stays as it was
                 if(!it->second.legacy.empty() && !j.contains("legacy")) j["legacy"] = it->second.legacy;
                 if(!it->second.notes.empty() && !j.contains("notes")) j["notes"] = it->second.notes;
+                if(!it->second.category.empty() && !j.contains("category")) j["category"] = it->second.category;
+                if(it->second.perBar > 0 && !j.contains("perBar")) j["perBar"] = it->second.perBar;
                 if(j.value("gen", std::string()) != it->second.gen) bad.push_back("the generator changed (" + it->second.gen + " -> " + j.value("gen", std::string()) + ")");
             }
         }
@@ -580,6 +581,11 @@ inline void Editor::drawAssistantTab(){
     if(!aiProblems.empty()){
         theme::heading("REJECTED");
         for(auto& p : aiProblems) ImGui::TextColored(theme::rgb(theme::WARN), "- %s", p.c_str());
+    }
+    if(!aiNotes.empty()){
+        theme::heading("ADJUSTED");
+        ImGui::TextDisabled("Slips in the answer, read as v1 means them:");
+        for(auto& p : aiNotes) ImGui::TextDisabled("- %s", p.c_str());
     }
     if(aiAuditioning){
         theme::heading(aiIsPreset ? "PROPOSED PRESET (auditioning)" : "PROPOSED SCENE (previewing)");

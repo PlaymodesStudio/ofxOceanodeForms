@@ -103,6 +103,42 @@ int main(int argc, char** argv){
         for(auto& p : g.params) if(p.isNumber()){ json b2 = ok; b2["params"][p.key] = p.max + 1000; CHECK(!validatePresetV1(e, b2).empty()); break; }
         json b3 = ok; b3["gen"] = "nope"; CHECK(!validatePresetV1(e, b3).empty());
     }
+    // the normaliser: slips an answer makes, read as v1 means them, before the strict validator
+    if(const GenDef* pg = e.findGen("pulse")){
+        std::vector<std::string> notes;
+        json a{{"gen", "Notes"}, {"name", "t"}, {"category", "Bass"}, {"process", {{"gateChance", "50"}}},
+               {"params", {{"length", 0.5}, {"partials", {{"min", 4}, {"max", 40}}}, {"voices", json::array({3})}, {"low cut", 2}, {"density", json::array({20, 80})},
+                           {"envelope", "Saw"}, {"legato", "true"}, {"degree", 99}, {"steps", nullptr}, {"fills", 3}, {"shift", json::array({5, 2})}}}};
+        normalizePresetV1(e, a, notes);
+        CHECK(a["gen"] == "pulse" && a["category"] == "bass");
+        CHECK(a["params"]["length"] == json::array({0.5, 0.5}));
+        CHECK(a["params"]["partials"] == json::array({4, 40}));
+        CHECK(a["params"]["voices"] == json::array({3, 3}));
+        CHECK(a["params"].contains("locut") && !a["params"].contains("low cut"));
+        CHECK(a["params"]["density"]["min"] == 20 && a["params"]["density"]["max"] == 80);
+        CHECK(a["params"]["envelope"] == "saw" && a["params"]["legato"] == true);
+        CHECK(a["params"]["degree"] == pg->param("degree")->max);
+        CHECK(!a["params"].contains("steps") && a["params"]["fills"] == json::array({3}));
+        CHECK(a["params"]["shift"] == json::array({2, 5}));
+        CHECK(a["params"]["gateChance"] == 50 && !a.contains("process"));
+        CHECK(validatePresetV1(e, a).empty());
+        // what it cannot read stays for the validator
+        json b{{"gen", "pulse"}, {"name", "t"}, {"params", {{"lane1", json::object()}}}};
+        notes.clear(); normalizePresetV1(e, b, notes);
+        CHECK(!validatePresetV1(e, b).empty());
+        // ranges as {"options": [[lo, hi], ...]} (saved presets use it) are valid
+        json c{{"gen", "pulse"}, {"name", "t"}, {"params", {{"partials", {{"options", json::array({json::array({4, 8}), json::array({20, 40})})}}}}}};
+        CHECK(validatePresetV1(e, c).empty());
+        // a stack's layers are normalised too
+        json d{{"gen", "stack"}, {"name", "t"}, {"layers", json::array({json{{"gen", "Percussion"}, {"params", {{"length", 2}}}}})}};
+        notes.clear(); normalizePresetV1(e, d, notes);
+        CHECK(d["layers"][0]["gen"] == "hits" && d["layers"][0]["params"]["length"] == json::array({2, 2}));
+        CHECK(validatePresetV1(e, d).empty());
+        // the retry names the parameters concerned
+        std::string r = assistV1RetryPrompt(e, "{\"gen\": \"pulse\", \"params\": {\"length\": 1}}", {"length: expected [lo, hi]", "linked: shift: expected [lo, hi]"});
+        CHECK(r.find("  length = [lo, hi]") != std::string::npos && r.find("  shift = [lo, hi]") != std::string::npos);
+        CHECK(sys.find("stepChances") != std::string::npos && sys.find("EXAMPLES") != std::string::npos);
+    }
     json sc = e.scenes[name];
     auto sv = validateSceneV1(e, sc);
     for(auto& p : sv) std::cerr << "  (existing scene note: " << p << ")\n";
