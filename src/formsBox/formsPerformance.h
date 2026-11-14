@@ -48,6 +48,13 @@ inline const std::vector<PerfParam>& perfParams(){
         {"kickClick", "Click", "Kick synthesis", 'f', 0, 1, 0.3f, 0, false},
         {"kickNoise", "Noise", "Kick synthesis", 'f', 0, 1, 0, 0, false},
         {"kickDrive", "Drive", "Kick synthesis", 'f', 0, 1, 0.1f, 0, false},
+        // the kick's detection from the image and its tuning: each scene's own (they were the node's)
+        {"kickThreshold", "Threshold", "Kick detection", 'f', 0, 1, 0.5f, 0, false},
+        {"kickStrip", "Strip height", "Kick detection", 'f', 0.005f, 0.25f, 100.0f / 3840, 0, false},
+        {"kickMinGap", "Min gap (seconds)", "Kick detection", 'f', 0, 1, 0.08f, 0, false},
+        {"kickTune", "Tune (semitones)", "Kick detection", 'f', -24, 24, -2.0f, 0, false},
+        // the kick ducking's length: the node's Duck Beats x this (a scene at 1/8 of the tempo: 0.125 keeps the same seconds)
+        {"duckScale", "Duck length x", "Kick detection", 'f', 0.01f, 8, 1.0f, 0, false},
         {"scaleQuant", "Scale quantize", "Sound", 'f', 0, 1, 0, 0, true},
         // stereo (Macro_11)
         {"LRDryWet", "L/R amount", "Stereo", 'f', 0, 1, 0, 0.9462f, true},

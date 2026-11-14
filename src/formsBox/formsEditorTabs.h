@@ -58,11 +58,12 @@ inline void Editor::drawOutputView(float maxW, float maxH){
             if(showBeatGrid){
                 const ImU32 layerCol[4] = {IM_COL32(255, 255, 255, 120), IM_COL32(110, 200, 255, 150), IM_COL32(255, 170, 90, 150), IM_COL32(170, 255, 140, 150)};
                 for(auto& sp : g.spans){
-                    int beats = std::max(1, sp.bars) * 4;
+                    double len = std::max(1.0 / kBarGrid, sp.bars) * 4;   // beats (a short page: less than a bar)
+                    int beats = (int)std::ceil(len - 1e-9);
                     for(int k = 0; k <= beats; k++){
                         bool barLine = k % 4 == 0;
                         if(sp.layer > 0 && !barLine) continue;   // the other layers: their bar lines
-                        float x = p.x + (sp.x + sp.w * k / beats) * sx;
+                        float x = p.x + (sp.x + sp.w * (float)(k / len)) * sx;
                         if(x < p.x - 1 || x > p.x + vw + 1) continue;
                         ImU32 c = sp.layer == 0 ? (barLine ? IM_COL32(255, 255, 255, 110) : IM_COL32(255, 255, 255, 35)) : layerCol[std::min(3, sp.layer)];
                         if(sp.layer == 0) dl->AddLine(ImVec2(x, p.y), ImVec2(x, p.y + vh), c, barLine ? 1.5f * zz : 1.0f);
@@ -124,7 +125,7 @@ inline void Editor::drawSetlistTab(){
         total += e.images;
         auto it = engine->scenes.find(e.scene);
         if(it != engine->scenes.end() && !it->second.layers.empty())
-            seconds += e.images * it->second.layers[0].bars * 4 * 60.0f / std::max(1, it->second.bpm);
+            seconds += e.images * (float)engine->layerBars(it->second.layers[0]) * 4 * 60.0f / std::max(1.0, it->second.bpm);
     }
     ImGui::SameLine();
     ImGui::TextDisabled("%d entries, %d images, about %d:%02d per cycle at speed 1", (int)sl.size(), total, (int)seconds / 60, (int)seconds % 60);
@@ -138,13 +139,33 @@ inline void Editor::drawSetlistTab(){
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80 * zz);
         ImGui::TableHeadersRow();
         int cur = sl.empty() ? -1 : engine->setlistEntry % (int)sl.size();
-        int moveFrom = -1, moveTo = -1, removeAt = -1;
+        int moveFrom = -1, moveTo = -1, removeAt = -1, dragFrom = -1, dragTo = -1;
         for(int i = 0; i < (int)sl.size(); i++){
             auto& e = sl[i];
             ImGui::PushID(i);
             ImGui::TableNextRow();
             if(i == cur) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(60, 90, 60, 160));
-            ImGui::TableNextColumn(); ImGui::Text("%d", i + 1);
+            ImGui::TableNextColumn();
+            if(ImGui::Selectable((ofToString(i + 1) + "##row").c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) editScene(e.scene);
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Drag to reorder, double-click to edit this scene, right-click for the menu");
+            if(ImGui::BeginDragDropSource()){
+                ImGui::SetDragDropPayload("FORMS_SETLIST_ORDER", &i, sizeof i);
+                ImGui::Text("Move entry %d (%s)", i + 1, e.scene.c_str());
+                ImGui::EndDragDropSource();
+            }
+            if(ImGui::BeginDragDropTarget()){
+                if(const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("FORMS_SETLIST_ORDER")){ dragFrom = *(const int*)pl->Data; dragTo = i; }
+                ImGui::EndDragDropTarget();
+            }
+            if(ImGui::BeginPopupContextItem("##entryMenu")){
+                ImGui::TextDisabled("%d  %s", i + 1, e.scene.c_str());
+                ImGui::Separator();
+                if(ImGui::MenuItem("Edit this scene")) editScene(e.scene);
+                if(ImGui::MenuItem("Move up", nullptr, false, i > 0)){ moveFrom = i; moveTo = i - 1; }
+                if(ImGui::MenuItem("Move down", nullptr, false, i + 1 < (int)sl.size())){ moveFrom = i; moveTo = i + 1; }
+                if(ImGui::MenuItem("Remove from the setlist")) removeAt = i;
+                ImGui::EndPopup();
+            }
             ImGui::TableNextColumn();
             bool missing = !engine->scenes.count(e.scene);
             ImGui::SetNextItemWidth(-1);
@@ -159,7 +180,7 @@ inline void Editor::drawSetlistTab(){
             ImGui::TableNextColumn();
             auto it = engine->scenes.find(e.scene);
             if(it != engine->scenes.end() && !it->second.layers.empty()){
-                float sec = e.images * it->second.layers[0].bars * 4 * 60.0f / std::max(1, it->second.bpm);
+                float sec = e.images * (float)engine->layerBars(it->second.layers[0]) * 4 * 60.0f / std::max(1.0, it->second.bpm);
                 ImGui::TextDisabled("%d:%02d", (int)sec / 60, (int)sec % 60);
             }
             if(i == cur){ ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f, 1, 0.6f, 1), "%d/%d", engine->imagesInEntry, e.images); }
@@ -176,6 +197,12 @@ inline void Editor::drawSetlistTab(){
         }
         ImGui::EndTable();
         if(moveFrom >= 0){ std::swap(sl[moveFrom], sl[moveTo]); setlistDirty = true; }
+        else if(dragFrom >= 0 && dragTo >= 0 && dragFrom != dragTo && dragFrom < (int)sl.size() && dragTo < (int)sl.size()){
+            auto moved = sl[dragFrom];
+            sl.erase(sl.begin() + dragFrom);
+            sl.insert(sl.begin() + dragTo, moved);
+            setlistDirty = true;
+        }
         if(removeAt >= 0){ sl.erase(sl.begin() + removeAt); setlistDirty = true; }
     }
 }
@@ -256,10 +283,18 @@ inline void Editor::drawLibraryTab(){
 inline void Editor::drawSystemTab(){
     float zz = z();
     auto& L = engine->schedule->layers[0];
+    // three columns: the data and session | the renderer and the node | the log
+    bool cols = ImGui::BeginTable("##systemCols", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV);
+    if(cols){
+        ImGui::TableSetupColumn("data", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("renderer", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("log", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableNextColumn();
+    }
     ImGui::SeparatorText("Data folder");
     ImGui::TextWrapped("%s", engine->rendererFolder.string().c_str());
     ImGui::SeparatorText("Image size");
-    drawSizeControl();
+    ImGui::Text("%d x %d", imageW, imageH); ImGui::SameLine(); ImGui::TextDisabled("set in Stage > Look & harmony");
     ImGui::SeparatorText("Session");
     ImGui::Text("%s   requested %d   rendering %d   ready %d   shown %d   repeats %d", engine->session.c_str(), engine->counter,
                 (int)engine->pending.size(), (int)L.ready.size(), L.shown, L.repeats);
@@ -269,6 +304,13 @@ inline void Editor::drawSystemTab(){
     if(ImGui::Button("New session")) newSession();
     ImGui::SameLine();
     if(ImGui::Button("Reload scenes and library")) reload();
+    ImGui::SeparatorText("Look");
+    {
+        bool classic = !theme::enabled();
+        if(ImGui::Checkbox("Classic look", &classic)) theme::enabled() = !classic;
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The window as it was before the design system (colours, spacing, family colours).");
+    }
+    if(cols) ImGui::TableNextColumn();
     // the renderer (the node's panel: counts, timings, archive, GPU) and the thumbnails it draws
     ImGui::SeparatorText("Renderer");
     if(drawRendererPanel) drawRendererPanel();
@@ -315,14 +357,12 @@ inline void Editor::drawSystemTab(){
         }
     }
     drawFrameStats();
-    ImGui::SeparatorText("Look");
-    bool classic = !theme::enabled();
-    if(ImGui::Checkbox("Classic look", &classic)) theme::enabled() = !classic;
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The window as it was before the design system (colours, spacing, family colours).\nOnly the window's look; saved with the patch.");
+    if(cols) ImGui::TableNextColumn();
     ImGui::SeparatorText("Log");
     ImGui::BeginChild("##log", ImVec2(0, 0), ImGuiChildFlags_Borders);
     for(auto it = engine->log.rbegin(); it != engine->log.rend(); ++it) ImGui::TextUnformatted(it->c_str());
     ImGui::EndChild();
+    if(cols) ImGui::EndTable();
 }
 
 inline void Editor::drawSizeControl(){
@@ -353,7 +393,7 @@ inline void Editor::drawSizeControl(){
     sizeEditing = activeW || activeH;
     if(imageW * imageH > 1920 * 1080 * 2)
         ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "Large images render several times slower (4K about 4.7x): fine for prints, may not keep up live.");
-    ImGui::TextDisabled("From the next image on. Layer Scroller's Width/Height is the display size.");
+    ImGui::TextDisabled("The size every scene's images are drawn at, from the next image on. Not saved in the scene.\nThe node's Width/Height is the display size; exports pick their own size.");
 }
 
 } // namespace forms

@@ -185,7 +185,7 @@ public:
                 auto im = std::make_shared<Image>();
                 im->id = j.value("id", std::string()); im->png = png; im->json = jsonPath;
                 im->scene = j.value("scene", std::string()); im->layer = j.value("layer", 1);
-                im->bars = j.value("bars", 8); im->bpm = j.value("bpm", 120); im->notegrid = j.value("notegrid", 100);
+                im->bars = barsFrom(j, "bars", 8); im->bpm = j.value("bpm", 120.0); im->notegrid = j.value("notegrid", 100);
                 im->snapshot = j.value("snapshot", -1); im->seed = j.value("seed", 0u);
                 im->palette = j.value("paletteName", std::string()); im->scale = j.value("scaleName", std::string());
                 im->roots = j.value("roots", std::vector<int>()); im->trans = j.value("trans", std::vector<int>());

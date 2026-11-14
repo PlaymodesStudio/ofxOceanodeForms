@@ -393,7 +393,7 @@ private:
         if(!schemas) return;
         if(scene != auditionScene) auditionSeedSet = false;
         auto sc = engine.scenes.find(scene);
-        if(!sc->second.layers.empty()) engine.itemBars = sc->second.layers[0].bars;
+        if(!sc->second.layers.empty()) engine.itemBars = engine.layerBars(sc->second.layers[0]);
         // the user's preview seed stays as it was; the audition keeps its own (same image while editing)
         bool lock = engine.previewLock, set = engine.previewSeedSet;
         unsigned seed = engine.previewSeed; std::string seedScene = engine.previewSeedScene; auto harm = engine.previewHarmony;
@@ -425,7 +425,7 @@ private:
             auto img = std::make_shared<forms::Image>();
             const formsgl::json& q = *d.recipe;
             img->id = q.value("id", std::string()); img->scene = q.value("scene", std::string());
-            img->layer = 1; img->bars = q.value("bars", 8); img->bpm = q.value("bpm", 120); img->notegrid = q.value("notegrid", 100);
+            img->layer = 1; img->bars = forms::barsFrom(q, "bars", 8); img->bpm = q.value("bpm", 120.0); img->notegrid = q.value("notegrid", 100);
             img->roots = q.value("roots", std::vector<int>()); img->trans = q.value("trans", std::vector<int>());
             for(auto& n : q.value("scaleNotes", formsgl::json::array())) img->scaleNotes.push_back((float)n.get<double>());
             img->palette = q.value("paletteName", std::string()); img->scale = q.value("scaleName", std::string());
@@ -511,6 +511,7 @@ private:
                 req["items"]=std::move(regular);
                 if(forms::usesPreset(req,refs))req=forms::patchForPreset(engine,req,before,after,seed);
                 engine.applyLayerEffect(req,sit->second.layers[li],req.value("seed",0u));
+                forms::Engine::globalEffectsLast(req);
             }else req=forms::patchForPreset(engine,req,before,after,seed);
             submitImmediate(req);
             n++;
@@ -538,6 +539,7 @@ private:
                 // Also move an existing layer effect back to the end after cell additions.
                 auto oldItems=req["items"];
                 engine.applyLayerEffect(req,after.layers[li],req.value("seed",0u));
+                forms::Engine::globalEffectsLast(req);
                 if(oldItems!=req["items"])changed=true;
             }
             if(!changed) continue;
@@ -606,7 +608,7 @@ private:
         loadSchemas();
         if(!schemas){ engine.note("thumbnails: no parameter schemas"); return; }
         auto sc = engine.scenes.find(scene);
-        if(!sc->second.layers.empty()) engine.itemBars = sc->second.layers[0].bars;
+        if(!sc->second.layers.empty()) engine.itemBars = engine.layerBars(sc->second.layers[0]);
         // the user's preview seed is kept as it was
         bool lock = engine.previewLock, set = engine.previewSeedSet;
         unsigned seed = engine.previewSeed; std::string seedScene = engine.previewSeedScene; auto harm = engine.previewHarmony;

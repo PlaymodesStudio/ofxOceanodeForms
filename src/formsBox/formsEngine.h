@@ -32,7 +32,9 @@ struct Image {
     std::string id, png, json, scene, palette, scale;
     std::vector<formscover::Mask> covers;
     nlohmann::json layerCover = nlohmann::json::object();
-    int layer = 1, bars = 8, bpm = 120, notegrid = 100, snapshot = -1;
+    int layer = 1, notegrid = 100, snapshot = -1;
+    double bpm = 120;                  // the scene tempo (may be a fraction)
+    double bars = 8;                   // its length in bars (may be a fraction: quantBars)
     unsigned seed = 0;
     std::vector<int> roots, trans;     // per bar: degree index, transpose in semitones
     int root = -1;                     // the root (MIDI) the page was drawn against; -1 = its scene's root
@@ -44,12 +46,17 @@ struct Image {
     // of the clock and leaves this at -1), and how it composites
     double startBeat = -1;
     double cutBeat = -1;               // hard cut: the image stops here (a new scene starts), else -1
-    int startBar = -1;                 // the absolute bar its harmony was sliced from
+    double startBar = -1;              // the absolute bar where it starts (its harmony: from barIndex of it)
     bool kick = false;                 // its layer is the kick layer
     bool cancelled = false;            // a scene change made it obsolete before it was shown
     // Repetition (LayerDef::repeat): a request stands for `repeat` pages in a row; when it is
     // rendered it becomes that many copies (repeatIndex 0..repeat-1, each repeat = 1)
     int repeat = 1, repeatIndex = 0;
+    // Phrase (LayerDef::phrase): a request stands for `slices` pages that show the rendered phrase
+    // window by window (slice 0..slices-1 of the image's width); repeats repeat the whole phrase
+    int slices = 1, slice = 0;
+    double sliceU0() const { return slices > 1 ? (double)slice / slices : 0.0; }
+    double sliceUW() const { return slices > 1 ? 1.0 / slices : 1.0; }
     double copiesUntil = -1;           // a scene change: copies that would start here or later are dropped
     double askedAt = -1;               // Engine::now when it was asked for (render time)
     std::string blend = "lighten";
@@ -210,12 +217,12 @@ public:
     // before (makeHarmony per image, so a single-layer scene draws the same numbers); the other
     // layers slice it, filling gaps the same way.
     std::map<int, std::pair<int, int>> harmonyBars;   // absolute bar -> (degree, transpose)
-    int layer1NextBar = 0;             // predicted start bar of the next layer-1 image
+    double layer1NextBar = 0;          // predicted start bar of the next layer-1 image
     int lastRequestRepeat = 1;         // pages the last layer-1 request stands for (GO pacing)
     // Layer 1's images in absolute bars, as requested (shifted when layer 1 drifts): which scene
     // plays at each bar, and where scenes change (and whether that change is a hard cut)
     // bars: what the entry spans (its image's bars x repeat); period: its image's bars
-    struct PlanEntry { int startBar = 0, bars = 8, period = 0; std::string scene, id; bool hardCut = false; };
+    struct PlanEntry { double startBar = 0, bars = 8, period = 0; std::string scene, id; bool hardCut = false; };
     // The scene lane (formsLane.h): the scene its blocks give layer 1's image starting at a bar
     // ("" = none: the setlist / manual scene), and whether the lane cuts into it
     std::function<std::string(int bar, bool& hardCut)> laneSceneAt;
@@ -239,7 +246,7 @@ public:
         replaying = true; replayName = name;
         replayAll1 = l1; replayAllX = extra;
         replayLoop = 0;
-        replayLoopBeats = 0; for(auto& im : l1) replayLoopBeats += 4.0 * std::max(1, im->bars);
+        replayLoopBeats = 0; for(auto& im : l1) replayLoopBeats += 4.0 * std::max(1.0 / kBarGrid, im->bars);
         replayX.clear();
         refillReplay();
         replayFirst = replay1.front();
@@ -286,7 +293,8 @@ public:
             }
         }
     }
-    std::map<int, int> layerNextBar;   // layers 2..4: start bar of the next request
+    std::map<int, double> layerAskedAt;   // layers 2..4: Engine::now of their last request (turns when overdue)
+    std::map<int, double> layerNextBar;   // layers 2..4: start bar of the next request
     int renderAheadBars = 2;           // a new layer starts this many bars after the header
     std::deque<std::string> log;
     std::deque<std::string> syncLog;   // Phase 3: each layer's position at every bar line (System tab)
@@ -449,7 +457,14 @@ public:
         note("loaded " + std::to_string(scenes.size()) + " scenes, " + std::to_string(setlist.size()) + " setlist entries");
     }
 
+    // Set by the node: a scene that plays a kick from the samples folder (by number or by name) gets that
+    // sample embedded before it is written, so the scene keeps its kick when the folder moves or changes.
+    std::function<void(Scene&)> embedFolderKick;
     void saveScene(const Scene& s){
+        if(embedFolderKick && !s.kickSample){
+            auto own = scenes.find(s.name);
+            if(own != scenes.end() && &own->second == &s) embedFolderKick(own->second);
+        }
         std::error_code ec; fs::create_directories(scenePath(s).parent_path(), ec);
         writeJsonAtomic(scenePath(s), json(s));
     }
@@ -592,6 +607,7 @@ public:
             bool changed = false;
             for(auto& l : sc.layers) for(auto& c : l.cells) if(c.item == ref){ c.item = p.ref(); changed = true; }
             for(auto& l:sc.layers)if(l.effectPreset==ref){l.effectPreset=p.ref();changed=true;}
+            for(auto& g:sc.globalEffects)if(g==ref){g=p.ref();changed=true;}
             if(changed) saveScene(sc);
         }
         // stacks that play it as a layer follow too
@@ -817,6 +833,22 @@ public:
         return true;
     }
 
+    // Save As: the scene as it is now (unsaved edits included) becomes a new scene `to` in the same
+    // bank; `from` goes back to its saved file (never saved: it keeps the edits). Empty = done.
+    std::string saveSceneAs(const std::string& from, const std::string& to){
+        if(!scenes.count(from)) return "the scene is gone";
+        if(to.empty()) return "type a name";
+        if(scenes.count(to)) return "a scene called '" + to + "' already exists";
+        Scene s = scenes[from];
+        s.name = to; s.snapshot = -1;
+        if(fs::exists(scenePath(s))) return "the file " + scenePath(s).filename().string() + " already exists";
+        scenes[to] = s;
+        saveScene(s);
+        if(fs::exists(scenePath(scenes[from]))) reloadScene(from);
+        note("saved '" + from + "' as '" + to + "'");
+        return "";
+    }
+
     std::string duplicateScene(const std::string& from){
         if(!scenes.count(from)) return "";
         std::string to = from + " copy";
@@ -864,7 +896,7 @@ public:
         int n = 0;
         for(auto& [name, sc] : scenes){
             for(auto& l : sc.layers){
-                bool used = l.effectPreset==method;
+                bool used = l.effectPreset==method || std::find(sc.globalEffects.begin(), sc.globalEffects.end(), method) != sc.globalEffects.end();
                 for(auto& c : l.cells) if(c.item == method && c.prob > 0) used = true;
                 if(used){ n++; break; }
             }
@@ -939,7 +971,7 @@ public:
     // in the editor and never scrolls in.
     // layerIndex: 0 = layer 1 (the clock's timing); 1..3 = the extra layers (Phase 3), placed in
     // absolute beats at startBar (from requestLayer).
-    std::string makeRequest(bool force = false, const std::string& sceneOverride = "", const Preset* previewItem = nullptr, int layerIndex = 0, int startBar = -1, const Scene* sceneFor = nullptr, int cutBar = -1){
+    std::string makeRequest(bool force = false, const std::string& sceneOverride = "", const Preset* previewItem = nullptr, int layerIndex = 0, double startBar = -1, const Scene* sceneFor = nullptr, double cutBar = -1){
         StageTimer requestTimer(pipelineStats().request);
         if(session.empty()) newSession();
         if(layerIndex == 0) lastRequestRepeat = 1;
@@ -959,7 +991,7 @@ public:
         // the scene lane, where it has a block at the bar this image starts
         bool laneChose = false, laneCut = false;
         if(layerIndex == 0 && sceneOverride.empty() && !previewItem && !sceneFor && laneSceneAt && !replaying){
-            std::string n = laneSceneAt(layer1NextBar, laneCut);
+            std::string n = laneSceneAt(barIndex(layer1NextBar), laneCut);
             auto it = scenes.find(n);
             if(!n.empty() && it != scenes.end() && !it->second.layers.empty()){ s = &it->second; laneChose = true; }
         }
@@ -980,8 +1012,11 @@ public:
         img->blend = l.blend;
         img->gain = l.gain;
         img->kick = l.kick;
-        img->bars = l.bars;
+        img->bars = layerBars(l);
         img->repeat = (previewItem || !sceneOverride.empty()) ? 1 : std::max(1, l.repeat);
+        // a phrase: one render for `slices` pages (editor renders draw the page alone, as before)
+        img->slices = (previewItem || !sceneOverride.empty()) ? 1 : phraseSlices(l);
+        const double span = layerBars(l) * img->slices;   // the bars this render covers
         img->bpm = s->bpm;
         img->notegrid = s->notegrid;
         img->palette = s->palette;
@@ -1004,36 +1039,46 @@ public:
         if(!frozen) items = selectItems(l, rng, &itemGains);
         Harmony h;
         bool live = !previewItem && sceneOverride.empty();
+        const int nb = barCount(span);   // harmony entries: one per bar it touches (the renderer's ceil(bars))
         if(frozen){
             // its own harmony; on the timeline too, so the other layers play along with it
-            h.roots = l.fixed.value("roots", std::vector<int>(l.bars, 0));
-            h.trans = l.fixed.value("trans", std::vector<int>(l.bars, 0));
-            h.roots.resize(l.bars, 0); h.trans.resize(l.bars, 0);
+            h.roots = l.fixed.value("roots", std::vector<int>(nb, 0));
+            h.trans = l.fixed.value("trans", std::vector<int>(nb, 0));
+            // longer than it was frozen (Bar Multiplier): its harmony goes round again
+            auto fit = [nb](std::vector<int>& v){ const size_t n = v.size(); v.resize(nb, 0); if(n > 0) for(size_t k = n; k < v.size(); k++) v[k] = v[k % n]; };
+            fit(h.roots); fit(h.trans);
         }
-        if(!live){ if(!frozen) h = makeHarmony(*s, l.bars, rng); }   // editor renders: their own harmony, as before
+        if(!live){ if(!frozen) h = makeHarmony(*s, nb, rng); }   // editor renders: their own harmony, as before
         else{
-            int bar = layerIndex == 0 ? layer1NextBar : startBar;
+            double bar = layerIndex == 0 ? layer1NextBar : startBar;
             if(frozen){
-                auto pred = layerIndex == 0 ? std::vector<PlanEntry>() : predictedPlan(bar + l.bars + 1);
-                for(int b = 0; b < l.bars; b++) harmonyBars[layerIndex == 0 ? bar + b : harmonyBar(bar + b, &pred)] = {h.roots[b], h.trans[b]};
+                auto pred = layerIndex == 0 ? std::vector<PlanEntry>() : predictedPlan(barIndex(bar + span) + 1);
+                for(int b = 0; b < nb; b++) harmonyBars[layerIndex == 0 ? barIndex(bar + b) : harmonyBar(bar + b, &pred)] = {h.roots[b], h.trans[b]};
             }
-            else h = harmonyAt(*s, bar, l.bars, layerIndex != 0);
+            else h = harmonyAt(*s, bar, nb, layerIndex != 0);
             img->startBar = bar;
             if(layerIndex == 0){
                 // the plan: a scene change here is a hard cut if the setlist entry (or, without
                 // the setlist, the manual setting) says so
-                PlanEntry pe; pe.startBar = bar; pe.bars = l.bars * img->repeat; pe.period = l.bars; pe.scene = s->name; pe.id = img->id;
+                PlanEntry pe; pe.startBar = bar; pe.bars = span * img->repeat; pe.period = span; pe.scene = s->name; pe.id = img->id;
                 bool changes = layer1Plan.empty() || layer1Plan.back().scene != s->name;
                 if(changes) pe.hardCut = laneChose ? laneCut : (useSetlist && !setlist.empty()) ? setlist[setlistEntry % setlist.size()].hardCut : hardCutManual;
                 layer1Plan.push_back(pe);
                 if(changes && layer1Plan.size() > 1) onSceneChange(pe.startBar, pe.scene, pe.hardCut);
                 while(layer1Plan.size() > 64) layer1Plan.pop_front();
-                layer1NextBar += l.bars * img->repeat;
-                lastRequestRepeat = img->repeat;
+                layer1NextBar += span * img->repeat;
+                lastRequestRepeat = img->repeat * img->slices;   // the GOs it stands for: every page
+                if(img->slices > 1){
+                    // a phrase's pages are short: the next phrase is asked for that many pages
+                    // before this one ends, so it is rendered in time (else the last page repeats)
+                    double pageSeconds = layerBars(l) * 4 * 60.0 / std::max(1.0, s->bpm);
+                    int early = (int)std::ceil(1.5 * renderSeconds / std::max(0.05, pageSeconds)) + 1;
+                    lastRequestRepeat = std::max(1, lastRequestRepeat - early);
+                }
             }else{
                 img->startBeat = bar * 4.0;
                 if(cutBar > bar){ img->cutBeat = cutBar * 4.0; layerNextBar[layerIndex] = cutBar; }
-                else layerNextBar[layerIndex] = bar + l.bars * img->repeat;
+                else layerNextBar[layerIndex] = bar + span * img->repeat;
             }
         }
         applyPitchShift(h.roots);
@@ -1042,8 +1087,18 @@ public:
 
         json req{{"id", img->id}, {"layer", img->layer}, {"session", session}, {"seed", img->seed},
                  {"size", {width, height}}, {"scene", s->name}, {"snapshot", s->snapshot},
-                 {"bars", l.bars}, {"notegrid", s->notegrid}, {"bpm", s->bpm},
-                 {"roots", h.roots}, {"trans", h.trans}, {"compat", s->compat}, {"bassDegree", s->bassDegree}};
+                 {"bars", barsJson(span)}, {"notegrid", s->notegrid}, {"bpm", barsJson(s->bpm)},
+                 {"roots", h.roots}, {"trans", h.trans}, {"compat", s->compat}, {"bassDegree", s->bassDegree}, {"lineWeight", s->lineWeight}};
+        if(img->slices > 1){
+            // the phrase is drawn `slices` views wide (at most 16384 px: past that the pages are
+            // stretched); pixel sizes follow the view (viewWidth), not the canvas
+            req["size"] = {std::min(16384, width * img->slices), height};
+            req["viewWidth"] = width;
+            req["pageBars"] = barsJson(layerBars(l));
+            req["slices"] = img->slices;
+        }
+        if(barAdd != 0) req["barAdd"] = barAdd;
+        if(barMult != 1) req["barMult"] = barMult;   // "bars" / "pageBars" are the multiplied lengths (promote / freeze divide)
         // the scale and palette themselves travel with the request
         req["scale"] = sd ? sd->legacyIndex : -1;
         req["palette"] = pd ? pd->legacyIndex : -1;
@@ -1054,7 +1109,7 @@ public:
         // presets resolve after the selection and the harmony, so scenes without presets draw the
         // same random numbers as before
         json jitems = json::array();
-        itemBars = l.bars;
+        itemBars = span;
         auto genItem = [&](const Preset& pr){
             for(auto& it : presetItems(pr)) jitems.push_back(it);
         };
@@ -1072,6 +1127,7 @@ public:
         }
         req["items"] = jitems;
         applyLayerEffect(req,l,img->seed);
+        applyGlobalEffects(req, *s, img->startBar >= 0 ? img->startBar : 0.0, span);
 
         fs::path p = sessionDir() / "requests" / (img->id + ".json");
         if(requestSink) requestSink(p,std::move(req)); else writeJsonAtomic(p,req);
@@ -1089,12 +1145,26 @@ public:
     // cut falls in is cut there.
     static std::vector<std::shared_ptr<Image>> expandRepeats(const std::shared_ptr<Image>& img){
         std::vector<std::shared_ptr<Image>> out;
-        int n = std::max(1, img->repeat);
-        double len = 4.0 * std::max(1, img->bars);
+        const int slices = std::max(1, img->slices);
+        int n = std::max(1, img->repeat) * slices;   // a phrase: every page of it, then its repeats
+        double len = 4.0 * std::max(1.0 / kBarGrid, img->bars);
         double cut = img->cutBeat, until = img->copiesUntil;
+        const std::vector<int> roots = img->roots, trans = img->trans;   // the phrase's (per bar)
         for(int k = 0; k < n; k++){
             auto c = k == 0 ? img : std::make_shared<Image>(*img);
             c->repeat = 1; c->repeatIndex = k; c->copiesUntil = -1;
+            if(slices > 1){
+                // its window of the phrase, and the phrase's chords at its bars
+                c->slice = k % slices;
+                double from = c->slice * img->bars;
+                int nb = barCount(img->bars);
+                c->roots.assign(nb, 0); c->trans.assign(nb, 0);
+                for(int j = 0; j < nb; j++){
+                    int b = barIndex(from + j);
+                    if(b < (int)roots.size()) c->roots[j] = roots[b];
+                    if(b < (int)trans.size()) c->trans[j] = trans[b];
+                }
+            }
             if(img->startBar >= 0) c->startBar = img->startBar + k * img->bars;
             if(img->startBeat >= 0){
                 double st = img->startBeat + k * len;
@@ -1184,7 +1254,15 @@ public:
         s.bank = currentBank;   // a new scene: the bank new scenes go to
         int li = std::max(0, side.value("layer", 1) - 1);
         LayerDef l = (src != scenes.end() && li < (int)src->second.layers.size()) ? src->second.layers[li] : LayerDef();
-        l.bars = side.value("bars", l.bars);
+        // a phrase's render: its page length and the phrase ("bars" is what was drawn)
+        if(side.contains("pageBars")){ l.bars = barsFrom(side, "pageBars", l.bars); l.phrase = barsFrom(side, "bars", l.bars); }
+        else{ l.bars = barsFrom(side, "bars", l.bars); l.phrase = 0; }
+        // drawn with a Bar Multiplier: the scene keeps the length as written (the multiplier acts again when it plays)
+        if(double m = side.value("barMult", 1.0), a = side.value("barAdd", 0); m > 0 && (m != 1 || a != 0)){
+            int n = phraseSlices(l);
+            if(l.bars - a > 0 && (a > 0 || l.bars > 1)) l.bars = quantBars((l.bars - a) / m); else l.bars = quantBars(l.bars / m);   // (a length held at the one-bar floor: the add is not known)
+            if(l.phrase > 0) l.phrase = quantBars(l.bars * n);
+        }
         l.z = -1;
         l.cells.clear();
         l.effectPreset=side.value("layerEffectPreset",std::string());
@@ -1220,18 +1298,21 @@ public:
     // reused; if none are, it is made as for one image (makeHarmony) and stored.
     // Where layer 1 repeats a page, its bars repeat that page's harmony: they are read and stored at
     // the bar of the page's first copy, so every layer plays the same chords on every repeat.
-    int harmonyBar(int b, const std::vector<PlanEntry>* predicted = nullptr) const {
-        auto fold = [&](const PlanEntry& pe){ return pe.startBar + (b - pe.startBar) % pe.period; };
-        for(auto& pe : layer1Plan) if(pe.startBar <= b && b < pe.startBar + pe.bars) return (pe.period > 0 && pe.period < pe.bars) ? fold(pe) : b;
-        if(predicted) for(auto& pe : *predicted) if(pe.startBar <= b && b < pe.startBar + pe.bars) return (pe.period > 0 && pe.period < pe.bars) ? fold(pe) : b;
-        return b;
+    // b: a position in absolute bars (an image's start + k); returns the whole bar its chord is kept at
+    int harmonyBar(double b, const std::vector<PlanEntry>* predicted = nullptr) const {
+        auto fold = [&](const PlanEntry& pe){ return barIndex(pe.startBar + std::fmod(b - pe.startBar + 1e-9, pe.period) - 1e-9); };
+        auto in = [&](const PlanEntry& pe){ return pe.startBar <= b + 1e-9 && b + 1e-9 < pe.startBar + pe.bars; };
+        for(auto& pe : layer1Plan) if(in(pe)) return (pe.period > 0 && pe.period < pe.bars) ? fold(pe) : barIndex(b);
+        if(predicted) for(auto& pe : *predicted) if(in(pe)) return (pe.period > 0 && pe.period < pe.bars) ? fold(pe) : barIndex(b);
+        return barIndex(b);
     }
     // folded: the extra layers fold onto layer 1's repeated pages (planned or predicted); layer 1's
     // own new page does not (it starts where the plan ends)
-    Harmony harmonyAt(const Scene& s, int start, int bars, bool folded = true){
-        auto predicted = folded ? predictedPlan(start + bars + 1) : std::vector<PlanEntry>();
+    // start: absolute bars (may be a fraction); bars: harmony entries (barCount of the image)
+    Harmony harmonyAt(const Scene& s, double start, int bars, bool folded = true){
+        auto predicted = folded ? predictedPlan(barIndex(start) + bars + 1) : std::vector<PlanEntry>();
         std::vector<int> hb(bars);
-        for(int i = 0; i < bars; i++) hb[i] = folded ? harmonyBar(start + i, &predicted) : start + i;
+        for(int i = 0; i < bars; i++) hb[i] = folded ? harmonyBar(start + i, &predicted) : barIndex(start + i);
         bool any = false;
         for(int i = 0; i < bars; i++) if(harmonyBars.count(hb[i])){ any = true; break; }
         Harmony h;
@@ -1257,7 +1338,7 @@ public:
         }
         // forget bars far behind the header
         int keepFrom = (int)std::floor(schedule->headerBeat / 4.0) - 256;
-        if(!layer1Plan.empty()) keepFrom = std::min(keepFrom, layer1Plan.front().startBar);   // a long repeat folds back to its first page
+        if(!layer1Plan.empty()) keepFrom = std::min(keepFrom, barIndex(layer1Plan.front().startBar));   // a long repeat folds back to its first page
         while(!harmonyBars.empty() && harmonyBars.begin()->first < keepFrom) harmonyBars.erase(harmonyBars.begin());
         return h;
     }
@@ -1281,12 +1362,12 @@ public:
         if(!s) s = currentScene();
         if(!s || s->layers.empty() || renderSeconds <= 0) return 0;
         double perSec = 0;
-        for(auto& l : s->layers) perSec += std::max(1, s->bpm) / 60.0 / (4.0 * std::max(1, l.bars) * std::max(1, l.repeat));
+        for(auto& l : s->layers) perSec += std::max(1.0, s->bpm) / 60.0 / (4.0 * std::max(1.0 / kBarGrid, layerSpan(l)) * std::max(1, l.repeat));
         return perSec * renderSeconds;
     }
     double leadBeats() const {
         double bpm = 120;
-        if(schedule && !schedule->layers.empty() && schedule->layers[0].header) bpm = std::max(1, schedule->layers[0].header->bpm);
+        if(schedule && !schedule->layers.empty() && schedule->layers[0].header) bpm = std::max(1.0, schedule->layers[0].header->bpm);
         return 2 * renderSeconds * bpm / 60.0 + 8;
     }
     std::string requestLayers(){
@@ -1300,14 +1381,14 @@ public:
         if((int)pending.size() >= maxPending - 1) return "";
         double B = schedule->headerBeat;
         // layer 1's plan, then what it will play next (predicted from the setlist)
-        auto predicted = predictedPlan((int)std::ceil(B / 4.0) + renderAheadBars + 96);
-        auto planOrPredicted = [&](int b) -> const PlanEntry* {
-            if(const PlanEntry* pe = planAt(b)) if(b < pe->startBar + pe->bars) return pe;
-            for(auto& pe : predicted) if(pe.startBar <= b && b < pe.startBar + pe.bars) return &pe;
+        auto predicted = predictedPlan(std::ceil(B / 4.0) + renderAheadBars + 96);
+        auto planOrPredicted = [&](double b) -> const PlanEntry* {
+            if(const PlanEntry* pe = planAt(b)) if(b + 1e-9 < pe->startBar + pe->bars) return pe;
+            for(auto& pe : predicted) if(pe.startBar <= b + 1e-9 && b + 1e-9 < pe.startBar + pe.bars) return &pe;
             return planAt(b);
         };
         // the layer whose next image is due soonest goes first; one request per frame
-        int best = -1, bestBar = 0, bestCut = -1;
+        int best = -1; double bestBar = 0, bestCut = -1, bestAsked = 0; bool bestWaiting = false;
         double bestDeadline = 0;
         const Scene* bestScene = nullptr;
         size_t layerCount=schedule->layers.size();
@@ -1316,30 +1397,39 @@ public:
             auto& L = schedule->layer(i);
             int waiting = 0;
             for(auto& [id, img] : pending) if(img->layer == i + 1 && !img->cancelled) waiting++;
-            int future = (int)L.ready.size() + waiting;
-            for(auto& sl : L.slots) if(!sl.repeat && sl.start + sl.len > B) future++;
+            // (a phrase's pages count as one: they come from one request)
+            int future = waiting;
+            std::set<std::string> phrases;
+            for(auto& im : L.ready){ if(im->slices <= 1) future++; else phrases.insert(im->id); }
+            for(auto& sl : L.slots) if(!sl.repeat && sl.start + sl.len > B){ if(sl.img->slices <= 1) future++; else phrases.insert(sl.img->id); }
+            future += (int)phrases.size();
             if(future > aheadImages + 2) continue;   // a cap, whatever the deadlines
             // The next start follows what is placed or asked for. A late restart
             // moves ahead by complete cycles from the scene origin.
-            int earliest = (int)std::ceil(B / 4.0) + renderAheadBars;
+            double earliest = std::ceil(B / 4.0) + renderAheadBars;
             // A newly enabled layer shares layer 1's scene origin. The ring may defer a
             // late page by whole cycles, but must not invent a two-bar phase offset.
-            const PlanEntry* origin = planOrPredicted((int)std::floor(B / 4.0));
-            int originBar = origin ? origin->startBar : earliest;
+            const PlanEntry* origin = planOrPredicted(B / 4.0);
+            double originBar = origin ? origin->startBar : earliest;
             std::string runScene;
             if(origin) for(auto& pe : layer1Plan){
                 if(pe.startBar > origin->startBar) break;
                 if(pe.scene != runScene || pe.hardCut) originBar = pe.startBar;
                 runScene = pe.scene;
             }
-            int next = layerNextBar.count(i) ? layerNextBar[i] : originBar;
-            if(L.scheduledEnd >= 0) next = std::max(next, (int)std::ceil(L.scheduledEnd / 4.0 - 1e-6));
+            double next = layerNextBar.count(i) ? layerNextBar[i] : originBar;
+            if(L.scheduledEnd >= 0){
+                // after what is placed: on the next bar line (pages of a fractional length: the 1/16-bar grid)
+                double unit = 1;
+                if(!L.slots.empty() && L.slots.back().img && L.slots.back().img->bars != std::floor(L.slots.back().img->bars)) unit = 1.0 / kBarGrid;
+                next = std::max(next, std::ceil(L.scheduledEnd / 4.0 / unit - 1e-6) * unit);
+            }
             if(next * 4.0 + 4.0 <= B){
                 next = earliest;
                 auto it = origin ? scenes.find(origin->scene) : scenes.end();
                 if(it != scenes.end() && i < (int)it->second.layers.size()){
-                    int cycle = std::max(1, it->second.layers[i].bars);
-                    next = originBar + ((earliest - originBar + cycle - 1) / cycle) * cycle;
+                    double cycle = std::max(1.0 / kBarGrid, layerSpan(it->second.layers[i]));
+                    next = originBar + std::ceil((earliest - originBar) / cycle - 1e-9) * cycle;
                 }
             }
             // the scene at that bar is layer 1's (its plan); a layer the scene doesn't have is
@@ -1359,21 +1449,34 @@ public:
                 next = pe->startBar + pe->bars;                  // skip to the next planned image
             }
             if(!s) continue;
-            int bars = s->layers[i].bars;
-            int span = bars * std::max(1, s->layers[i].repeat);   // the page and its repeats
+            double bars = layerBars(s->layers[i]);
+            double span = layerSpan(s->layers[i]) * std::max(1, s->layers[i].repeat);   // the page (or phrase) and its repeats
             // not due yet: its deadline is further than the lead (one image ahead is always kept)
-            double deadline = next * 4.0 - bars * 4.0;
+            // (its place enters the view at the rate of the image before it: after a longer one,
+            // e.g. a scene change to shorter layers, that is more than its own length ahead)
+            double viewBars = bars;
+            if(!L.slots.empty() && L.slots.back().end() <= next * 4.0 + 1e-6) viewBars = std::max(viewBars, L.slots.back().len / 4.0);
+            double deadline = next * 4.0 - viewBars * 4.0;
             if(future >= 1 && deadline - B > leadBeats()) continue;
             if(future > aheadImages && deadline - B > 0.5 * leadBeats()) continue;
             // a hard cut inside this image: it stops there and the next one starts at the cut
-            int cut = -1;
+            double cut = -1;
             for(auto& pe : layer1Plan)
                 if(pe.hardCut && pe.startBar > next && pe.startBar < next + span){ cut = pe.startBar; break; }
             if(cut < 0) for(auto& pe : predicted)
                 if(pe.hardCut && pe.startBar > next && pe.startBar < next + span){ cut = pe.startBar; break; }
-            if(best < 0 || deadline < bestDeadline){ best = i; bestBar = next; bestCut = cut; bestScene = s; bestDeadline = deadline; }
+            // A layer with nothing coming (no image ready, asked for or placed ahead) goes before one
+            // that has; then the soonest deadline; overdue layers take turns, the one asked longest
+            // ago first. So a layer whose pages are too short for the renderer (it repeats them)
+            // does not starve the others.
+            double key = std::max(deadline, B);
+            double asked = layerAskedAt.count(i) ? layerAskedAt[i] : -1e9;
+            bool nothing = future == 0;
+            bool better = best < 0 || (nothing && !bestWaiting) ||
+                          (nothing == bestWaiting && (key < bestDeadline || (key == bestDeadline && asked < bestAsked)));
+            if(better){ best = i; bestBar = next; bestCut = cut; bestScene = s; bestDeadline = key; bestAsked = asked; bestWaiting = nothing; }
         }
-        if(best > 0) return makeRequest(false, "", nullptr, best, bestBar, bestScene, bestCut);
+        if(best > 0){ layerAskedAt[best] = now; return makeRequest(false, "", nullptr, best, bestBar, bestScene, bestCut); }
         return "";
     }
 
@@ -1386,7 +1489,7 @@ public:
     // whose right-hand copy gives way to the next one, else 1), so it scrolls on normally after. Returns the requests'
     // paths; goDebt: GOs to skip for layer 1's repeated pages (as Forms Box's request()).
     std::shared_ptr<Image> lastImage;  // the last image makeRequest asked for
-    std::vector<std::string> switchNow(int bar, int& goDebt, int ahead = 2){
+    std::vector<std::string> switchNow(double bar, int& goDebt, int ahead = 2){
         std::vector<std::string> out;
         goDebt = 0;
         if(replaying) return out;
@@ -1398,7 +1501,7 @@ public:
         // layer 1's plan from `bar` on (the image under the header may stand for more copies)
         while(!layer1Plan.empty() && layer1Plan.back().startBar >= bar) layer1Plan.pop_back();
         if(!layer1Plan.empty() && layer1Plan.back().startBar + layer1Plan.back().bars > bar) layer1Plan.back().bars = bar - layer1Plan.back().startBar;
-        harmonyBars.erase(harmonyBars.lower_bound(bar), harmonyBars.end());   // the new scene's own chords
+        harmonyBars.erase(harmonyBars.lower_bound(barIndex(bar)), harmonyBars.end());   // the new scene's own chords
         layer1NextBar = bar;
         std::string p = makeRequest(true);
         if(p.empty() || !lastImage) return out;
@@ -1424,8 +1527,8 @@ public:
         for(int i = 1; i < (int)to.layers.size() && i < (int)schedule->layers.size(); i++){
             // it takes the place of the layer's image under the header (LayerRing): its bars from there
             auto& L = schedule->layers[i];
-            int lb = (int)std::ceil(B / 4.0 - 1e-9) - to.layers[i].bars;
-            for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ lb = (int)std::floor(sl.start / 4.0 + 1e-9); break; }
+            double lb = std::ceil(B / 4.0 - 1e-9) - layerSpan(to.layers[i]);
+            for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ lb = std::floor(sl.start / 4.0 * kBarGrid + 1e-9) / kBarGrid; break; }
             std::string q = makeRequest(true, "", nullptr, i, lb, &to, -1);
             if(q.empty()) continue;
             out.push_back(q);
@@ -1438,8 +1541,8 @@ public:
             out.push_back(n);
             goDebt += std::max(0, lastRequestRepeat - 1);
         }
-        note("switch now to " + to.name + " at bar " + std::to_string(bar));
-        syncLog.push_back("switch now to " + to.name + " at bar " + std::to_string(bar));
+        note("switch now to " + to.name + " at bar " + barsText(bar));
+        syncLog.push_back("switch now to " + to.name + " at bar " + barsText(bar));
         return out;
     }
     // a switch image that will never arrive (error, lost): nothing waits for it
@@ -1451,7 +1554,7 @@ public:
     // or placed past it (they render ahead): those that start there or later with another scene
     // are cancelled (unless already on screen) and the layer asks again from `bar`; with a hard
     // cut, an image that runs across `bar` is cut there.
-    void onSceneChange(int bar, const std::string& scene, bool hard){
+    void onSceneChange(double bar, const std::string& scene, bool hard){
         double cb = bar * 4.0;
         auto obsolete = [&](const std::shared_ptr<Image>& im){ return im->startBeat >= cb - 1e-6 && im->scene != scene; };
         for(auto& [id, im] : pending){
@@ -1478,7 +1581,7 @@ public:
             L.scheduledEnd = L.slots.empty() ? -1 : L.slots.back().end();
             if(layerNextBar.count(i) && layerNextBar[i] > bar) layerNextBar[i] = bar;
         }
-        syncLog.push_back(std::string(hard ? "hard cut" : "scene change") + " to " + scene + " at bar " + std::to_string(bar));
+        syncLog.push_back(std::string(hard ? "hard cut" : "scene change") + " to " + scene + " at bar " + barsText(bar));
     }
 
     // Only effects (no drawing of its own): previews and thumbnails draw it over the underlay
@@ -1499,9 +1602,9 @@ public:
     // What layer 1 will play after its plan if nothing changes: the setlist (or the manual scene)
     // walked forward from where it is, image by image. The extra layers render ahead with it, so
     // a scene change (and a hard cut) further ahead than layer 1's own requests is known in time.
-    std::vector<PlanEntry> predictedPlan(int untilBar) const {
+    std::vector<PlanEntry> predictedPlan(double untilBar) const {
         std::vector<PlanEntry> out;
-        int bar = layer1NextBar;
+        double bar = layer1NextBar;
         std::string prev = layer1Plan.empty() ? std::string() : layer1Plan.back().scene;
         int entry = setlistEntry, inEntry = imagesInEntry;
         bool sl = useSetlist && !setlist.empty();
@@ -1511,13 +1614,13 @@ public:
             bool fromLane = false;
             if(laneSceneAt){
                 bool lc = false;
-                std::string n = laneSceneAt(bar, lc);
+                std::string n = laneSceneAt(barIndex(bar), lc);
                 auto li = scenes.find(n);
                 if(!n.empty() && li != scenes.end() && !li->second.layers.empty()){ name = n; cutFlag = lc; fromLane = true; }
             }
             auto it = scenes.find(name);
             if(it == scenes.end() || it->second.layers.empty()) break;
-            PlanEntry pe; pe.startBar = bar; pe.period = std::max(1, it->second.layers[0].bars);
+            PlanEntry pe; pe.startBar = bar; pe.period = std::max(1.0 / kBarGrid, layerSpan(it->second.layers[0]));
             pe.bars = pe.period * std::max(1, it->second.layers[0].repeat); pe.scene = name;
             pe.hardCut = !prev.empty() && prev != name && cutFlag;
             out.push_back(pe);
@@ -1538,19 +1641,20 @@ public:
             if(c > a + 1e-6 && c <= b + 1e-6 && (best < 0 || c < best)) best = c;
         };
         for(auto& p : layer1Plan) look(p);
-        for(auto& p : predictedPlan((int)std::ceil(b / 4.0) + 1)) look(p);
+        for(auto& p : predictedPlan(b / 4.0 + 1)) look(p);
         return best;
     }
 
     // The scene layer 1 plays (planned, or predicted from the setlist) at a beat; "" if unknown
     std::string sceneAtBeat(double beat) const {
-        int b = (int)std::floor(beat / 4.0);
+        double b = beat / 4.0 + 1e-9;
         for(auto& pe : layer1Plan) if(pe.startBar <= b && b < pe.startBar + pe.bars) return pe.scene;
         for(auto& pe : predictedPlan(b + 1)) if(pe.startBar <= b && b < pe.startBar + pe.bars) return pe.scene;
         return "";
     }
 
-    const PlanEntry* planAt(int b) const {
+    const PlanEntry* planAt(double b) const {
+        b += 1e-9;
         for(auto& pe : layer1Plan) if(pe.startBar <= b && b < pe.startBar + pe.bars) return &pe;
         if(!layer1Plan.empty() && b < layer1Plan.front().startBar) return &layer1Plan.front();
         return nullptr;
@@ -1558,7 +1662,7 @@ public:
 
     // The scene playing at the header (layer 1's plan at the header bar)
     const Scene* sceneAtHeader() const {
-        const PlanEntry* pe = planAt((int)std::floor(schedule->headerBeat / 4.0));
+        const PlanEntry* pe = planAt(schedule->headerBeat / 4.0);
         if(!pe) return nullptr;
         auto it = scenes.find(pe->scene);
         return it != scenes.end() ? &it->second : nullptr;
@@ -1570,27 +1674,41 @@ public:
     void syncLayer1(const std::shared_ptr<Image>& img, double headerStart){
         if(replaying && img && replayFirst && img->id == replayFirst->id && img->png == replayFirst->png && std::isnan(replayOrigin)) replayOrigin = headerStart;
         if(!img || img->startBar < 0) return;
-        int drift = (int)std::lround(headerStart / 4.0) - img->startBar;
+        // in whole bars, or in whole pages when its page is shorter than a bar
+        const double unit = std::min(1.0, std::max(1.0 / kBarGrid, img->bars));
+        double drift = std::round((headerStart / 4.0 - img->startBar) / unit) * unit;
         if(drift == 0) return;
         layer1NextBar += drift;
-        int from = img->startBar;
+        double from = img->startBar;
         for(auto& pe : layer1Plan) if(pe.startBar >= from || pe.id == img->id) pe.startBar += drift;
         // what is still to come (its next copies too) moves with it, so it is not shifted twice
         for(auto& q : schedule->layers[0].ready) if(q != img && q->startBar >= from) q->startBar += drift;
         for(auto& [pid, q] : pending) if(q->layer <= 1 && !q->preview && q->startBar >= from) q->startBar += drift;
         img->startBar += drift;
-        syncLog.push_back("layer 1 is " + std::to_string(drift) + " bars off its plan (repeat or lost image): the plan moves");
+        syncLog.push_back("layer 1 is " + barsText(drift) + " bars off its plan (repeat or lost image): the plan moves");
     }
 
     // A preset's items with values resolved for one image (several for a layered preset)
     // shared: values laid over every item's params (a stack's own linked pick, passed down)
-    int itemBars = 8;                  // bars of the image being resolved (per-bar choices)
+    double itemBars = 8;               // bars of the image being resolved (per-bar choices)
+    // Bar Multiplier (the node's; 1 = off): every layer's length times this, so a wide projection
+    // keeps its picture proportions (3 screens wide: x3). Scenes keep the length as written; what
+    // plays (requests, plan, harmony timeline) is layerBars / layerSpan. From the next image asked for.
+    double barMult = 1;
+    int barAdd = 0;                    // Bar Add (the node's): whole bars added after the multiplier (may be negative)
+    double layerBars(const LayerDef& l) const {
+        if(barMult == 1 && barAdd == 0) return l.bars;
+        double m = l.bars * barMult;
+        // taking bars away stops at one bar (a layer already shorter than that keeps its length)
+        return quantBars(barAdd < 0 ? std::max(m + barAdd, std::min(1.0, m)) : m + barAdd);
+    }
+    double layerSpan(const LayerDef& l) const { return layerBars(l) * phraseSlices(l); }   // the page, or its whole phrase
     json presetItems(const Preset& pr, int depth = 0, const json& shared = json::object(), int clipFrom = -1, int clipTo = -1){
         json out = json::array();
         if(depth > 4){ note("presets nested too deep at " + pr.ref() + " (a preset that includes itself?)"); return out; }
         // per-bar choices: resolve again for every perBar bars, each result clipped to them
         if(pr.perBar > 0 && clipFrom < 0){
-            int bars = std::max(1, itemBars);
+            int bars = barCount(itemBars);
             for(int b = 0; b < bars; b += pr.perBar)
                 for(auto& it : presetItems(pr, depth, shared, b, std::min(bars, b + pr.perBar))) out.push_back(it);
             return out;
@@ -1684,7 +1802,7 @@ public:
                     // this layer alone is redrawn per bar
                     const GenDef* lg = findGen(layer.gen);
                     if(!lg){ note("layer generator " + layer.gen + " unknown to the renderer (" + pr.ref() + ")"); continue; }
-                    int bars = std::max(1, itemBars);
+                    int bars = barCount(itemBars);
                     for(int b = 0; b < bars; b += lpb)
                     {
                         json it = item(*lg, pr.ref(), resolve(*lg, layer, rng));
@@ -1747,11 +1865,59 @@ public:
         if(layer.fixed.is_object() && layer.fixed.value("layerEffectPreset",std::string())==layer.effectPreset){
             for(auto& it:layer.fixed.value("items",json::array()))if(it.value("layerEffect",false))items.push_back(it);
         }else if(found!=presets.end() && onlyEffects(found->second)){
-            int savedBars=itemBars;itemBars=layer.bars;
+            double savedBars=itemBars;itemBars=layerBars(layer);
             auto fx=presetItemsSeeded(found->second,seed ^ 0x4c465830u);itemBars=savedBars;
             for(auto it:fx){it["layerEffect"]=true;items.push_back(std::move(it));}
         }
         req["items"]=std::move(items);req["layerEffectPreset"]=layer.effectPreset;
+    }
+
+    // The seed of a scene-wide effect at one bar of the timeline: the same for every layer
+    static unsigned globalEffectSeed(const std::string& scene, const std::string& ref, int bar){
+        uint32_t h = 2166136261u;
+        for(unsigned char ch : scene + "|" + ref){ h ^= ch; h *= 16777619u; }
+        h ^= (uint32_t)bar * 2654435761u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+        return h & 0x7fffffffu;
+    }
+    // The scene's effects on every layer: one resolution per bar of the timeline, clipped to that bar
+    // of this image and drawn with that bar's own seed. An image of any length, starting anywhere on
+    // the bar grid, gets the same effect at the same bars. Effects that act across bar lines (a long
+    // echo, "last bar" processes, whole-image masks) are cut at each bar: use the per-bar ones.
+    void applyGlobalEffects(json& req, const Scene& s, double startBar, double bars){
+        json items = json::array();
+        for(auto& it : req.value("items", json::array())) if(!it.value("globalEffect", false)) items.push_back(it);
+        int nb = barCount(bars);
+        // an image that starts inside a bar or is not a whole number of bars long cannot take a bar's
+        // effect in step (the processes are anchored on the image's own bars): it gets none
+        bool onGrid = std::fabs(startBar - std::round(startBar)) < 1e-6 && std::fabs(bars - std::round(bars)) < 1e-6;
+        if(onGrid) for(auto& ref : s.globalEffects){
+            auto found = presets.find(ref);
+            if(found == presets.end() || !onlyEffects(found->second)) continue;
+            for(int b = 0; b < nb; b++){
+                unsigned seed = globalEffectSeed(s.name, ref, barIndex(startBar + b));
+                double savedBars = itemBars; itemBars = 1;
+                auto fx = presetItemsSeeded(found->second, seed);
+                itemBars = savedBars;
+                for(auto it : fx){
+                    double c0 = 0, c1 = 1;
+                    if(it.contains("clipBars") && it["clipBars"].is_array() && it["clipBars"].size() == 2){ c0 = it["clipBars"][0].get<double>(); c1 = it["clipBars"][1].get<double>(); }
+                    it["clipBars"] = json::array({b + std::max(0.0, std::min(1.0, c0)), b + std::max(0.0, std::min(1.0, c1))});
+                    it["seed"] = seed;
+                    it["globalEffect"] = true;
+                    items.push_back(std::move(it));
+                }
+            }
+        }
+        req["items"] = std::move(items);
+    }
+    // After a page's items are patched (Immediate), the scene-wide effects go back to the end, where
+    // makeRequest puts them
+    static void globalEffectsLast(json& req){
+        json first = json::array(), last = json::array();
+        for(auto& it : req.value("items", json::array())) (it.value("globalEffect", false) ? last : first).push_back(it);
+        if(last.empty()) return;
+        for(auto& it : last) first.push_back(it);
+        req["items"] = std::move(first);
     }
 
     std::vector<std::string> makePreviews(const std::string& sceneName, const std::vector<std::pair<std::string, json>>& variants){
@@ -1766,7 +1932,7 @@ public:
         if(previewLock && previewSeedSet && previewSeedScene == sceneName){ seed = previewSeed; h = previewHarmony; }
         else{
             seed = rng() & 0x7fffffff;
-            h = makeHarmony(s, l.bars, rng);
+            h = makeHarmony(s, barCount(layerBars(l)), rng);
             previewSeed = seed; previewHarmony = h; previewSeedScene = sceneName; previewSeedSet = true;
         }
         const ScaleDef es = effectiveScale(s);
@@ -1779,7 +1945,7 @@ public:
             snprintf(idbuf, sizeof(idbuf), "%04d", counter++);
             img->id = idbuf;
             img->scene = s.name;
-            img->bars = l.bars;
+            img->bars = layerBars(l);
             img->bpm = s.bpm;
             img->notegrid = s.notegrid;
             img->palette = s.palette;
@@ -1793,8 +1959,8 @@ public:
             img->previewOf = tag;
             json req{{"id", img->id}, {"layer", 1}, {"session", session}, {"seed", seed},
                      {"size", {width, height}}, {"scene", s.name}, {"snapshot", s.snapshot},
-                     {"bars", l.bars}, {"notegrid", s.notegrid}, {"bpm", s.bpm},
-                     {"roots", h.roots}, {"trans", h.trans}, {"compat", s.compat}, {"preview", tag}, {"bassDegree", s.bassDegree}};
+                     {"bars", barsJson(layerBars(l))}, {"notegrid", s.notegrid}, {"bpm", barsJson(s.bpm)},
+                     {"roots", h.roots}, {"trans", h.trans}, {"compat", s.compat}, {"preview", tag}, {"bassDegree", s.bassDegree}, {"lineWeight", s.lineWeight}};
             req["scale"] = sd ? sd->legacyIndex : -1;
             req["palette"] = pd ? pd->legacyIndex : -1;
             if(sd){ req["scaleName"] = sd->name; req["scaleNotes"] = sd->notes; }
@@ -1821,7 +1987,8 @@ public:
 
     // Macro_3's outputs for the image under the header
     struct HeaderValues {
-        int bpm = 120, bars = 8, notegrid = 100, root = 0, trans = 0, snapshot = -1;
+        int bpm = 120, notegrid = 100, root = 0, trans = 0, snapshot = -1;
+        double bars = 8;
         std::vector<float> scale {0};
         bool valid = false;
     };
@@ -1830,7 +1997,7 @@ public:
         auto& h = schedule->layers[0].header;
         if(!h) return v;
         v.valid = true;
-        v.bpm = h->bpm;
+        v.bpm = (int)std::lround(h->bpm);   // the "actualBPM" output stays whole (patch connections); BPM out carries the exact tempo
         v.bars = h->bars;
         v.notegrid = h->notegrid;
         v.snapshot = h->snapshot;

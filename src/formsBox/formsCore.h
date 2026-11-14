@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <random>
 #include <string>
@@ -23,6 +24,30 @@ namespace forms {
 
 using json = nlohmann::json;
 using Rng = std::mt19937;
+
+// ---------------------------------------------------------------- bar lengths
+// A layer's image may last a fraction of a bar (0.25 = one beat). Lengths are kept on a grid of
+// 1/16 bar (a power of two, so sums and multiples of them stay exact in a double); the shortest
+// is 1/16. Harmony stays per whole bar: an image's local bar k plays the absolute bar
+// floor(start + k), and its roots / trans have barCount() entries (the renderer's ceil(bars)).
+constexpr double kBarGrid = 16;
+inline double quantBars(double b){
+    if(!std::isfinite(b)) return 8;
+    return std::clamp(std::round(b * kBarGrid) / kBarGrid, 1.0 / kBarGrid, 256.0);
+}
+inline int barCount(double b){ return std::max(1, (int)std::ceil(b - 1e-9)); }   // bars it touches (from a bar line)
+inline int barIndex(double b){ return (int)std::floor(b + 1e-9); }               // the whole bar a position is in
+// whole lengths are written as integers, so existing files and requests don't change
+inline nlohmann::json barsJson(double b){ return b == std::floor(b) ? nlohmann::json((long long)b) : nlohmann::json(b); }
+inline double barsFrom(const nlohmann::json& j, const char* key, double fallback = 8){
+    auto it = j.find(key);
+    if(it == j.end() || !it->is_number()) return fallback;
+    return quantBars(it->get<double>());
+}
+inline std::string barsText(double b){
+    if(b == std::floor(b)) return std::to_string((long long)b);
+    char buf[32]; snprintf(buf, sizeof(buf), "%g", b); return buf;
+}
 
 // Uniform in [0, max), like ofRandom(max)
 inline float uniform(Rng& rng, float max){
@@ -42,8 +67,13 @@ struct Cell {
 struct LayerDef {
     json cover = json::object(); // shared cover keys; disabled unless explicitly enabled
     std::string effectPreset;         // effect-only instrument appended after this whole layer
-    int bars = 8;                     // real bar count of each image
+    double bars = 8;                  // real bar count of each image (fractions: quantBars)
     int repeat = 1;                   // each image (page) plays this many times before a new one
+    float beatOffset = 0;             // beats this layer plays later (+) or earlier (-) than the others; layers 2 and up
+    // Phrase (0 = off): with a phrase longer than the page, one render draws the whole phrase and
+    // the layer shows it page by page (each page the next window of it), so patterns and notes
+    // run on across short pages. Rounded up to a whole number of pages (phraseSlices).
+    double phrase = 0;
     int everyN = 1;                   // stored by the Director, not used by its selection
     float globalProb = 100;           // 0..100: whole-image gate
     std::vector<float> groupProb {1}; // 0..1 per group
@@ -56,7 +86,52 @@ struct LayerDef {
     // A frozen layer (Gallery "Freeze"): always this exact image: {"seed", "items" (resolved),
     // "roots", "trans", "from"}. Nothing is chosen or drawn at random for it.
     json fixed;
+    // The layer's effects before the sound (blur, trail, Perlin mask): only the values that are not
+    // the defaults (LayerFxValues); empty: none. They switch with the scene.
+    json fx;
 };
+// A layer's effects as numbers (the scene's "fx" object <-> the node's controls)
+struct LayerFxValues {
+    float hBlur = 0, vBlur = 0, trail = 0, trailLevel = 0.8f;
+    float maskAmount = 0, maskWidth = 4, maskHeight = 0.25f, maskContrast = 1, maskThreshold = 0, maskBlur = 0, maskSpeed = 0.25f;
+    int maskSeed = 1; bool maskInvert = false, maskAnimate = false;
+    bool operator==(const LayerFxValues& o) const {
+        return hBlur == o.hBlur && vBlur == o.vBlur && trail == o.trail && trailLevel == o.trailLevel && maskAmount == o.maskAmount
+            && maskWidth == o.maskWidth && maskHeight == o.maskHeight && maskContrast == o.maskContrast && maskThreshold == o.maskThreshold
+            && maskBlur == o.maskBlur && maskSpeed == o.maskSpeed && maskSeed == o.maskSeed && maskInvert == o.maskInvert && maskAnimate == o.maskAnimate;
+    }
+    bool any() const { return hBlur > 0.05f || vBlur > 0.05f || trail > 0.01f || maskAmount > 0; }
+    // layer: its index (the mask seed's default is layer + 1, as the controls)
+    static LayerFxValues from(const json& j, int layer){
+        LayerFxValues v; v.maskSeed = layer + 1;
+        if(!j.is_object()) return v;
+        auto f = [&](const char* k, float& x, float lo, float hi){ auto it = j.find(k); if(it != j.end() && it->is_number()) x = std::clamp(it->get<float>(), lo, hi); };
+        f("hBlur", v.hBlur, 0, 60); f("vBlur", v.vBlur, 0, 60); f("trail", v.trail, 0, 16); f("trailLevel", v.trailLevel, 0, 1);
+        f("maskAmount", v.maskAmount, 0, 1); f("maskWidth", v.maskWidth, 0.125f, 32); f("maskHeight", v.maskHeight, 0.01f, 2);
+        f("maskContrast", v.maskContrast, 0.1f, 8); f("maskThreshold", v.maskThreshold, 0, 1); f("maskBlur", v.maskBlur, 0, 60); f("maskSpeed", v.maskSpeed, 0, 4);
+        if(j.contains("maskSeed") && j["maskSeed"].is_number()) v.maskSeed = std::clamp(j["maskSeed"].get<int>(), 0, 65535);
+        v.maskInvert = j.value("maskInvert", false); v.maskAnimate = j.value("maskAnimate", false);
+        return v;
+    }
+    json toJson(int layer) const {
+        const LayerFxValues d = from(json(), layer);
+        json j = json::object();
+        auto f = [&](const char* k, float x, float dx){ if(x != dx) j[k] = x; };
+        f("hBlur", hBlur, d.hBlur); f("vBlur", vBlur, d.vBlur); f("trail", trail, d.trail); f("trailLevel", trailLevel, d.trailLevel);
+        f("maskAmount", maskAmount, d.maskAmount); f("maskWidth", maskWidth, d.maskWidth); f("maskHeight", maskHeight, d.maskHeight);
+        f("maskContrast", maskContrast, d.maskContrast); f("maskThreshold", maskThreshold, d.maskThreshold); f("maskBlur", maskBlur, d.maskBlur); f("maskSpeed", maskSpeed, d.maskSpeed);
+        if(maskSeed != d.maskSeed) j["maskSeed"] = maskSeed;
+        if(maskInvert) j["maskInvert"] = true;
+        if(maskAnimate) j["maskAnimate"] = true;
+        return j;
+    }
+};
+// Pages per render (1 = no phrase) and the bars one render covers
+inline int phraseSlices(const LayerDef& l){
+    if(l.phrase <= l.bars + 1e-9) return 1;
+    return std::clamp((int)std::ceil(l.phrase / l.bars - 1e-9), 1, 64);
+}
+inline double phraseBars(const LayerDef& l){ return l.bars * phraseSlices(l); }
 // The layers of a scene from the bottom of the stack to the top
 inline int kickLayer(const std::vector<LayerDef>& layers){
     for(int i=0;i<(int)layers.size();++i)if(layers[i].kick)return i;
@@ -109,7 +184,7 @@ inline std::string libraryRef(const json& j){
 struct Scene {
     std::string name;
     std::string bank;                 // its folder under scenes/ ("" = scenes/ itself: the legacy bank); not in the file
-    int bpm = 120;
+    double bpm = 120;                 // may be a fraction (112.5); whole tempos are written as integers
     std::string palette = "#0";
     std::string scale = "#0";
     int notegrid = 100;
@@ -117,7 +192,12 @@ struct Scene {
     int snapshot = -1;                // Director slot this scene came from (drives Macro_8 in the patch)
     std::vector<float> degreeWeights = std::vector<float>(12, 0.0f);
     std::vector<float> transposeWeights = std::vector<float>(12, 0.0f);
+    float lineWeight = 1;             // multiplies the stroke of this scene's line instruments (1 = as the instruments say)
     int bassDegree = 0;               // scale degree the bass instruments add to the bar's degree (0 = the root)
+    // Effect-only instruments applied to every layer, bar by bar: each bar of the timeline gets one
+    // resolution of the effect (its own seed), so layers of different lengths get the same effect at
+    // the same moment.
+    std::vector<std::string> globalEffects;
     std::vector<LayerDef> layers;
     json performance = json::object();
     std::shared_ptr<const formskick::Asset> kickSample;
@@ -138,18 +218,21 @@ inline void from_json(const json& j, Cell& c){
     c.gain = std::clamp(j.value("gain", 1.0f), 0.0f, 1.0f);
 }
 inline void to_json(json& j, const LayerDef& l){
-    j = json{{"bars", l.bars}, {"everyN", l.everyN}, {"globalProb", l.globalProb},
+    j = json{{"bars", barsJson(l.bars)}, {"everyN", l.everyN}, {"globalProb", l.globalProb},
              {"groupProb", l.groupProb}, {"rows", l.rows}, {"blend", l.blend}, {"gain", l.gain},
              {"cells", l.cells}};
     if(!l.effectPreset.empty()) j["effectPreset"]=l.effectPreset;
     if(l.kick) j["kick"] = true;
     if(!l.cover.empty()) j["cover"] = l.cover;
     if(l.repeat > 1) j["repeat"] = l.repeat;
+    if(l.beatOffset != 0) j["beatOffset"] = l.beatOffset;
+    if(l.phrase > 0) j["phrase"] = barsJson(l.phrase);
     if(l.z >= 0) j["z"] = l.z;
     if(l.fixed.is_object()) j["fixed"] = l.fixed;
+    if(l.fx.is_object() && !l.fx.empty()) j["fx"] = l.fx;
 }
 inline void from_json(const json& j, LayerDef& l){
-    l.bars = j.value("bars", 8);
+    l.bars = barsFrom(j, "bars", 8);
     l.cover = j.value("cover", json::object());
     l.effectPreset=j.value("effectPreset",std::string());
     l.everyN = j.value("everyN", 1);
@@ -160,21 +243,26 @@ inline void from_json(const json& j, LayerDef& l){
     l.gain = std::clamp(j.value("gain", 1.0f),0.f,2.f);
     l.kick = j.value("kick", false);
     l.repeat = std::max(1, std::min(16, j.value("repeat", 1)));
+    l.beatOffset = std::clamp(j.value("beatOffset", 0.0f), -64.0f, 64.0f);
+    l.phrase = j.contains("phrase") ? std::min(64.0, barsFrom(j, "phrase", 0)) : 0;
     l.z = j.value("z", -1);
     l.fixed = j.contains("fixed") ? j["fixed"] : json();
+    l.fx = (j.contains("fx") && j["fx"].is_object()) ? j["fx"] : json();
     l.cells = j.value("cells", std::vector<Cell>());
 }
 inline void to_json(json& j, const Scene& s){
-    j = json{{"name", s.name}, {"bpm", s.bpm}, {"palette", s.palette}, {"scale", s.scale},
+    j = json{{"name", s.name}, {"bpm", barsJson(s.bpm)}, {"palette", s.palette}, {"scale", s.scale},
              {"notegrid", s.notegrid}, {"root", s.root}, {"snapshot", s.snapshot},
              {"degreeWeights", s.degreeWeights}, {"transposeWeights", s.transposeWeights},
              {"layers", s.layers}, {"performance", s.performance}, {"compat", s.compat}};
     if(s.bassDegree) j["bassDegree"] = s.bassDegree;
+    if(s.lineWeight != 1) j["lineWeight"] = s.lineWeight;
+    if(!s.globalEffects.empty()) j["globalEffects"] = s.globalEffects;
     if(s.kickSample) j["kickSampleAsset"]=formskick::serialize(*s.kickSample);
 }
 inline void from_json(const json& j, Scene& s){
     s.name = j.value("name", std::string());
-    s.bpm = j.value("bpm", 120);
+    s.bpm = std::clamp(j.value("bpm", 120.0), 1.0, 999.0);
     s.palette = libraryRef(j.value("palette", json(0)));
     s.scale = libraryRef(j.value("scale", json(0)));
     s.notegrid = j.value("notegrid", 100);
@@ -183,6 +271,8 @@ inline void from_json(const json& j, Scene& s){
     s.degreeWeights = j.value("degreeWeights", std::vector<float>(12, 0.0f));
     s.transposeWeights = j.value("transposeWeights", std::vector<float>(12, 0.0f));
     s.bassDegree = std::clamp(j.value("bassDegree", 0), 0, 11);
+    s.lineWeight = std::clamp(j.value("lineWeight", 1.0f), 0.1f, 16.0f);
+    s.globalEffects = j.value("globalEffects", std::vector<std::string>());
     s.layers = j.value("layers", std::vector<LayerDef>());
     s.performance = j.value("performance", json::object());
     s.kickSample=j.contains("kickSampleAsset")?formskick::read(j["kickSampleAsset"]):nullptr;
@@ -297,7 +387,7 @@ inline std::map<int, Scene> importDirector(const json& node){
         int slot = std::stoi(key);
         Scene s;
         s.name = snap.value("name", "SNAPSHOT_" + key);
-        s.bpm = (int)numberOf(snap.value("bpm", json(120)), 120);
+        s.bpm = numberOf(snap.value("bpm", json(120)), 120);
         s.palette = "#" + std::to_string((int)numberOf(snap.value("palette", json(0))));
         s.scale = "#" + std::to_string((int)numberOf(snap.value("scale", json(0))));
         s.notegrid = (int)numberOf(snap.value("notegrid", json(100)), 100);

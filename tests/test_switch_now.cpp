@@ -88,7 +88,7 @@ int main(int argc, char** argv){
         for(int i = g; i < clock.goCount; i++) goTick();
         head.width = W; head.phase = clock.phase; head.bpm = clock.bpm; head.header = 0.218182f;
         head.step(t, dt);
-        scroller.defaultBars = std::max(1, clock.bars);
+        scroller.defaultBars = barCount(clock.bars);
         scroller.update(L, clock.phase, head.headerPos, W, H);
         double B = scroller.headerBeat;
         e.schedule->headerBeat = B;

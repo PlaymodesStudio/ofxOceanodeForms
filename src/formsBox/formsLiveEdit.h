@@ -245,7 +245,7 @@ inline json patchSelection(Engine& e, const json& recipe, const LayerDef& before
     // added ones in cell order, resolved for this page
     std::vector<std::string> ordered;
     for(auto& c : after.cells) if(std::find(add.begin(), add.end(), c.item) != add.end() && std::find(ordered.begin(), ordered.end(), c.item) == ordered.end()) ordered.push_back(c.item);
-    e.itemBars = after.bars;
+    e.itemBars = e.layerBars(after);
     for(auto& item : ordered){
         float gain = newGains.count(item) ? newGains[item] : 1.0f;
         if(!isPresetRef(item)){
@@ -302,6 +302,7 @@ inline bool patchForScene(Engine& e, json& req, const Scene& s){
     req["palette"] = pd ? pd->legacyIndex : -1;
     req["notegrid"] = s.notegrid;
     req["bassDegree"] = s.bassDegree;
+    req["lineWeight"] = s.lineWeight;
     if(sd){ req["scaleName"] = sd->name; req["scaleNotes"] = sd->notes; }
     if(pd){ req["paletteName"] = pd->name; req["paletteColors"] = pd->colors; }
     json b = before; b.erase("result");

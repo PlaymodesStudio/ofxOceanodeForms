@@ -83,6 +83,7 @@ inline void Editor::drawBrowser(const std::function<void(const std::string&)>& p
         ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + 4 * zz, p.y + h), ImGui::GetColorU32(familyColor(fam)));
         ImGui::TextColored(familyColor(fam), "%s", shortName(name).c_str());
         ImGui::EndGroup();
+        instrumentMenu("##instMenu", name);
         ImGui::PopID();
         if(clicked) pick(name);
     }
@@ -277,19 +278,7 @@ inline void Editor::drawInstrumentsTab(){
                 float selW = u.depth ? 0.f : std::max(20.f, ImGui::GetContentRegionAvail().x - 2 * dragW - 2 * gap - 38 * zz);
                 if(ImGui::Selectable(label.c_str(), selPreset == u.ref, ImGuiSelectableFlags_AllowOverlap, ImVec2(selW, 0))) selPreset = u.ref;
                 ImGui::PopStyleColor();
-                if(!u.depth && u.cell >= 0 && sit != engine->scenes.end() && ImGui::BeginPopupContextItem("##instrumentLayerMenu")){
-                    ImGui::TextDisabled("%s · Layer %d", p.name.c_str(), u.layer + 1);
-                    ImGui::Separator();
-                    for(int k = 0; k < (int)sit->second.layers.size(); ++k){
-                        if(k == u.layer) continue;
-                        std::string text = "Move to layer " + std::to_string(k + 1) + " (" + std::to_string(sit->second.layers[k].bars) + " bars)";
-                        if(ImGui::MenuItem(text.c_str())){ transferLayer = u.layer; transferCell = u.cell; transferTarget = k; }
-                    }
-                    if(ImGui::MenuItem("Move to a new layer")){
-                        transferLayer = u.layer; transferCell = u.cell; transferTarget = (int)sit->second.layers.size();
-                    }
-                    ImGui::EndPopup();
-                }
+                instrumentMenu("##instMenu", u.ref, (!u.depth && u.cell >= 0) ? sceneHere : std::string(), u.layer, (!u.depth && u.cell >= 0) ? u.cell : -1);
                 if(ImGui::IsItemHovered() && !ImGui::IsMouseDragging(0)) methodTooltip(u.ref);
                 if(!u.depth && u.cell >= 0){   // drag the name onto another instrument of its layer: drawing order
                     if(ImGui::BeginDragDropSource()){
@@ -319,7 +308,7 @@ inline void Editor::drawInstrumentsTab(){
     }
     std::vector<std::pair<std::string, std::string>> sections;   // gen, label
     for(auto& g : engine->gens) sections.push_back({g.name, g.label});
-    sections.push_back({"stack", "Stack"});
+    sections.push_back({"stack", "Layered"});
     for(auto& [gname, glabel] : sections){
         int count = 0;
         for(auto& [r, p] : engine->presets) if(p.gen == gname) count++;
@@ -347,6 +336,7 @@ inline void Editor::drawInstrumentsTab(){
                 if(!q.empty() && ofToLower(p.name).find(q) == std::string::npos) continue;
                 std::string label = p.name + (dirtyPresets.count(r) ? "  *" : "") + "##" + r;
                 if(ImGui::Selectable(label.c_str(), selPreset == r)) selPreset = r;
+                instrumentMenu(("##instMenu" + r).c_str(), r);
                 if(ImGui::IsItemHovered()) methodTooltip(r);
             }
             ImGui::TreePop();
@@ -375,7 +365,7 @@ inline void Editor::drawInstrumentsTab(){
     if(renameFor != ref){ renameFor = ref; snprintf(renameBuf, sizeof(renameBuf), "%s", pr.name.c_str()); useUnderlay = engine->onlyEffects(pr); }
     {
         ImVec4 c = genColour(pr.gen);
-        std::string fam = g ? g->label : (pr.isStack() ? "Stack" : pr.gen);
+        std::string fam = g ? g->label : (pr.isStack() ? "Layered" : pr.gen);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(c.x * 0.35f, c.y * 0.35f, c.z * 0.35f, 1));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(c.x * 0.35f, c.y * 0.35f, c.z * 0.35f, 1));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(c.x * 0.35f, c.y * 0.35f, c.z * 0.35f, 1));
@@ -472,7 +462,7 @@ inline void Editor::drawInstrumentsTab(){
     auto preview = [&](bool reroll){
         json items = json::array();
         if(useUnderlay) for(auto* m : UNDERLAY) items.push_back({{"method", m}});
-        { auto sc = engine->scenes.find(previewScene); if(sc != engine->scenes.end() && !sc->second.layers.empty()) engine->itemBars = sc->second.layers[0].bars; }
+        { auto sc = engine->scenes.find(previewScene); if(sc != engine->scenes.end() && !sc->second.layers.empty()) engine->itemBars = engine->layerBars(sc->second.layers[0]); }
         if(reroll) engine->previewSeedSet = false;   // a new image, which "Same seed" then keeps
         for(auto& x : engine->presetItemsSeeded(pr, engine->nextPreviewItemsSeed())) items.push_back(x);
         sendPreviews(previewScene, {{ref, items}});
@@ -754,6 +744,34 @@ inline bool Editor::drawCoverParams(json& params){
     return changed;
 }
 
+// Why a parameter group has no effect with the current values ("" when it has): a hint over its tab
+inline std::string Editor::groupNotInUse(const GenDef& g, const std::string& grp, const json& params){
+    auto num = [&](const char* key, float def){   // the largest value a number / range / list can take
+        if(!params.contains(key)) return def;
+        const json& v = params[key];
+        if(v.is_number()) return v.get<float>();
+        if(v.is_array()){ float m = def; bool any = false; for(auto& x : v) if(x.is_number()){ m = any ? std::max(m, x.get<float>()) : x.get<float>(); any = true; } return any ? m : def; }
+        if(v.is_object()){ if(v.contains("max") && v["max"].is_number()) return v["max"].get<float>(); if(v.contains("options") && v["options"].is_array()){ float m = def; bool any = false; for(auto& x : v["options"]) if(x.is_number()){ m = any ? std::max(m, x.get<float>()) : x.get<float>(); any = true; } return any ? m : def; } }
+        return def;
+    };
+    auto str = [&](const char* key){ return params.contains(key) && params[key].is_string() ? params[key].get<std::string>() : std::string(); };   // a fixed choice ("" when it varies)
+    if(g.name == "pulse"){
+        if(grp == "Chord" && num("voices", 1) <= 1 && !(params.contains("voiceOffsets") && params["voiceOffsets"].is_array() && params["voiceOffsets"].size() > 1)) return "Not in use: voices is 1 (raise voices, or set fixed voices, for a chord).";
+        if(grp == "Timbre" && str("cell") == "ribbon") return "Not in use: a ribbon has no partials.";
+        if(grp == "Motion" && str("cell") == "additive") return "Only the envelope and detune act on an additive stack; the LFO, tremolo and vibrato do not.";
+    }else if(g.name == "hits"){
+        std::string cell = str("cell");
+        if(grp == "Noise" && !cell.empty() && cell != "noise band" && cell != "snare" && cell != "taiko" && cell != "lfo band") return "Not in use: the noise settings act on noise bands, snares, taikos and lfo bands.";
+        if(grp == "Bursts" && num("burstCount", 1) <= 1) return "Off: burst count is 1.";
+        if(grp == "Duck" && num("duckChance", 0) <= 0) return "Off: duck chance is 0.";
+    }else if(g.name == "masses"){
+        std::string pm = str("pitchMode");
+        if(grp == "Line" && false) return "";
+        (void)pm;
+    }
+    return "";
+}
+
 inline bool Editor::drawParamTabs(const GenDef& g, json& params){
     float zz = z();
     bool changed = false;
@@ -777,10 +795,30 @@ inline bool Editor::drawParamTabs(const GenDef& g, json& params){
             std::string label = grp + (setIn(grp, false) ? " ·" : "") + "###" + grp;
             if(ImGui::BeginTabItem(label.c_str())){
                 if(grp=="cover") ImGui::TextWrapped("Duck other layers using only this instrument's shapes. Below follows the visual stack order.");
+                else {
+                    auto gn = g.groupNotes.find(grp);
+                    if(gn != g.groupNotes.end()) ImGui::TextDisabled("%s", gn->second.c_str());
+                    std::string why = groupNotInUse(g, grp, params);
+                    if(!why.empty()) ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "%s", why.c_str());
+                }
                 ImGui::BeginChild("##tabbody", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.5f));
+                // the basic parameters first; the rest under "more" (a group with no basic ones shows all)
+                bool anyBasic = false; int more = 0, moreSet = 0;
+                for(auto& p : g.params) if((p.group.empty() ? "other" : p.group) == grp){ if(p.basic) anyBasic = true; else { more++; if(params.contains(p.key)) moreSet++; } }
                 if(beginParamTable()){
-                    for(auto& p : g.params) if((p.group.empty() ? "other" : p.group) == grp) changed |= paramRow(p, params);
+                    for(auto& p : g.params) if((p.group.empty() ? "other" : p.group) == grp && (!anyBasic || p.basic)) changed |= paramRow(p, params);
                     ImGui::EndTable();
+                }
+                if(anyBasic && more){
+                    std::string ml = "more (" + ofToString(more) + (moreSet ? ", " + ofToString(moreSet) + " set" : std::string()) + ")###more";
+                    if(moreSet) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+                    if(ImGui::TreeNode(ml.c_str())){
+                        if(beginParamTable()){
+                            for(auto& p : g.params) if((p.group.empty() ? "other" : p.group) == grp && !p.basic) changed |= paramRow(p, params);
+                            ImGui::EndTable();
+                        }
+                        ImGui::TreePop();
+                    }
                 }
                 ImGui::EndChild();
                 ImGui::EndTabItem();

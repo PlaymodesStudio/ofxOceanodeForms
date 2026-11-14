@@ -31,14 +31,17 @@ inline std::pair<int,int> videoSize(int w, int h){
     double k = std::min({1.0, 1920.0 / w, 1080.0 / h});
     return {std::max(2, (int)std::lround(w * k / 2) * 2), std::max(2, (int)std::lround(h * k / 2) * 2)};
 }
-inline int loopBars(const std::vector<int>& bars){
+// The common loop of the layers, in bars: the least common multiple of their lengths, counted in
+// 1/16 bars (layer lengths may be fractions of a bar: 0.25, 1.5 ...)
+inline double loopBars(const std::vector<double>& bars){
     int64_t loop = 1;
-    for(int b : bars){
-        if(b < 1) throw std::runtime_error("Layer bars must be positive");
-        int64_t next = loop / std::gcd(loop, (int64_t)b) * b;
-        if(next > 1000000) throw std::runtime_error("Combined layer loop exceeds one million bars");
+    for(double b : bars){
+        int64_t t = (int64_t)std::llround(b * 16);
+        if(t < 1) throw std::runtime_error("Layer bars must be positive");
+        int64_t next = loop / std::gcd(loop, t) * t;
+        if(next > 16000000) throw std::runtime_error("Combined layer loop exceeds one million bars");
         loop = next;
-    } return (int)loop;
+    } return loop / 16.0;
 }
 // Bounded encoder queue: rendering uses frame/sample time, never the application's wall clock.
 // A slow encoder pauses export production without dropping or duplicating frames.
@@ -172,7 +175,7 @@ inline std::string render(const json& manifest, const std::vector<Layer>& layers
                 score.add(0,json::array({"/b_alloc",0,1,1}));score.add(0,json::array({"/b_alloc",1,1,1}));
             }
             score.add(0, json::array({"/s_new", "FormsKick", 900, 1, 0, "out", 104, "bufl", 0, "bufr", 1, "duckbus", duckBus,
-                "duckdecay", snd.duckBeats * 60.0 / manifest.at("bpm").get<double>(), "duckcurve", snd.duckCurve, "amp", (synthetic||!kickFile.empty())?f("kickVol",.16f):0.f,
+                "duckdecay", snd.duckBeats * f("duckScale",1.f) * 60.0 / manifest.at("bpm").get<double>(), "duckcurve", snd.duckCurve, "amp", (synthetic||!kickFile.empty())?f("kickVol",.16f):0.f,
                 "source",synthetic?1:0,"synthstart",f("kickPitchStart",160),"synthend",f("kickPitchEnd",48),
                 "synthdecay",f("kickDecay",.45f),"synthclick",f("kickClick",.3f),"synthnoise",f("kickNoise",0),"synthdrive",f("kickDrive",.1f),
                 "gate",manifest.value("kickGate",1.f)}));
@@ -204,11 +207,11 @@ inline std::string render(const json& manifest, const std::vector<Layer>& layers
             double t = tick / rate;
             for(size_t li = 0; li < layers.size(); ++li){
                 auto& l = layers[li]; auto& layout = layouts[li];
-                double layerPhase = std::fmod(.25 + t * manifest.at("bpm").get<double>() / (240.0 * l.recipe.value("bars", 8)), 1.0);
+                double layerPhase = std::fmod(.25 + t * manifest.at("bpm").get<double>() / (240.0 * l.recipe.value("bars", 8.0)), 1.0);
                 int x = std::min(l.w - 1, (int)(layerPhase * l.w));
                 std::vector<uint8_t> col(l.h * 4);
                 if(!captured) for(int y = 0; y < l.h; ++y) std::memcpy(col.data() + y * 4, &l.rgba[((size_t)y * l.w + x) * 4], 4);
-                int bar = std::min(l.recipe.value("bars", 8) - 1, (int)(layerPhase * l.recipe.value("bars", 8)));
+                int bar = std::min(std::max(1, (int)std::ceil(l.recipe.value("bars", 8.0) - 1e-9)) - 1, (int)(layerPhase * l.recipe.value("bars", 8.0)));
                 if(lastBars[li] != bar){
                 lastBars[li] = bar;
                 auto trans = l.recipe.value("trans", std::vector<int>{0});
@@ -227,17 +230,17 @@ inline std::string render(const json& manifest, const std::vector<Layer>& layers
                 else columnAmps(col.data(), l.h, manifest.value("imageMul", 1.0f), layout, amps);
                 json a = json::array({"/c_setn", l.index * 512, (int)amps.size()}); for(float v : amps) a.push_back(v); score.add(t, a);
                 if(kick && l.index == manifest.value("kickLayer", 0)){
-                    int strip = std::clamp((int)std::lround(l.h * snd.kickStrip), 1, l.h); double sum = 0;
+                    int strip = std::clamp((int)std::lround(l.h * f("kickStrip", snd.kickStrip)), 1, l.h); double sum = 0;
                     for(int y = l.h - strip; y < l.h; ++y) for(int c = 0; c < 3; ++c) sum += col[y * 4 + c] / (3.0 * 255 * strip);
                     if(captured) sum = l.kickLevels.at(tick);
-                    bool on = f("kDetectOn", 1) > .5f && sum > snd.kickThreshold;
-                    if(on && !wasKick && t - lastKick >= snd.kickMinGap){
-                        score.add(t, json::array({"/n_set", 900, "rate", std::pow(2.f, (tr + snd.kickTune) / 12.f), "t_trig", 1})); lastKick = t;
+                    bool on = f("kDetectOn", 1) > .5f && sum > f("kickThreshold", snd.kickThreshold);
+                    if(on && !wasKick && t - lastKick >= f("kickMinGap", snd.kickMinGap)){
+                        score.add(t, json::array({"/n_set", 900, "rate", std::pow(2.f, (tr + f("kickTune", snd.kickTune)) / 12.f), "t_trig", 1})); lastKick = t;
                     } wasKick = on;
                 }
             }
-            double headerPhase=std::fmod(.25+t*manifest.at("bpm").get<double>()/(240.0*manifest.value("bars",8)),1.0);
-            lr.step((float)headerPhase, manifest.value("bars",8), manifest.at("bpm").get<float>(), (float)(1.0 / rate), perf, snd.lrBalance);
+            double headerPhase=std::fmod(.25+t*manifest.at("bpm").get<double>()/(240.0*manifest.value("bars",8.0)),1.0);
+            lr.step((float)headerPhase, manifest.value("bars",8.0), manifest.at("bpm").get<float>(), (float)(1.0 / rate), perf, snd.lrBalance);
             score.add(t, json::array({"/n_set", 960, "lgain", lr.l, "rgain", lr.r}));
         }
         score.add(duration+latency, json::array({"/c_set", duckBus, 0.0}));
@@ -246,7 +249,21 @@ inline std::string render(const json& manifest, const std::vector<Layer>& layers
         score.add(duration+latency, json::array({"/quit"}));
         if(!score.file) throw std::runtime_error("Cannot write offline audio score");
     }
-    std::string cmd = quote(synth) + " -N " + quote(osc) + " _ " + quote(rawWav) + " 48000 WAV float -o 2 -i 0 -a 256 -c " + std::to_string(std::max(8192,duckBus+16)) + " -m 65536 -w " + std::to_string(std::max(4096,(int)layerCount+1024)) + " -D 0 > " + quote(log) + " 2>&1";
+    // plugin folders: the app's Extensions (FormsSparseBank lives there) and the ones next to scsynth;
+    // without the first, scsynth's own defaults apply (its plugins and the user's Extensions)
+    std::string ugens;
+    {
+        std::error_code ec;
+        const std::string ext = manifest.value("ugens", std::string());
+        if(!ext.empty() && std::filesystem::is_directory(ext, ec)){
+            ugens = ext;
+            for(const char* sub : {"plugins", "../Resources/plugins"}){
+                auto p = std::filesystem::path(synth).parent_path() / sub;
+                if(std::filesystem::is_directory(p, ec)){ ugens += ":" + p.lexically_normal().string(); break; }
+            }
+        }
+    }
+    std::string cmd = quote(synth) + " -N " + quote(osc) + " _ " + quote(rawWav) + " 48000 WAV float -o 2 -i 0 -a 256 -c " + std::to_string(std::max(8192,duckBus+16)) + " -m 65536 -w " + std::to_string(std::max(4096,(int)layerCount+1024)) + " -D 0" + (ugens.empty() ? std::string() : " -U " + quote(ugens)) + " > " + quote(log) + " 2>&1";
     if(std::system(cmd.c_str()) != 0 || !std::filesystem::exists(rawWav)) throw std::runtime_error("PNG saved; audio render failed. See " + log);
     { std::ifstream messages(log); std::string line;
       while(std::getline(messages,line)) if(line.find("FAILURE")!=std::string::npos || line.find("*** ERROR")!=std::string::npos)

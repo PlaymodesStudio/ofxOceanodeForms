@@ -106,13 +106,15 @@
                 auto scene = engine.scenes.find(first->scene);
                 if(scene == engine.scenes.end()) throw std::runtime_error("The current scene is unavailable.");
                 j["stackOrder"] = forms::stackOrder(scene->second.layers);
-                j["bpm"] = std::max(1.f, bpmOut.get()); j["bars"] = std::max(1, first->bars);
+                j["bpm"] = std::max(1.f, bpmOut.get()); j["bars"] = forms::barsJson(std::max(1.0 / forms::kBarGrid, first->bars));
                 j["performance"] = livePerf(first); j["scene"] = first->scene;
                 j["kickGate"]=head.gate;
                 j["imageMul"] = postCtl.enabled ? postCtl.val.get() * (postCtl.useOpacity ? std::max(.001f, head.opacity) : 1.f) : head.opacity;
                 j["reverbMult"] = soundCtl.reverbMult.get();
                 forms::SoundSettings settings; soundCtl.apply(settings); j["sound"] = soundJson(settings);
                 j["scsynth"]=ofToDataPath("Supercollider/Scsynth/bin/scsynth",true);
+                // the server plugins the SynthDefs need (FormsSparseBank): the app's Extensions folder, as the live server gets
+                j["ugens"]=ofToDataPath("Supercollider/Extensions",true);
                 std::vector<std::string> names;
                 std::error_code kickError;
                 if(std::filesystem::is_directory(settings.kickFolder,kickError)) for(auto& entry:std::filesystem::directory_iterator(settings.kickFolder))
@@ -166,13 +168,15 @@
             std::string seed = std::to_string(stamp);
             while(std::filesystem::exists(seedFolder() / (seed + ".json"))) seed = std::to_string(++stamp);
             j["seed"] = seed; j["size"] = {exportWidth, exportHeight};
-            std::vector<int> barCounts; for(auto& l : j.at("layers")) barCounts.push_back(l.at("recipe").value("bars", 8));
+            std::vector<double> barCounts; for(auto& l : j.at("layers")) barCounts.push_back(l.at("recipe").value("bars", 8.0));
             j["loopBars"] = forms::exportmedia::loopBars(barCounts);
             j["duration"] = j.at("loopBars").get<double>() * 240.0 / j.at("bpm").get<double>();
             if((glExportAudio || glExportVideo) && j.at("duration").get<double>() * 48000 * 8 > 4294967240.0) throw std::runtime_error("The common loop exceeds the 4 GB WAV limit. Reduce the layer bar counts, or export PNG only.");
             j["imageFormats"]={{"pngBitsPerChannel",8},{"tiffBitsPerChannel",16},{"processing","RGBA32F"},{"generatorBitsPerChannel",8}};
             j["audio"] = glExportAudio; j["video"] = glExportVideo; j["separate"] = glExportSeparate;
-            for(auto& l : j["layers"]){ auto& r = l["recipe"]; if(!r.contains("refSize")) r["refSize"] = r.at("size"); r["size"] = j["size"]; r.erase("result"); }
+            for(auto& l : j["layers"]){ auto& r = l["recipe"]; if(!r.contains("refSize")) r["refSize"] = r.at("size"); r["size"] = j["size"]; r.erase("result");
+                // a phrase's render is exported whole, as one page of the phrase's length (not sliced)
+                r.erase("viewWidth"); r.erase("slices"); r.erase("pageBars"); }
             std::filesystem::path path(target);
             exportBase = (path.parent_path() / (path.stem().string() + "_s" + seed)).string();
             exportLibraryBase = (seedFolder() / seed).string();
@@ -266,6 +270,34 @@
             }else { releaseGLExportBuffers(); glExportBusy=false; glExportStatus="Saved PNG, 16-bit TIFF and recipe. Seed "+std::string(exportSeedText)+". "+exportBase; }
         }catch(const std::exception& e){ glVideoWriter.reset(); releaseGLExportBuffers(); glAudioLayers.clear(); glExportCapturing=false; glExportBusy=false; glExportStatus=e.what(); }
     }
+    // glGetTexImage makes the macOS driver copy the whole texture back into its own store first
+    // (a stop was seen inside that copy; cause not established). Read through a framebuffer in strips;
+    // row order matches ofTexture::readToPixels. Pack state is set and restored around it.
+    template<class Pix> static void readTextureStrips(const ofTexture& tex, Pix& px, GLenum type){
+        auto& td=tex.getTextureData(); int w=(int)td.width, h=(int)td.height;
+        if(!tex.isAllocated() || w<1 || h<1) throw std::runtime_error("Cannot read export texture");
+        px.allocate(w,h,OF_IMAGE_COLOR_ALPHA);
+        GLint prevFb=0, prevPbo=0, pAlign=4, pRow=0, pSkipR=0, pSkipP=0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&prevFb); glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&prevPbo);
+        glGetIntegerv(GL_PACK_ALIGNMENT,&pAlign); glGetIntegerv(GL_PACK_ROW_LENGTH,&pRow);
+        glGetIntegerv(GL_PACK_SKIP_ROWS,&pSkipR); glGetIntegerv(GL_PACK_SKIP_PIXELS,&pSkipP);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,0); glPixelStorei(GL_PACK_ALIGNMENT,1); glPixelStorei(GL_PACK_ROW_LENGTH,0);
+        glPixelStorei(GL_PACK_SKIP_ROWS,0); glPixelStorei(GL_PACK_SKIP_PIXELS,0);
+        GLuint fb=0; glGenFramebuffers(1,&fb); glBindFramebuffer(GL_READ_FRAMEBUFFER,fb);
+        glFramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,td.textureTarget,td.textureID,0);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        bool ok=glCheckFramebufferStatus(GL_READ_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
+        while(glGetError()!=GL_NO_ERROR){}
+        int rows=std::max(1,4000000/w);
+        for(int y=0;ok && y<h;y+=rows){
+            glReadPixels(0,y,w,std::min(rows,h-y),GL_RGBA,type,px.getData()+(size_t)y*w*4);
+            ok=glGetError()==GL_NO_ERROR;
+        }
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,prevFb); glDeleteFramebuffers(1,&fb);
+        glPixelStorei(GL_PACK_ALIGNMENT,pAlign); glPixelStorei(GL_PACK_ROW_LENGTH,pRow);
+        glPixelStorei(GL_PACK_SKIP_ROWS,pSkipR); glPixelStorei(GL_PACK_SKIP_PIXELS,pSkipP); glBindBuffer(GL_PIXEL_PACK_BUFFER,prevPbo);
+        if(!ok) throw std::runtime_error("Cannot read export image from the GPU");
+    }
     static int postMaxTextureSize(){ GLint n=0; glGetIntegerv(GL_MAX_TEXTURE_SIZE,&n); return n; }
     ofPixels renderGLExportFrame(int w, int h, double t, bool capture=false){
         auto allocate=[&](ofFbo& f){ if(!f.isAllocated() || (int)f.getWidth()!=w || (int)f.getHeight()!=h || f.getTexture().getTextureData().glInternalFormat != (capture ? GL_RGBA : GL_RGBA32F)){
@@ -287,19 +319,19 @@
             auto& glExportLayerFrame=glExportFrames[i]; allocate(glExportLayerFrame);
             auto& meta=exportRecipe.at("layers").at(i); auto& tex=glExportTextures[i];
             int layer=meta.at("index"); coverOrder.push_back(layer); coverBuffers[layer]=&glExportLayerFrame;
-            double phase=std::fmod(t*exportRecipe.at("bpm").get<double>()/(240.0*meta.at("recipe").value("bars",8)),1.0);
+            double phase=std::fmod(t*exportRecipe.at("bpm").get<double>()/(240.0*meta.at("recipe").value("bars",8.0)),1.0);
             glExportLayerFrame.begin(); ofClear(0,0,0,0); ofPushStyle(); ofEnableBlendMode(OF_BLENDMODE_DISABLED); ofSetColor(255);
             tex.draw(-phase*w,0,w,h); tex.draw((1-phase)*w,0,w,h); ofPopStyle(); glExportLayerFrame.end();
             auto f=meta.at("fx").get<std::vector<float>>(); forms::LayerFxSettings fx;
-            fx.hBlur=f[0]*w; fx.vBlur=f[1]*h; fx.trailPx=f[2]*w/(4.f*meta.at("recipe").value("bars",8)); fx.trailLevel=f[3];
+            fx.hBlur=f[0]*w; fx.vBlur=f[1]*h; fx.trailPx=f[2]*w/(4.f*meta.at("recipe").value("bars",8.0)); fx.trailLevel=f[3];
             auto perlin=meta.value("perlin",forms::json::object());
             fx.maskAmount=perlin.value("amount",0.f);fx.maskWidth=perlin.value("width",4.f);fx.maskHeight=perlin.value("height",.25f);
             fx.maskContrast=perlin.value("contrast",1.f);fx.maskThreshold=perlin.value("threshold",0.f);fx.maskBlur=perlin.value("blur",0.f)*h;fx.maskInvert=perlin.value("invert",false);fx.maskSeed=perlin.value("seed",1);
             fx.maskSpeed=perlin.value("speed",0.f);fx.maskBeat=t*exportRecipe.at("bpm").get<double>()/60.;fx.maskPhase=fx.maskBeat*fx.maskSpeed;
-            fx.maskHeaderX=0;fx.maskPixelsPerBeat=w/(4.f*meta.at("recipe").value("bars",8));
+            fx.maskHeaderX=0;fx.maskPixelsPerBeat=w/(4.f*meta.at("recipe").value("bars",8.0));
             if(fx.any()) glExportLayerFx.process(glExportLayerFrame,fx);
             auto settings=formscover::read(meta.value("cover",forms::json::object()));
-            float ppb=w/(4.f*meta.at("recipe").value("bars",8));
+            float ppb=w/(4.f*meta.at("recipe").value("bars",8.0));
             if(settings.enabled) coverSources.push_back({settings,layer,ppb,true,[this,i](int mw,int mh){ofSetColor(255);glExportFrames[i].draw(0,0,mw,mh);}});
             for(size_t k=0;k<glExportMasks[i].size();++k){
                 auto settings=glExportMasks[i][k].settings; float gain=meta.value("gain",1.f);
@@ -321,11 +353,13 @@
                 std::vector<float> amps; forms::columnAmps(column.data(),h,exportRecipe.value("imageMul",1.f),layout,amps);
                 l.scanAmps.insert(l.scanAmps.end(),amps.begin(),amps.end());
                 auto settings=readSound(exportRecipe.at("sound"));
-                int strip=std::clamp((int)std::lround(h*settings.kickStrip),1,h); double sum=0;
+                float stripH=settings.kickStrip;   // the scene's own strip (its recipe's performance), else the node's
+                if(l.recipe.contains("performance")&&l.recipe["performance"].is_object()) stripH=l.recipe["performance"].value("kickStrip",stripH);
+                int strip=std::clamp((int)std::lround(h*stripH),1,h); double sum=0;
                 for(int y=h-strip;y<h;++y) for(int c=0;c<3;++c) sum+=column[y*4+c]/(3.0*255*strip);
                 l.kickLevels.push_back((float)sum);
             }else if(exportRecipe.at("separate").get<bool>()){
-                ofShortPixels straight; glExportLayerFrame.readToPixels(straight); auto* p=straight.getData();
+                ofShortPixels straight; readTextureStrips(glExportLayerFrame.getTexture(),straight,GL_UNSIGNED_SHORT); auto* p=straight.getData();
                 for(size_t k=0;k<(size_t)w*h;++k) for(int c=0;c<3;++c){
                     uint64_t a=p[k*4+3];
                     p[k*4+c]=a ? (uint16_t)std::min<uint64_t>(65535,((uint64_t)p[k*4+c]*65535+a/2)/a) : 0;
@@ -376,6 +410,6 @@
             ofSetColor(255); ofDrawRectangle(0,0,w,h); glExportBgShader.end(); ofPopStyle(); glExportBackground.end(); final=&glExportBackground.getTexture();
         }
         if(look.edges.active()) final=look.feather(*final,ofFloatColor(bg[0],bg[1],bg[2]));
-        if(!capture) final->readToPixels(glExportTiff);
-        ofPixels image; final->readToPixels(image); return image;
+        if(!capture) readTextureStrips(*final,glExportTiff,GL_UNSIGNED_SHORT);
+        ofPixels image; readTextureStrips(*final,image,GL_UNSIGNED_BYTE); return image;
     }

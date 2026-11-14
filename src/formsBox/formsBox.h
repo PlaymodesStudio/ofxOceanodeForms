@@ -108,6 +108,9 @@ public:
         analogMode.set("Analog Mode", false);
         bpmAdd.set("BPM Add", 0, -1, 1);
         maxMinutes.set("Max Minutes", 11, 0.1, 600);
+        barMult.set("Bar Multiplier", 1, 0.25, 16);   // every layer's bars times this (wide projections keep their proportions)
+        barAdd.set("Bar Add", 0, -16, 64);   // whole bars added to every layer after the multiplier
+        sessionLimit.set("Session Limit", false);   // off: images never stop by themselves (a show turns it on)
         autoHeader.set("Auto Header", false);
         tremoloOn.set("Tremolo", false);
         hardCut.set("Hard Cut", false);   // manual scene changes: cut every layer at the change
@@ -115,7 +118,7 @@ public:
         headerMax.set("Header Max", 4.0f / 7, 0, 1);
         viewW.set("Width", 1920, 1, 16384);
         viewH.set("Height", 1080, 1, 16384);
-        ctl.reg(resetSetlist); ctl.reg(actualBarIn); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes);
+        ctl.reg(resetSetlist); ctl.reg(actualBarIn); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes); ctl.reg(sessionLimit); ctl.reg(barMult); ctl.reg(barAdd);
         ctl.reg(autoHeader); ctl.reg(tremoloOn); ctl.reg(hardCut); ctl.reg(headerMin); ctl.reg(headerMax);
         ctl.reg(viewW); ctl.reg(viewH);
         // the transport follows Forms Box's beat (off: the transport runs on its own)
@@ -139,7 +142,7 @@ public:
         inHeader.set("In Header", "");
         scheduleOut.set("Schedule", nullptr);
         actualBPM.set("actualBPM", 120, 1, 999);
-        actualBars.set("actualBars", 8, 0, 64);
+        actualBars.set("actualBars", 8, 0, 256);
         actualNoteGrid.set("actualNoteGrid", 100, 0, 999);
         actualRoot.set("actualRoot", 0, 0, 64);
         actualScale.set("actualScale", {0}, {0}, {48});
@@ -209,6 +212,24 @@ public:
 
         editor.engine = &engine;
         editor.autoGo = &autoGo;
+        // Stage > Layers: the bar multiplier / add for every layer (node settings)
+        editor.barMult = &barMult; editor.barAdd = &barAdd;
+        editor.nodeParamMenu = [this](const std::string& key){ ctl.menu(key); };
+        editor.noNewImagesWhy = [this]() -> std::string {
+            if(engine.replaying) return "";
+            if(!autoGo) return "Auto GO is off";
+            if(!autoPng){
+                if(sessionLimit && seqMinutes.get() >= maxMinutes.get()) return "the session ended (Session time limit: Max Minutes " + ofToString(maxMinutes.get(), 1) + " reached)";
+                if(!sequence) return "Sequence is switched off";
+                return "automatic images are off";
+            }
+            return "";
+        };
+        editor.resumeImages = [this](){
+            if(!autoGo) autoGo = true;
+            // the clock restarts its session timer on Sequence's rising edge
+            if(sequence){ sequence = false; resumeImagesIn = 2; } else sequence = true;
+        };
         editor.importPath = ofToDataPath("Presets/ESPECTRES/2--ESPECTRES_1920", true);
         editor.exportPanorama = [this](){ return exportPanorama(); };
         editor.lookPng = [this](const std::string& png){ return lookPng(png); };
@@ -262,6 +283,27 @@ public:
                 engine.importKick(scene,path);return true;
             }catch(const std::exception& error){editor.kickSampleError=error.what();return false;}
         };
+        // a folder kick (by number or by name) is embedded when its scene is saved
+        engine.embedFolderKick = [this](forms::Scene& scene){
+            if(scene.kickSample) return;
+            const forms::json perf = forms::completePerformance(scene.performance);
+            if(forms::perfF(perf, "kDetectOn", 1) <= 0.5f || forms::perfF(perf, "kickSynth", 0) > 0.5f) return;
+#ifdef FORMS_HAS_SC
+            if(!sound) return;
+            const auto& files = sound->kicks();
+            if(files.empty()) return;
+            int idx = -1;
+            std::string want = perf.contains("kickSample") && perf["kickSample"].is_string() ? perf["kickSample"].get<std::string>() : std::string();
+            if(!want.empty()) for(int i = 0; i < (int)files.size(); i++) if(ofFilePath::getFileName(files[i]) == want){ idx = i; break; }
+            if(idx < 0) idx = ofClamp((int)std::lround(forms::perfF(perf, "kickSelect", 11)), 0, (int)files.size() - 1);
+            try{
+                int number = (int)std::lround(forms::perfF(perf, "kickSelect", 11));
+                engine.importKick(scene, files[idx]);
+                scene.performance["kickSelect"] = number;   // its number stays, should the embedded sample be removed
+                engine.note("embedded kick " + ofFilePath::getFileName(files[idx]) + " in " + scene.name);
+            }catch(const std::exception& error){ engine.note(std::string("kick not embedded: ") + error.what()); }
+#endif
+        };
         engine.sceneRenamed = [this](const std::string& from, const std::string& to){
             for(auto& im : scroller.heldImages()) if(im->scene == from) im->scene = to;
             for(auto& row : lane.rows) if(row == from) row = to;
@@ -295,7 +337,7 @@ public:
             g.chordRoot = (int)rootOut.get();
             g.width = viewW;
             for(auto& sp : scroller.lastSpans) g.spans.push_back({0, sp.x, (float)viewW, sp.bars});
-            for(int i = 0; i < (int)rings.size(); i++) for(auto& d : rings[i].lastDrawn) g.spans.push_back({i + 1, d.x, (float)viewW, std::max(1, (int)std::lround(d.len / 4))});
+            for(int i = 0; i < (int)rings.size(); i++) for(auto& d : rings[i].lastDrawn) g.spans.push_back({i + 1, d.x, (float)viewW, d.len / 4});
             return g;
         };
         editor.headerNormalized = [this](){ return viewW > 0 ? head.headerPos / (float)viewW : 0.0f; };
@@ -314,6 +356,8 @@ public:
             }
         };
         editor.drawLayerLook = [this](int l){ ensureLayerCount(l+1); postCtl.drawLayerFx(ctl, l, true, false); };
+        editor.layerFxOn = &postCtl.fxOn;   // "Layer effects on" (the patch's master switch)
+        editor.drawKickMeter = [this](float threshold){ soundCtl.drawKickMeter(soundView, threshold); };
         editor.drawLayerSound = [this](int l){ ensureLayerCount(l+1); soundCtl.drawLayer(ctl, soundView, l); };
         editor.layerMS = [this](int l){ return l < 0 || l >= (int)layerMute.size() ? 0 : (layerMute[l] ? 1 : 0) | (layerSolo[l] ? 2 : 0); };
         editor.toggleLayerMS = [this](int l, int which){ if(l < 0) return; ensureLayerCount(l+1); bool& b = which ? layerSolo[l] : layerMute[l]; b = !b; };
@@ -407,7 +451,7 @@ public:
         auto v = engine.headerValues(builtInPlayer ? head.actualBar : actualBarIn.get());
         if(v.valid){
             if(actualBPM != v.bpm) actualBPM = v.bpm;
-            if(actualBars != v.bars) actualBars = v.bars;
+            if(actualBars != forms::barCount(v.bars)) actualBars = forms::barCount(v.bars);   // an int output: bars it touches (0.25 -> 1)
             if(actualNoteGrid != v.notegrid) actualNoteGrid = v.notegrid;
             if(actualRoot != v.root) actualRoot = v.root;
             if(actualTrans != v.trans) actualTrans = v.trans;
@@ -417,7 +461,7 @@ public:
             if(h && sceneName.get() != h->scene) sceneName = h->scene;
             if(h){
                 auto it = engine.scenes.find(h->scene);
-                int r0 = h->root >= 0 ? h->root : (it != engine.scenes.end() ? it->second.root : sceneRoot.get());
+                int r0 = it != engine.scenes.end() ? engine.effectiveRoot(it->second) : (h->root >= 0 ? h->root : sceneRoot.get());   // live, as the partials
                 if(sceneRoot != r0) sceneRoot = r0;
             }
             int root = sceneRoot.get();
@@ -507,8 +551,12 @@ protected:   // (Forms GL Box derives from Forms Box)
         clock.pause = pause != 0;
         clock.analogMode = analogMode;
         clock.bpmAdd = bpmAdd;
+        if(resumeImagesIn > 0 && --resumeImagesIn == 0) sequence = true;
         clock.sequence = sequence;
         clock.maxMinutes = maxMinutes;
+        clock.limitSession = sessionLimit;
+        engine.barMult = forms::quantBars(barMult);   // on the 1/16 grid, like the lengths
+        engine.barAdd = barAdd;
         clock.seqFade = seqFade;
         int g = clock.goCount, r = clock.restartCount;
         clock.step(now, dt);
@@ -553,7 +601,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         auto opacity = [this](const forms::Image& im) -> float {
             return engine.imageOpacity(im);
         };
-        auto drawGain=[this](const ofTexture& t,float x,float w,float h,float g,float fraction){layerGain.draw(t,x,w,h,g,fraction);};
+        auto drawGain=[this](const ofTexture& t,float x,float w,float h,float g,float fraction,float u0,float uw){layerGain.draw(t,x,w,h,g,fraction,u0,uw);};
         scroller.drawWithGain=drawGain;
         scroller.opacityOf = opacity;
         for(auto& r : rings){
@@ -562,7 +610,7 @@ protected:   // (Forms GL Box derives from Forms Box)
             r.hardCutIn = [this](double a, double b){ return hardCutIn(a, b); };
             r.sceneAt = [this](double beat){ return engine.sceneAtBeat(beat); };
         }
-        scroller.defaultBars = std::max(1, clock.bars);
+        scroller.defaultBars = forms::barCount(clock.bars);
         scroller.update(L, clock.phase, head.headerPos, viewW, viewH);
         if(scroller.beatRebased){ feed.restart(); laneMemo.clear(); }
         engine.schedule->headerBeat = scroller.headerBeat;
@@ -585,7 +633,9 @@ protected:   // (Forms GL Box derives from Forms Box)
         for(int i = 1; i < nLayers; i++){
             auto& ring = rings[i - 1];
             ring.active = cs && i < (int)cs->layers.size();
-            ring.update(engine.schedule->layer(i), scroller.headerBeat, head.headerPos, viewW, viewH);
+            // the layer's beat offset (its scene's, live): it shows what the others showed that many beats ago
+            double offsetBeats = (cs && i < (int)cs->layers.size()) ? cs->layers[i].beatOffset : 0.0;
+            ring.update(engine.schedule->layer(i), scroller.headerBeat - offsetBeats, head.headerPos, viewW, viewH);
         }
         logBarLine(nLayers);
         logTimeline(nLayers);
@@ -658,11 +708,44 @@ protected:   // (Forms GL Box derives from Forms Box)
 
         return fx;
     }
+    // The layer effects belong to the scene: the controls (Post-processing tab, the node, a timeline)
+    // show and drive the ones of the scene under the header. Scene -> controls when another scene
+    // comes on stage or its stored effects were edited (the layer cards in Stage); controls -> scene
+    // when a control moved by itself (then the scene has unsaved edits).
+    std::string fxSyncScene;
+    std::vector<forms::LayerFxValues> fxSynced;
+    void syncSceneLayerFx(){
+        const forms::Scene* hs = engine.sceneAtHeader();
+        if(!hs) return;
+        auto it = engine.scenes.find(hs->name);
+        if(it == engine.scenes.end()) return;
+        forms::Scene& sc = it->second;
+        const bool arrived = sc.name != fxSyncScene;
+        ensureLayerCount(sc.layers.size());
+        const int n = postCtl.FX_LAYERS;
+        if((int)fxSynced.size() < n) fxSynced.resize(n);
+        for(int l = 0; l < n; l++){
+            const bool has = l < (int)sc.layers.size();
+            const forms::LayerFxValues stored = forms::LayerFxValues::from(has ? sc.layers[l].fx : forms::json(), l);
+            const forms::LayerFxValues live = postCtl.fxValues(l);
+            if(arrived || !(stored == fxSynced[l])){
+                if(!(live == stored)) postCtl.setFxValues(l, stored);
+                fxSynced[l] = stored;
+            }else if(has && !(live == fxSynced[l])){
+                sc.layers[l].fx = live.toJson(l);
+                if(sc.layers[l].fx.empty()) sc.layers[l].fx = forms::json();
+                fxSynced[l] = live;
+                editor.dirty.insert(sc.name);
+            }
+        }
+        fxSyncScene = sc.name;
+    }
     void layerEffects(int nLayers){
+        syncSceneLayerFx();
         layerFx.process(scroller.fbo, layerFxSettings(0, scroller.headerLen));
         for(int i = 1; i < nLayers; i++){
             auto& r = rings[i - 1];
-            double len = r.current ? 4.0 * std::max(1, r.current->bars) : scroller.headerLen;
+            double len = r.current ? 4.0 * std::max(1.0 / forms::kBarGrid, r.current->bars) : scroller.headerLen;
             layerFx.process(r.fbo, layerFxSettings(i, len));
         }
     }
@@ -683,9 +766,9 @@ protected:   // (Forms GL Box derives from Forms Box)
             if(opacity<=0) return;
             for(size_t k=0;k<im->covers.size();++k){
                 auto settings=im->covers[k].settings;
-                sources.push_back({settings,layer,(float)viewW/(4.f*std::max(1,im->bars)),false,
+                sources.push_back({settings,layer,(float)viewW/(4.f*(float)std::max(1.0/forms::kBarGrid,im->bars)),false,
                     [im,k,x,fraction,opacity,this](int w,int h){
-                        formscover::Compositor::drawMask(im->covers[k],x*w/(float)viewW,w,fraction*w,h,opacity);
+                        formscover::Compositor::drawMask(im->covers[k],x*w/(float)viewW,w,fraction*w,h,opacity,(float)im->sliceU0(),(float)im->sliceUW());
                     }});
             }
         };
@@ -696,7 +779,7 @@ protected:   // (Forms GL Box derives from Forms Box)
                 auto sit=engine.scenes.find(im->scene);
                 {
                     auto settings=formscover::read(sit!=engine.scenes.end() && i<(int)sit->second.layers.size() ? sit->second.layers[i].cover : im->layerCover);
-                    if(settings.enabled) sources.push_back({settings,i,(float)viewW/(4.f*std::max(1,im->bars)),true,
+                    if(settings.enabled) sources.push_back({settings,i,(float)viewW/(4.f*(float)std::max(1.0/forms::kBarGrid,im->bars)),true,
                         [&,i](int w,int h){ofSetColor(255);buffers[i]->draw(0,0,w,h);}});
                 }
             }
@@ -773,7 +856,9 @@ protected:   // (Forms GL Box derives from Forms Box)
             claimed = root;
             feed.restart();
         }
-        feed.step(scroller.headerBeat, scroller.headerLen, head.repeatPx, viewW, clock.bpm, pause != 0, ofGetLastFrameTime());
+        // the beat under the header without the beat repeat, read across page edges (a repeat can
+        // reach back into the previous page when pages are short)
+        feed.step(scroller.beatAt(clock.phase, head.headerPos + head.repeatPx, viewW), scroller.headerLen, 0, viewW, clock.bpm, pause != 0, ofGetLastFrameTime());
         ofxOceanodeTransport::ExternalClockUpdate u;
         u.beat = feed.beat;
         u.steadyTimeUs = ofxOceanodeTransport::steadyNowUs();
@@ -812,7 +897,8 @@ protected:   // (Forms GL Box derives from Forms Box)
             return;
         }
         forms::savedWithPatchNote();
-        if(!ImGui::BeginTable("##play", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) return;
+        // two columns: the transport | the header and, under it, the scroller
+        if(!ImGui::BeginTable("##play", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) return;
         ImGui::TableNextColumn();
         ImGui::SeparatorText("Transport");
         ImGui::PushItemWidth(-90 * z);
@@ -838,7 +924,11 @@ protected:   // (Forms GL Box derives from Forms Box)
 #endif
         forms::paramSlider("Speed", speed, "%.2f"); ctl.nodeMenu(speed.getEscapedName());
         ctl.slider(bpmAdd, "%.2f", "BPM Add");
+        ctl.check(sessionLimit, "Session time limit");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("On: the session ends after Max Minutes (the sequence goes off, no new images, Seq Fade fades the output), as in the installation.\nOff (default): images never stop by themselves.");
+        ImGui::BeginDisabled(!sessionLimit);
         ctl.slider(maxMinutes, "%.1f", "Max Minutes");
+        ImGui::EndDisabled();
         forms::paramSlider("Seq Fade", seqFade, "%.2f"); ctl.nodeMenu(seqFade.getEscapedName());
         forms::meter("Phase", phaseOut, 0, 1, "%.3f");
         forms::meter("Session", seqMinutes, 0, std::max(0.1f, maxMinutes.get()), "%.1f min");
@@ -864,7 +954,6 @@ protected:   // (Forms GL Box derives from Forms Box)
         ImGui::Text("bar %d   header at %.0f px", actualBarOut.get(), headerPosOut.get());
         ImGui::PopItemWidth();
 
-        ImGui::TableNextColumn();
         ImGui::SeparatorText("Scroller");
         ImGui::Text("%d x %d", viewW.get(), viewH.get());
         std::string f = inHeader.get();
@@ -1002,6 +1091,7 @@ protected:   // (Forms GL Box derives from Forms Box)
     }
 
     void runSound(int nLayers){
+        soundCtl.checkKickFolder();   // a saved folder that is gone: the app's own kicks
         soundCtl.apply(snd);
         float dt = ofGetLastFrameTime();
         double now = ofGetElapsedTimef();
@@ -1048,7 +1138,9 @@ protected:   // (Forms GL Box derives from Forms Box)
         if(!kf || !kf->isAllocated() || !kimg || !layerAudible(kl)){ kickLevel = 0; if(kickOut.get() != 0) kickOut = 0; }
         else{
             int h = (int)kf->getHeight();
-            int strip = std::max(1, std::min(h, (int)std::lround(h * snd.kickStrip)));
+            const forms::json kperf = livePerf(kimg);   // the kick scene's own detection settings
+            const float kThreshold = forms::perfF(kperf, "kickThreshold", snd.kickThreshold);
+            int strip = std::max(1, std::min(h, (int)std::lround(h * forms::perfF(kperf, "kickStrip", snd.kickStrip))));
             const unsigned char* px = nullptr;
             std::vector<unsigned char> sp;
             if(haveCol[kl]) px = cols[kl].data() + (h - strip) * 4;
@@ -1056,9 +1148,10 @@ protected:   // (Forms GL Box derives from Forms Box)
             double sum = 0;
             if(px) for(int i = 0; i < strip; i++) sum += (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / (3 * 255.0);
             kickLevel = (float)(sum / strip);
-            bool on = forms::perfF(livePerf(kimg), "kDetectOn", 1) > 0.5f;
-            int k = (on && kickLevel > snd.kickThreshold) ? 1 : 0;
-            if(k && !kickOut.get() && snd.kickOn && now - lastKickAt >= snd.kickMinGap){
+            bool on = forms::perfF(kperf, "kDetectOn", 1) > 0.5f;
+            int k = (on && kickLevel > kThreshold) ? 1 : 0;
+            kickThresholdNow = kThreshold;
+            if(k && !kickOut.get() && snd.kickOn && now - lastKickAt >= forms::perfF(kperf, "kickMinGap", snd.kickMinGap)){
                 lastKickAt = now;
                 kicksFired++;
 #ifdef FORMS_HAS_SC
@@ -1072,7 +1165,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         auto hv = engine.headerValues(head.actualBar);
         forms::json perf = livePerf(imgs[0]);
         float bpm = std::max(1.0f, bpmOut.get());
-        float duckDecay = snd.duckBeats * 60.0f / bpm;
+        float duckDecay = snd.duckBeats * forms::perfF(perf, "duckScale", 1) * 60.0f / bpm;
         duckView=forms::duckEnvelope(now-lastKickAt,duckDecay,snd.duckCurve);
         float imageMul = postCtl.enabled ? postCtl.val.get() * (postCtl.useOpacity ? std::max(0.001f, head.opacity) : 1.0f) : head.opacity;
         lrBal.step(head.phLock, imgs[0] ? imgs[0]->bars : 8, bpm, dt, perf, snd.lrBalance);
@@ -1106,7 +1199,9 @@ protected:   // (Forms GL Box derives from Forms Box)
                 const forms::Image& im = *imgs[l];
                 auto sit = engine.scenes.find(im.scene);
                 LayerKey k;
-                k.root = im.root >= 0 ? im.root : (sit != engine.scenes.end() ? sit->second.root : 24);   // the root the page was drawn against
+                // the scene's root now (the renderer never draws the root, only degrees: a root edit
+                // acts at once on every page of the scene); the page's own root once its scene is gone
+                k.root = sit != engine.scenes.end() ? engine.effectiveRoot(sit->second) : (im.root >= 0 ? im.root : 24);
                 k.notegrid = im.notegrid;
                 k.trans = hv.valid ? hv.trans : 0;
                 // the grid is the scale this layer's page was drawn with (pages on stage can be on
@@ -1141,7 +1236,7 @@ protected:   // (Forms GL Box derives from Forms Box)
             frame.kickDecay=forms::perfF(perf,"kickDecay",.45f);frame.kickClick=forms::perfF(perf,"kickClick",.3f);
             frame.kickNoise=forms::perfF(perf,"kickNoise",0);frame.kickDrive=forms::perfF(perf,"kickDrive",.1f);
             frame.imageDuckDepth=snd.duckFullBand?ofClamp(snd.duckDepth*sideChain,0,1):0;
-            frame.kickRate = std::pow(2.0f, ((hv.valid ? hv.trans : 0) + snd.kickTune + gpTranspose) / 12.0f);
+            frame.kickRate = std::pow(2.0f, ((hv.valid ? hv.trans : 0) + forms::perfF(perf, "kickTune", snd.kickTune) + gpTranspose) / 12.0f);
             frame.kickAmp = forms::perfF(perf, "kickVol", 0.16f);
             frame.kickGate=head.gate;
             frame.kickGain = snd.kickGain;
@@ -1196,6 +1291,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         soundView.hasSC = true;
 #endif
         soundView.kickLevel = kickLevel;
+        soundView.kickThreshold = kickThresholdNow;
         soundView.kicksFired = kicksFired;
         soundView.duck = duckView;
         soundView.lgain = lrBal.l;
@@ -1435,9 +1531,9 @@ protected:   // (Forms GL Box derives from Forms Box)
         if(!im.load(png)) return "";
         int W = (int)im.getWidth(), H = (int)im.getHeight();
         if(W < 1 || H < 1 || W > 16384 || H > 16384) return "";
-        int layer = 0, bars = 8;
+        int layer = 0; double bars = 8;
         std::ifstream sj(ofFilePath::removeExt(png) + ".json");
-        if(sj){ try { forms::json j; sj >> j; layer = std::max(0,j.value("layer", 1) - 1); ensureLayerCount(layer+1); bars = std::max(1, j.value("bars", 8)); } catch(...) {} }
+        if(sj){ try { forms::json j; sj >> j; layer = std::max(0,j.value("layer", 1) - 1); ensureLayerCount(layer+1); bars = forms::barsFrom(j, "bars", 8); } catch(...) {} }
         ofFboSettings st; st.width = W; st.height = H; st.internalformat = GL_RGBA;
         ofFbo lf; lf.allocate(st);
         lf.begin(); ofClear(0, 0, 0, 0);
@@ -1448,8 +1544,8 @@ protected:   // (Forms GL Box derives from Forms Box)
         float k = (float)H / std::max(1, (int)viewH);   // the print's size over the live view's
         forms::LayerFxSettings fx = layerFxSettings(layer, 4.0 * bars);
         fx.hBlur *= (float)W / std::max(1, (int)viewW); fx.vBlur *= k; fx.maskBlur *= k;
-        fx.trailPx = postCtl.trailBeats[layer] * W / (4.0f * bars);
-        fx.maskBeat=0;fx.maskHeaderX=0;fx.maskPixelsPerBeat=W/(4.f*bars);
+        fx.trailPx = postCtl.trailBeats[layer] * W / (4.0f * (float)bars);
+        fx.maskBeat=0;fx.maskHeaderX=0;fx.maskPixelsPerBeat=W/(4.f*(float)bars);
         if(fx.any()) exportFx.process(lf, fx);
         ofFbo comp; comp.allocate(st);
         comp.begin(); ofBackground(0); ofPushStyle(); ofEnableBlendMode(OF_BLENDMODE_DISABLED); glEnable(GL_BLEND);
@@ -1676,16 +1772,17 @@ protected:   // (Forms GL Box derives from Forms Box)
     ofParameter<void> go, resetSetlist;
     ofParameter<int> sceneIndex, actualBarIn;
     ofParameter<forms::Schedule*> scheduleOut;
+    ofParameter<int> barAdd;
     ofParameter<int> actualBPM, actualBars, actualNoteGrid, actualRoot, actualSnapshot, actualTrans;
     ofParameter<int> sceneRoot, setlistSnapshot;
     ofParameter<vector<float>> actualScale;
     ofParameter<string> sceneName, rendererFolder, pitchclassFolder;
     ofParameter<int> prime, maxPending, imageWidth, imageHeight;
     // built-in player
-    ofParameter<bool> builtInPlayer, analogMode, sequence, autoPng, sequenceOut, autoHeader, autoGo;
+    ofParameter<bool> builtInPlayer, analogMode, sequence, autoPng, sequenceOut, autoHeader, autoGo, sessionLimit;
     ofParameter<bool> tremoloOn;              // the scenes' opacity tremolo (off by default)
     ofParameter<int> pause, viewW, viewH, actualBarOut;
-    ofParameter<float> speed, bpmAdd, maxMinutes, seqFade, header, headerPlus, smooth, headerMin, headerMax;
+    ofParameter<float> speed, bpmAdd, maxMinutes, barMult, seqFade, header, headerPlus, smooth, headerMin, headerMax;
     ofParameter<float> phaseOut, bpmOut, pitchBend, fade, seqMinutes, speedOut;
     ofParameter<float> headerPosOut, headerNorm, phLock, phOff, opacity;
     ofParameter<int> kickOut;
@@ -1790,6 +1887,8 @@ protected:   // (Forms GL Box derives from Forms Box)
     // The clock's GO (one per wrap): a new page unless the last one still has repeats to play.
     // The next page is asked for when its predecessor's first copy starts, so it is rendered in time.
     int goDebt = 0;
+    float kickThresholdNow = 0.5f;   // the threshold of the scene whose kick layer is read now (the meters' line)
+    int resumeImagesIn = 0;   // frames until Sequence goes back on (Resume images)
     void goTick(){
         if(goDebt > 0){
             bool queued = !engine.schedule->layers[0].ready.empty();
@@ -1804,8 +1903,9 @@ protected:   // (Forms GL Box derives from Forms Box)
     bool switchPending = false;
     void switchNowRun(){
         auto& h = engine.schedule->layers[0].header;
-        int bar = builtInPlayer ? (int)std::lround(scroller.headerStart / 4.0)
-                                : (h && h->startBar >= 0) ? h->startBar : (int)std::floor(engine.schedule->headerBeat / 4.0);
+        // in bars, on the 1/16-bar grid (layer 1's page may be shorter than a bar)
+        double bar = builtInPlayer ? std::round(scroller.headerStart / 4.0 * forms::kBarGrid) / forms::kBarGrid
+                                   : (h && h->startBar >= 0) ? h->startBar : std::floor(engine.schedule->headerBeat / 4.0);
         // the header left of the wrap: the switch image plays once, one more image is needed ahead
         float c = clock.phase + (viewW > 0 ? head.headerPos / viewW : 0);
         int debt = 0;

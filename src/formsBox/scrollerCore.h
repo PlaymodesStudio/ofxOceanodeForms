@@ -28,7 +28,7 @@ public:
     // Phase 3: each image's own opacity (its scene's layer setting, read live), applied as it is
     // drawn, so an image shows its opacity before it reaches the header too. Only with keepAlpha.
     std::function<float(const Image&)> opacityOf;
-    std::function<void(const ofTexture&,float,float,float,float,float)> drawWithGain;
+    std::function<void(const ofTexture&,float,float,float,float,float,float,float)> drawWithGain;   // texture, x, w, h, gain, fraction, u0, uw
     // The absolute beat under the header, counted from the wraps (each image is bars x 4 beats)
     double headerBeat = 0;
     double headerStart = 0, headerLen = 32;   // the image under the header: its start beat and length
@@ -52,7 +52,7 @@ public:
         return c<1?start+c*left:start+left+(c-1)*right;
     }
     // where the images were placed last frame: left edge x (px) and bars (the grid overlay)
-    struct Span { float x; int bars; };
+    struct Span { float x; double bars; };
     std::vector<Span> lastSpans;
 
     void allocate(int w, int h){
@@ -114,7 +114,9 @@ public:
             double candidate = hadPage ? hb - c * beatsOf(ni) : origin;
             // Images encode bars from their left edge. A fractional origin makes
             // layer 1's sixteenths disagree with every extra layer's absolute grid.
-            origin = std::round(candidate / 4.0) * 4.0;
+            // (on bar lines; a page shorter than a bar: on its own length's grid)
+            const double grid = std::min(4.0, std::max(4.0 / kBarGrid, beatsOf(ni)));
+            origin = std::round(candidate / grid) * grid;
             beatRebased = hadPage && std::fabs(origin - candidate) > 1e-6;
             // The new page occupies both slots; an input wrap on this same frame
             // must not advance its freshly assigned origin a second time.
@@ -163,8 +165,8 @@ public:
             origin -= beatsOf(leavingIndex);   // the image that came back in
         }
         lastSpans.clear();
-        if(entries[leavingIndex]) lastSpans.push_back({-phase * w, std::max(1, entries[leavingIndex]->bars)});
-        if(entries[appearingIndex]) lastSpans.push_back({(1 - phase) * w, std::max(1, entries[appearingIndex]->bars)});
+        if(entries[leavingIndex]) lastSpans.push_back({-phase * w, std::max(1.0 / kBarGrid, entries[leavingIndex]->bars)});
+        if(entries[appearingIndex]) lastSpans.push_back({(1 - phase) * w, std::max(1.0 / kBarGrid, entries[appearingIndex]->bars)});
         // beat under the header: the leaving image spans [origin, origin + its beats), the
         // appearing one follows it
         float c = phase + (w > 0 ? headerPos / w : 0);
@@ -252,11 +254,18 @@ private:
         if(op <= 0) { /* fully transparent: still track the header below */ }
         else{
             ofSetColor(255, 255, 255, 255 * op);   // scales alpha (and so the premultiplied colour)
+            // a phrase's page: only its window of the image
+            float u0 = entries[i] ? (float)entries[i]->sliceU0() : 0.f, uw = entries[i] ? (float)entries[i]->sliceUW() : 1.f;
             if(drawWithGain){
                 const auto& texture=entries[i] && entries[i]->texture ? *entries[i]->texture : images[i].getTexture();
-                drawWithGain(texture,x,w,h,op,1);
-            }else if(entries[i] && entries[i]->texture) entries[i]->texture->draw(x, 0, w, h);
-            else images[i].draw(x, 0, w, h);
+                drawWithGain(texture,x,w,h,op,1,u0,uw);
+            }else if(uw >= 0.99999f){
+                if(entries[i] && entries[i]->texture) entries[i]->texture->draw(x, 0, w, h);
+                else images[i].draw(x, 0, w, h);
+            }else{
+                const ofTexture& t = entries[i] && entries[i]->texture ? *entries[i]->texture : images[i].getTexture();
+                t.drawSubsection(x, 0, w, h, t.getWidth() * u0, 0, t.getWidth() * uw, t.getHeight());
+            }
             ofSetColor(255);
         }
         if(headerPos > x && headerPos <= x + w && entries[i]){

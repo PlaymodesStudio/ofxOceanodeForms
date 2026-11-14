@@ -28,6 +28,7 @@ struct ParamDef {
     float min = 0, max = 1;
     json def;                          // schema default (number, string, bool or array)
     std::vector<std::string> options;  // enum
+    bool basic = false;                // shown first in its group; the rest under "more"
     bool isNumber() const { return type == "int" || type == "float"; }
     bool isRange() const { return type == "intRange" || type == "floatRange"; }
 };
@@ -35,6 +36,7 @@ struct ParamDef {
 struct GenDef {
     std::string name, family, label, description;
     std::vector<ParamDef> params;
+    std::map<std::string, std::string> groupNotes;   // one line per parameter group (generators.json "groups")
     // The process slot is defined once, by the "effects" generator. Forms Box appends its
     // parameters (all but "steps") to every other generator, so a preset edits and resolves them
     // with the generator's own; they are kept apart in preset files and requests ("process").
@@ -52,6 +54,7 @@ inline GenDef genDefFromJson(const json& g){
     d.family = g.value("family", std::string());
     d.label = g.value("label", d.name);
     d.description = g.value("description", std::string());
+    if(g.contains("groups") && g["groups"].is_object()) for(auto& [k, v] : g["groups"].items()) if(v.is_string()) d.groupNotes[k] = v.get<std::string>();
     const json ps = g.value("params", json::array());
     for(auto& p : ps){
         ParamDef pd;
@@ -63,6 +66,7 @@ inline GenDef genDefFromJson(const json& g){
         pd.max = p.value("max", 1.0f);
         pd.def = p.contains("default") ? p["default"] : json();
         if(p.contains("options")) pd.options = p["options"].get<std::vector<std::string>>();
+        pd.basic = p.value("basic", false);
         // Forms GL's kick sweep now respects the shared Hits intensity control.
         // Upgrade older on-disk schemas too, so their editor cannot clamp boosts to 1.
         if(d.name=="hits" && pd.key=="level"){

@@ -39,6 +39,9 @@ int main(int argc, char** argv){
 
     Engine e; e.rendererFolder = folder; e.loadAll(); e.newSession(seed);
     e.maxPending = 2; e.width = W; e.height = H;
+    // BARMULT=n: the node's Bar Multiplier (every layer's bars and phrase times n)
+    if(getenv("BARMULT")) e.barMult = quantBars(atof(getenv("BARMULT")));
+    if(getenv("BARADD")) e.barAdd = atoi(getenv("BARADD"));   // the node's Bar Add (whole bars after the multiplier)
     // two parallax scenes with beat repeats always on
     Scene a = e.scenes.at("PARALLAX_TEST");
     a.name = "A"; a.layers[0].bars = 8; a.layers[1].bars = 6; a.layers[2].bars = 4;
@@ -56,6 +59,23 @@ int main(int argc, char** argv){
     Scene b = a; b.name = "B"; b.layers.resize(2); b.layers[0].bars = 4; b.layers[1].bars = 3;
     bool repeatOn = getenv("REPEAT") && *getenv("REPEAT");
     if(repeatOn){ a.layers[0].repeat = 2; a.layers[2].repeat = 3; b.layers[0].repeat = 3; b.layers[1].repeat = 2; }
+    // FRAC=1: fractional layer lengths on the extra layers (A: 8 / 0.25 / 1.5, B: 4 / 0.5);
+    // FRAC=2: layer 1 too (A: 2 / 0.25 / 1.5, B: 0.5 / 0.75)
+    const char* frac = getenv("FRAC");
+    if(frac && *frac){
+        a.layers[1].bars = 0.25; a.layers[2].bars = 1.5; b.layers[1].bars = 0.5;
+        if(atoi(frac) > 1){ a.layers[0].bars = 2; b.layers[0].bars = 0.5; b.layers[1].bars = 0.75; }
+    }
+    // PHRASE=1: phrases on the extra layers (A layer 2: 0.5-bar pages of a 4-bar phrase, layer 3:
+    // 1.5 x 4 = 6; B layer 2: 0.25 x 8 = 2); PHRASE=2: layer 1 too (A: 0.5 x 8 = 4, B: 1 x 4)
+    const char* phr = getenv("PHRASE");
+    if(phr && *phr){
+        a.layers[1].bars = 0.5; a.layers[1].phrase = 4; a.layers[2].bars = 1.5; a.layers[2].phrase = 6;
+        b.layers[1].bars = 0.25; b.layers[1].phrase = 2;
+        if(atoi(phr) > 1){ a.layers[0].bars = 0.5; a.layers[0].phrase = 4; b.layers[0].bars = 1; b.layers[0].phrase = 4; }
+    }
+    // WRITTEN=n: the same lengths written into the scenes instead (must play exactly like BARMULT=n)
+    if(getenv("WRITTEN")) for(Scene* sc : {&a, &b}) for(auto& l : sc->layers){ double m = atof(getenv("WRITTEN")); int n = phraseSlices(l); l.bars = quantBars(l.bars * m + (getenv("WRITTENADD") ? atoi(getenv("WRITTENADD")) : 0)); if(l.phrase > 0) l.phrase = l.bars * n; }
     e.scenes["A"] = a; e.scenes["B"] = b;
     e.setlist = {{"A", 3, false}, {"B", 3, true}, {"A", 2, true}, {"B", 2, false}, {"A", 3, true}};
     e.useSetlist = true; e.setlistEntry = 0; e.imagesInEntry = 0;
@@ -102,6 +122,8 @@ int main(int argc, char** argv){
     std::map<int, std::pair<int, int>> l1Chord;                 // absolute bar -> layer 1's (root, trans)
     std::map<std::string, std::shared_ptr<Image>> extraSeen;    // extra-layer pages (first copies) that reached the header
     long extraCopies = 0;
+    std::map<int, std::shared_ptr<Image>> lastPage;   // per extra layer: the page under the header last frame
+    long phrasePages = 0, phraseBad = 0;
 
     // checks
     long jumpArrivals = 0;
@@ -124,7 +146,7 @@ int main(int argc, char** argv){
         for(int i = g; i < clock.goCount; i++) goTick();
         head.width = W; head.phase = clock.phase; head.bpm = clock.bpm; head.header = 0.218182f;
         head.step(t, dt);
-        scroller.defaultBars = std::max(1, clock.bars);
+        scroller.defaultBars = barCount(clock.bars);
         scroller.update(L, clock.phase, head.headerPos, W, H);
         double B = scroller.headerBeat;
         e.schedule->headerBeat = B;
@@ -139,7 +161,7 @@ int main(int argc, char** argv){
                 if(!ok){ pageBad++; note("page: " + h->id + " copy " + std::to_string(h->repeatIndex) + " after " + prevL1->id + " copy " + std::to_string(prevL1->repeatIndex)); }
             }
             prevL1 = h;
-            for(int k = 0; k < (int)h->roots.size(); k++) l1Chord[h->startBar + k] = {h->roots[k], h->trans[k]};
+            for(int k = 0; k < (int)h->roots.size(); k++) l1Chord[barIndex(h->startBar + k)] = {h->roots[k], h->trans[k]};
         }
         e.requestLayers();
         const Scene* cs = e.sceneAtHeader();
@@ -153,12 +175,13 @@ int main(int argc, char** argv){
             rings[i - 1].update(e.schedule->layer(i), B, head.headerPos, W, H);
         }
         // Drive Transport: what Forms Box would report
-        feed.step(scroller.headerBeat, scroller.headerLen, head.repeatPx, W, clock.bpm, false, dt);
+        // the beat under the header without the beat repeat, read across page edges (short pages)
+        feed.step(scroller.beatAt(clock.phase, head.headerPos + head.repeatPx, W), scroller.headerLen, 0, W, clock.bpm, false, dt);
         if(feed.jump) feedJumps++;
         if(feed.beat < lastFeedBeat - 1e-9) feedBack++;
         lastFeedBeat = feed.beat;
         if(getenv("FEEDTRACE") && frames % 600 == 0) printf("t %6.1f B %8.2f feed beat %8.2f bpm %7.2f clock bpm %7.2f speedOut %5.2f phase %.3f\n", t, B, feed.beat, feed.bpm, clock.bpm, clock.speedOut, clock.phase);
-        if(t > 10 && clock.bpm > 0 && feed.playing){ bpmErr = std::max(bpmErr, std::fabs(feed.bpm / clock.bpm - 1)); bpmFrames++; }
+        if(t > 10 && clock.bpm > 0 && feed.playing){ bpmErr = std::max(bpmErr, std::fabs(feed.bpm / clock.bpm - 1)); bpmFrames++; if(getenv("TRACE_BPM") && std::fabs(feed.bpm / clock.bpm - 1) > 0.1) printf("t %.3f feed %.2f clock %.2f B %.3f hb %.3f rep %.1f len %.1f\n", t, feed.bpm, clock.bpm, B, feed.beat, head.repeatPx, scroller.headerLen); }
         // the fake renderer
         for(auto& [id, img] : e.pending) if(!askedAt.count(id)){
             askedAt[id] = t;
@@ -169,7 +192,7 @@ int main(int argc, char** argv){
         for(auto& [id, img] : e.pending) if(t - askedAt[id] >= latency) done.push_back(id);
         for(auto& id : done){
             auto img = e.pending[id];
-            if(getenv("TRACE2") && img->layer == 2 && id == "0010") printf("t %6.1f B %6.1f lastB %6.1f ready %s start %.1f bars %d\n", t, B, lastB, id.c_str(), img->startBeat, img->bars);
+            if(getenv("TRACE2") && img->layer == 2 && id == "0010") printf("t %6.1f B %6.1f lastB %6.1f ready %s start %.1f bars %g\n", t, B, lastB, id.c_str(), img->startBeat, img->bars);
             if(getenv("TRACE") && img->layer == 2 && img->startBeat > 100 && img->startBeat < 200)
                 printf("t %6.1f B %6.1f  ready L2 %s start %5.0f%s\n", t, B, id.c_str(), img->startBeat, img->cancelled ? " (cancelled)" : "");
             e.onReady(id, "/fake/" + id + ".png", "/fake/" + id + ".json");
@@ -177,7 +200,17 @@ int main(int argc, char** argv){
 
         for(int li = 1; li < nLayers; li++){
             auto& c = rings[li - 1].current;
-            if(c && c->startBar >= 0){ if(c->repeatIndex == 0) extraSeen[c->id] = c; else extraCopies++; }
+            if(c && c->startBar >= 0){
+                if(c->repeatIndex < std::max(1, c->slices)) extraSeen[c->id + (c->slices > 1 ? "#" + std::to_string(c->slice) : std::string())] = c; else extraCopies++;
+                // a phrase's pages in order: after page k of a phrase comes page k+1 of it (or a new phrase)
+                auto& last = lastPage[li];
+                // (not while a beat repeat moves the header back, or the view jumps at its end)
+                if(last && last != c && c->slices > 1 && std::fabs(B - lastB) < 0.1 && B >= maxB - 0.05){
+                    phrasePages++;
+                    if(last->id == c->id && c->slice != (last->slice + 1) % c->slices){ phraseBad++; note("phrase L" + std::to_string(li + 1) + " " + c->id + ": page " + std::to_string(c->slice) + " after " + std::to_string(last->slice)); }
+                }
+                last = c;
+            }
         }
         // ---- checks
         // the whole view jumps when a beat repeat starts or ends (the header moves by whole steps)
@@ -189,10 +222,10 @@ int main(int argc, char** argv){
         bool repeating = B < maxB - 0.05;
         if(repeating) repeatFrames++;
         int bar = (int)std::floor(B / 4.0);
-        const Engine::PlanEntry* pe = e.planAt(bar);
+        const Engine::PlanEntry* pe = e.planAt(B / 4.0);
         // the latest hard cut at or before this bar
         const Engine::PlanEntry* cut = nullptr;
-        for(auto& p : e.layer1Plan) if(p.hardCut && p.startBar <= bar && (!cut || p.startBar > cut->startBar)) cut = &p;
+        for(auto& p : e.layer1Plan) if(p.hardCut && p.startBar <= B / 4.0 + 1e-9 && (!cut || p.startBar > cut->startBar)) cut = &p;
         for(int li = 0; li < layerCount; li++){
             std::shared_ptr<Image> cur = li == 0 ? L->header : (li < nLayers ? rings[li - 1].current : nullptr);
             bool sceneHas = pe && e.scenes.count(pe->scene) && li < (int)e.scenes.at(pe->scene).layers.size();
@@ -210,7 +243,7 @@ int main(int argc, char** argv){
                 int since = 999; for(auto& p : e.layer1Plan) if(p.startBar <= bar && (pe ? p.scene != "" : true)) {}
                 const Engine::PlanEntry* chg = nullptr; std::string prev;
                 for(auto& p : e.layer1Plan){ if(p.startBar > bar) break; if(prev != "" && p.scene != prev) chg = &p; prev = p.scene; }
-                if(chg) since = bar - chg->startBar;
+                if(chg) since = (int)std::floor(bar - chg->startBar + 1e-9);
                 holeSince[std::min(since, 20)]++;
                 if(holes % 120 == 1){
                     auto& Ls = e.schedule->layers[li];
@@ -233,11 +266,16 @@ int main(int argc, char** argv){
             for(auto& d : rings[li - 1].lastDrawn){
                 if(getenv("TRACE2") && li == 1 && d.png == "/fake/0010.png" && everDrawn[li].count(d.png) == 0)
                     printf("t %6.1f B %6.1f lastB %6.1f first drawn x %.1f start %.1f len %.1f header %.1f\n", t, B, lastB, d.x, d.start, d.len, head.headerPos);
-                if(everDrawn[li].insert(d.png).second && d.x < W - 12 && t > 20){
+                // (a short page scrolls a view per beat or so: its first frame may be one frame's travel in)
+                // (it moves with the page it follows: the shortest page drawn sets the speed)
+                double shortest = d.len; for(auto& o : rings[li - 1].lastDrawn) shortest = std::min(shortest, o.len);
+                double perFrame = W / std::max(1e-6, shortest) * clock.bpm / 60.0 * dt * 1.5;
+                if(everDrawn[li].insert(d.png + (d.slice ? "#" + std::to_string(d.slice) : std::string())).second && d.x < W - 12 - perFrame && t > 20){
                     // arriving with the view's jump at the end of a repeat is the jump, not a pop-in:
                     // it is where it would have been without the repeat
                     if(jumped){ jumpArrivals++; continue; }
                     pops++; note("pop-in L" + std::to_string(li + 1) + " " + d.png + " at x " + std::to_string(d.x));
+                    if(getenv("TRACE_POP")){ printf("pop L%d %s x %.1f start %.2f len %.2f t %.2f B %.3f hdr %.1f slots:", li + 1, d.png.c_str(), d.x, d.start, d.len, t, B, head.headerPos); for(auto& x : e.schedule->layers[li].slots) printf(" [%.2f,%.2f%s%s]", x.start, x.end(), x.repeat ? "r" : "", x.seen ? "s" : ""); printf("\n"); }
                 }
             }
         }
@@ -260,7 +298,7 @@ int main(int argc, char** argv){
     long laneBad = 0, laneImages = 0;
     if(laneOn){
         for(auto& p : e.layer1Plan){
-            bool cut; std::string want = laneAt(p.startBar, cut);
+            bool cut; std::string want = laneAt(barIndex(p.startBar), cut);
             if(want.empty()) continue;
             laneImages++;
             if(p.scene != want){ laneBad++; std::cout << "  lane: image at bar " << p.startBar << " is " << p.scene << ", the lane says " << want << "\n"; }
@@ -272,7 +310,7 @@ int main(int argc, char** argv){
     long chordBad = 0, chordChecked = 0;
     for(auto& [id, im] : extraSeen){
         for(int k = 0; k < (int)im->roots.size(); k++){
-            auto it = l1Chord.find(im->startBar + k);
+            auto it = l1Chord.find(barIndex(im->startBar + k));
             if(it == l1Chord.end()) continue;
             chordChecked++;
             if(it->second != std::make_pair(im->roots[k], im->trans[k])){
@@ -283,10 +321,24 @@ int main(int argc, char** argv){
     }
     std::cout << "layer 1: " << l1Pages << " pages, " << l1Copies << " shown (copies), " << l1Requests << " requests, fallback repeats " << L0repeats(e) << "\n";
     std::cout << "chords: " << chordChecked << " extra-layer bars checked against layer 1, " << chordBad << " differ (" << extraSeen.size() << " extra pages, " << extraCopies << " frames on extra copies)\n";
-    if(repeatOn && (pageBad || chordBad || L0repeats(e) > 2 || l1Requests > l1Pages + 3)) cutBad += 1000000;
+    {
+        int inFlight = (int)e.schedule->layers[0].ready.size() > 0 ? 1 : 0;
+        for(auto& [id, im] : e.pending) if(im->layer <= 1 && !im->preview) inFlight++;
+        if(getenv("PHRASE")) std::cout << "layer 1 requests not shown yet at the end (rendering or queued): " << inFlight << "\n";
+    }
+    // (a layer-1 phrase is asked for before the one playing ends: one more may be in flight at the end)
+    const int l1Slack = 3 + (phr && atoi(phr) > 1 ? 1 : 0);
+    if(repeatOn && (pageBad || chordBad || L0repeats(e) > 2 || l1Requests > l1Pages + l1Slack)) cutBad += 1000000;
     if(repeatOn) std::cout << "pages wrong " << pageBad << "\n";
+    if(phr && *phr){
+        std::map<int, long> req;
+        for(auto& [id, at] : askedAt) (void)id;
+        std::cout << "phrases: " << phrasePages << " page changes inside phrases checked, " << phraseBad << " out of order\n";
+        if(phraseBad) cutBad += 1000000;
+    }
     std::cout << "problems: cut " << cutBad << ", repeat " << repeatBad << ", hole " << holes << ", pop " << pops << ", beat " << beatBack << "\n";
     if(!holeSince.empty()){ std::cout << "hole frames by bars since the last scene change:"; for(auto& [k, v] : holeSince) std::cout << " " << k << ":" << v; std::cout << "\n"; }
     for(auto& n : notes) std::cout << "  " << n << "\n";
+    if(getenv("TRACE_SYNC")) for(auto& l : e.syncLog) if(l.find("off its plan") != std::string::npos || l.find("cut") != std::string::npos) std::cout << "sync: " << l << "\n";
     return (cutBad || repeatBad || holes || pops || beatBack) ? 1 : 0;
 }

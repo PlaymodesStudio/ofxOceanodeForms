@@ -63,9 +63,10 @@ public:
     float bpmAdd = 0;           // -1..1 → ±999
     bool sequence = true;       // SEQUENCE toggle
     float maxMinutes = 11;
+    bool limitSession = true;          // off: the session never ends by itself (Max Minutes is ignored, no fade)
     float seqFade = 0;          // 0: master gain 1, 1: follow the session fade curve
-    // from the image under the header
-    int bars = 8;
+    // from the image under the header (may be a fraction of a bar)
+    double bars = 8;
     float targetBpm = 120;
     json perf = json::object();
 
@@ -112,7 +113,7 @@ public:
         pitchBend = (analogMode && a > 1e-6f) ? 12.0f * std::log2(a) : 0.0f;
 
         // --- the main phasor: one cycle per image (bars × 4 beats at speed 1)
-        float rate = bpm / 60.0f * speedOut * 0.25f / std::max(1, bars);
+        float rate = bpm / 60.0f * speedOut * 0.25f / (float)std::max(1.0 / 16, bars);
         phase += rate * dt;
         if(phase >= 1 || phase < 0){
             phase = fracf(phase);
@@ -128,9 +129,9 @@ public:
         if(!started){ started = true; counterT0 = t; lastSequence = sequence; }
         if(sequence != lastSequence){ lastSequence = sequence; setAuto(sequence, t); }
         seqMinutes = (float)((t - counterT0) / 60.0);
-        bool shouldRun = seqMinutes < maxMinutes;
+        bool shouldRun = !limitSession || seqMinutes < maxMinutes;
         if(shouldRun != lastShouldRun){ lastShouldRun = shouldRun; setAuto(shouldRun, t); }
-        float x = maxMinutes > 0 ? seqMinutes / maxMinutes : 0;
+        float x = (limitSession && maxMinutes > 0) ? seqMinutes / maxMinutes : 0;
         bool over = x > 1;
         if(over != restartSnap){
             // reStartSnap: past the end → one more image and SEQUENCE off; back below → SEQUENCE on
@@ -138,7 +139,7 @@ public:
             if(over) automaticPng(t);
             sequenceRequest = over ? 0 : 1;
         }
-        float curve = fadeCurve(x);
+        float curve = limitSession ? fadeCurve(x) : 1.0f;   // no session: no fade in or out
         fade = 1.0f * (1 - clampf(seqFade, 0, 1)) + curve * clampf(seqFade, 0, 1);
     }
 
@@ -194,7 +195,7 @@ public:
     float width = 1920;
     float phase = 0;            // Transport phase
     float bpm = 120;            // Transport BPM (eased scene BPM)
-    int bars = 8;
+    double bars = 8;
     float header = 0.218182f;   // "Header" slider 0..1
     float headerPlus = 0;       // "Header+" slider 0..1
     float smooth = 0.0001f;     // "Smooth" knob (Smoother_1)
@@ -244,7 +245,7 @@ public:
         float ph10=stretch>1e-6f?fracf(phase/stretch):0;
         float sweep=minPx+(maxPx-minPx)*ph10;
         float baseHeader=std::fmod(hs+(autoHeader?sweep:0.f),W);
-        float beats=std::max(1,bars)*4.f;
+        float beats=(float)std::max(1.0/16,bars)*4.f;
         auto beatOf=[&](float x){return beatAt?beatAt(phase,x):(double)(phase+x/W)*beats;};
         double baseBeat=beatOf(baseHeader);
         // --- beat repeat: advance from the musical beat, never an independent BPM timer
@@ -281,7 +282,7 @@ public:
         headerNorm = clampf(headerPos / W, 0, 1);
         phOff = headerPos / W;
         phLock = std::fmod(phase + phOff, 1.0f);
-        actualBar = (int)(phLock * std::max(1, bars));
+        actualBar = std::min(std::max(1, (int)std::ceil(bars - 1e-9)) - 1, (int)(phLock * std::max(1.0 / 16, bars)));
 
         // --- strobe gate: in the second half of every 2-bar span, with gateChance
         double heardBeat=beatOf(headerPos);

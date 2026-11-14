@@ -119,6 +119,24 @@ struct PostControls {
         };
         take("H_Blur", hBlur); take("V_Blur", vBlur); take("Trail", trailBeats); take("Trail_Level", trailLevel);
     }
+    // one layer's effects as numbers (the scene keeps them: LayerDef::fx)
+    LayerFxValues fxValues(int l) const {
+        LayerFxValues v;
+        v.hBlur = hBlur[l]; v.vBlur = vBlur[l]; v.trail = trailBeats[l]; v.trailLevel = trailLevel[l];
+        v.maskAmount = maskAmount[l]; v.maskWidth = maskWidth[l]; v.maskHeight = maskHeight[l]; v.maskContrast = maskContrast[l];
+        v.maskThreshold = maskThreshold[l]; v.maskBlur = maskBlur[l]; v.maskSpeed = maskSpeed[l];
+        v.maskSeed = maskSeed[l]; v.maskInvert = maskInvert[l]; v.maskAnimate = maskAnimate[l];
+        return v;
+    }
+    void setFxValues(int l, const LayerFxValues& v){
+        auto setf = [](ofParameter<float>& p, float x){ if(p.get() != x) p = x; };
+        setf(hBlur[l], v.hBlur); setf(vBlur[l], v.vBlur); setf(trailBeats[l], v.trail); setf(trailLevel[l], v.trailLevel);
+        setf(maskAmount[l], v.maskAmount); setf(maskWidth[l], v.maskWidth); setf(maskHeight[l], v.maskHeight); setf(maskContrast[l], v.maskContrast);
+        setf(maskThreshold[l], v.maskThreshold); setf(maskBlur[l], v.maskBlur); setf(maskSpeed[l], v.maskSpeed);
+        if(maskSeed[l].get() != v.maskSeed) maskSeed[l] = v.maskSeed;
+        if(maskInvert[l].get() != v.maskInvert) maskInvert[l] = v.maskInvert;
+        if(maskAnimate[l].get() != v.maskAnimate) maskAnimate[l] = v.maskAnimate;
+    }
     bool anyFx(int l) const { return fxOn && (hBlur[l] > 0.05f || vBlur[l] > 0.05f || trailBeats[l] > 0.01f || maskAmount[l] > 0); }
 
     void apply(Post& p) const {
@@ -172,7 +190,7 @@ struct PostControls {
         float z = ofxOceanodeShared::getZoomLevel();
         savedWithPatchNote();
         ImGui::SameLine();
-        ImGui::TextDisabled("(each layer's effects are also under the layer stack in Scenes and Live)");
+        ImGui::TextDisabled("(the layer effects on the left belong to the scene on stage and are saved with it; the rest with the patch)");
         ImGui::TextDisabled("Left of the line: effects on each layer before the sound reads it (heard and seen). Right: the final image only.\n"
                             "Right-click a control to set its value, publish it to the node or add it to a timeline.");
         if(!post.ok && post.tried) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "The shader did not compile: Output is the plain composite.");
@@ -186,7 +204,7 @@ struct PostControls {
         ImGui::TableNextColumn();
         ImGui::PushItemWidth(-110 * z);
         ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1), "BEFORE THE SOUND");
-        ImGui::TextDisabled("each layer, heard and seen");
+        ImGui::TextDisabled("each layer, heard and seen: the scene on stage's\n(saved with the scene; also under its layer stack in Stage)");
         reg.check(fxOn, "Layer effects on");
         // which layer's settings: a button per layer, lit when that layer has an effect on
         for(int l = 0; l < FX_LAYERS; l++){

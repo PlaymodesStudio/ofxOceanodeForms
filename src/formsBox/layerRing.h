@@ -24,7 +24,7 @@ class LayerRing {
 public:
     ofFbo fbo;
     bool active = true;                       // the current scene has this layer (else no repeats)
-    std::function<void(const ofTexture&,float,float,float,float,float)> drawWithGain;
+    std::function<void(const ofTexture&,float,float,float,float,float,float,float)> drawWithGain;   // texture, x, w, h, gain, fraction, u0, uw
     std::function<float(const Image&)> opacityOf;   // each image's own opacity, read live
     // the first hard cut (a scene change that cuts every layer) at a beat in (from, to], or -1
     std::function<double(double from, double to)> hardCutIn;
@@ -43,7 +43,7 @@ public:
 
     // The image under the header (for the composite settings), or null
     std::shared_ptr<Image> current;
-    struct Drawn { std::string png; double start, len; float x; };
+    struct Drawn { std::string png; double start, len; float x; int slice = 0; };   // slice: a phrase's page
     std::vector<Drawn> lastDrawn;             // what the last frame drew, and where (Save frame)
 
     // Where a beat is on screen: the images are drawn edge to edge from the one under the header,
@@ -71,14 +71,14 @@ public:
         while(!L.ready.empty()){
             auto img = L.ready.front();
             L.ready.pop_front();
-            double len = 4.0 * std::max(1, img->bars);
+            double len = 4.0 * std::max(1.0 / kBarGrid, img->bars);
             bool once = L.replaceNext && img == L.replaceNext;   // Switch now: this one replaces, once
             if(once) L.replaceNext.reset();
             if(immediate || once){
                 // it takes the place of the image under the header (same start), and what it overlaps goes
                 double st = std::ceil(B / 4.0) * 4.0 - len;
                 for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ st = sl.start; break; }
-                if(st > B) st = B;
+                if(st > B) st = len < 4.0 ? std::floor(B / len + 1e-9) * len : B;   // a page shorter than a bar: on its own grid
                 for(auto it = L.slots.begin(); it != L.slots.end();){
                     // (Switch now: also everything after it, e.g. repeats of the old image)
                     if((it->start < st + len - 1e-6 && it->end() > st + 1e-6) || (once && it->start >= st - 1e-6)) it = L.slots.erase(it); else ++it;
@@ -99,6 +99,9 @@ public:
             bool taken = !follows && screenX(L, B, start, headerPos, w, len) < w;   // its left edge would be inside the view
             if(!follows) for(auto& sl : L.slots) if(sl.seen && sl.start < start + len - 1e-6 && sl.end() > start + 1e-6) taken = true;
             if(taken){
+                // a phrase's page belongs where it is in the phrase: a late one is dropped (moved,
+                // it would show the wrong part of the music); the pages after it still come
+                if(img->slices > 1){ L.retimed++; continue; }
                 double end = std::ceil(B / 4.0) * 4.0;
                 for(auto& sl : L.slots) if(sl.seen || !sl.repeat) end = std::max(end, sl.end());
                 // Keep the page on its original layer cycle. Starting at the current bar
@@ -145,6 +148,30 @@ public:
             L.slots.push_back(r);
             L.repeats++;
         }
+        // 2b. a gap between two images (a late image placed after a jump ahead) in the same scene,
+        // about to enter the view: repeat the image before it, as above, so the layer shows no
+        // hole while the renderer cannot keep up (very short pages)
+        for(int guard = 0; active && guard < 64; guard++){
+            bool filled = false;
+            for(size_t i = 0; i + 1 < L.slots.size(); i++){
+                auto& a = L.slots[i]; const auto& n = L.slots[i + 1];
+                double end = a.end();
+                if(n.start - end < 1e-6) continue;
+                if(!(end <= B || screenX(L, B, end, headerPos, w, a.len) < w)) break;
+                if(sceneAt && sceneAt(end) != a.img->scene) continue;      // another scene there: its own images
+                double imgStart = a.img->startBeat >= 0 ? a.img->startBeat : a.start;
+                if(hardCutIn && hardCutIn(imgStart, end) >= 0) continue;
+                Schedule::Layer::Slot r = a;
+                r.start = end; r.repeat = true; r.seen = false; r.cut = -1;
+                if(n.start < end + r.len - 1e-6) r.cut = n.start;           // up to the next image
+                if(hardCutIn){ double c = hardCutIn(end, end + r.len); if(c > end + 1e-6 && (r.cut < 0 || c < r.cut)) r.cut = c; }
+                L.slots.insert(L.slots.begin() + (long)i + 1, r);
+                L.repeats++;
+                filled = true;
+                break;
+            }
+            if(!filled) break;
+        }
         // 3. forget images well behind the header (kept a while for beat repeats)
         while(L.slots.size() > 1 && L.slots[1].end() < B - 16) L.slots.pop_front();
         L.scheduledEnd = L.slots.empty() ? -1 : L.slots.back().end();
@@ -177,7 +204,14 @@ public:
             }
             x = x0;
             for(int i = cur + 1; i < (int)L.slots.size(); i++){
-                if(std::fabs(L.slots[i - 1].end() - L.slots[i].start) > 1e-6) break;
+                if(std::fabs(L.slots[i - 1].end() - L.slots[i].start) > 1e-6){
+                    // after a gap (its scene has no such layer there): the next image comes in at its
+                    // own speed, as it will once the gap reaches the header, so it never pops in
+                    auto& s = L.slots[i];
+                    float xs = std::max(x + vis(L.slots[i - 1]), headerPos + (float)((s.start - B) / s.len) * w);
+                    if(xs < w) draw.push_back({i, xs});
+                    break;
+                }
                 x += vis(L.slots[i - 1]);
                 if(x >= w) break;
                 draw.push_back({i, x});
@@ -235,7 +269,7 @@ public:
         lastDrawn.clear();
         for(auto& [i, x] : draw){
             L.slots[i].seen = true;
-            lastDrawn.push_back({L.slots[i].img->png, L.slots[i].start, L.slots[i].len, x});
+            lastDrawn.push_back({L.slots[i].img->png, L.slots[i].start, L.slots[i].len, x, L.slots[i].img->slice});
         }
         // 7. draw
         if(!fbo.isAllocated()) return;
@@ -258,9 +292,11 @@ public:
             float op = opacityOf ? ofClamp(opacityOf(*L.slots[i].img), 0, 2) : 1.0f;
             if(op <= 0) continue;
             ofSetColor(255, 255, 255, 255 * op);
-            if(drawWithGain)drawWithGain(*texture,x,w,h,op,vw/w);
-            else if(vw >= w - 0.01f) texture->draw(x, 0, w, h);
-            else texture->drawSubsection(x, 0, vw, h, 0, 0, vw / w * texture->getWidth(), texture->getHeight());
+            // a phrase's page: only its window of the image
+            float u0 = (float)L.slots[i].img->sliceU0(), uw = (float)L.slots[i].img->sliceUW();
+            if(drawWithGain)drawWithGain(*texture,x,w,h,op,vw/w,u0,uw);
+            else if(vw >= w - 0.01f && uw >= 0.99999f) texture->draw(x, 0, w, h);
+            else texture->drawSubsection(x, 0, vw, h, u0 * texture->getWidth(), 0, uw * vw / w * texture->getWidth(), texture->getHeight());
             ofSetColor(255);
         }
         ofPopStyle();

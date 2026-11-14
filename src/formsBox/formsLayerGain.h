@@ -24,7 +24,7 @@ void main(){
 class LayerGain {
     ofShader normal,rectangle;bool tried=false,ok=false;
 public:
-    void draw(const ofTexture& texture,float x,float w,float h,float gain,float fraction=1){
+    void draw(const ofTexture& texture,float x,float w,float h,float gain,float fraction=1,float u0=0,float uw=1){
         gain=ofClamp(gain,0,2);
         bool boost=gain>1;
         ofShader* shader=nullptr;
@@ -43,8 +43,8 @@ public:
                 shader->begin();shader->setUniformTexture("tex",texture,0);shader->setUniform1f("gainAmount",gain);}
         }
         ofSetColor(255,255,255,boost?255:255*gain);
-        if(fraction>=.99999f)texture.draw(x,0,w,h);
-        else texture.drawSubsection(x,0,w*fraction,h,0,0,texture.getWidth()*fraction,texture.getHeight());
+        if(fraction>=.99999f&&u0<=0&&uw>=.99999f)texture.draw(x,0,w,h);
+        else texture.drawSubsection(x,0,w*fraction,h,texture.getWidth()*u0,0,texture.getWidth()*uw*fraction,texture.getHeight());
         if(shader)shader->end();ofSetColor(255);
     }
 };

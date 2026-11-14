@@ -85,6 +85,6 @@ int main(int argc, char** argv){
     assert(e.lastImage->layer > 1 && e.lastImage->startBeat == 0);
     e.pending.clear(); e.layerNextBar.clear(); e.schedule->headerBeat = 5;
     assert(!e.requestLayers().empty());
-    assert(e.lastImage->startBar % e.lastImage->bars == 0);
+    assert(std::fmod(e.lastImage->startBar, e.lastImage->bars) == 0);
     std::puts("Scene rename and multilayer cycle checks passed");
 }

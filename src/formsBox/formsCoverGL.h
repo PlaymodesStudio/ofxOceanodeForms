@@ -35,10 +35,11 @@ public:
         m.texture->setTextureWrap(GL_CLAMP_TO_EDGE,GL_CLAMP_TO_EDGE);
         return m.texture.get();
     }
-    static void drawMask(Mask& m, float x, float width, float visible, float height, float opacity=1){
+    // u0 / uw: the window of the mask drawn (a phrase's page: its slice of the width)
+    static void drawMask(Mask& m, float x, float width, float visible, float height, float opacity=1, float u0=0, float uw=1){
         auto* t=texture(m); if(!t || width<=0 || visible<=0) return;
         ofSetColor(255*opacity,255*opacity,255*opacity,255);
-        t->drawSubsection(x,0,visible,height,0,0,t->getWidth()*visible/width,t->getHeight());
+        t->drawSubsection(x,0,visible,height,t->getWidth()*u0,0,t->getWidth()*uw*visible/width,t->getHeight());
     }
     void apply(const std::vector<ofFbo*>& layers, const std::vector<int>& order,
                const std::vector<Source>& sources, int w, int h){
