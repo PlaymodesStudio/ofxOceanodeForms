@@ -462,6 +462,15 @@ private:
     // point() then draws swept stamps (Canvas::sweptPoint). 1080-line images keep the measured path.
     float sweepStep = 0;
     float sweepSpan = 0;   // a piece of the step (drawNote: notes whose pitch moves), 0 = the whole step
+    // A note's own time span on the canvas (Canvas::penX0 / penX1), while it is drawn
+    struct PenScope {
+        Canvas* cv; int x0, x1;
+        PenScope(Canvas* canvas, float from, float to) : cv(canvas), x0(canvas->penX0), x1(canvas->penX1) {
+            int a = (int)std::floor(from + 0.001f), b = (int)std::ceil(to - 0.001f);   // the pixels the span touches: whole-pixel spans exactly
+            cv->penX0 = a; cv->penX1 = std::max(a + 1, b);
+        }
+        ~PenScope(){ cv->penX0 = x0; cv->penX1 = x1; }
+    };
     struct SweepScope { float& v; SweepScope(float& ref, float step) : v(ref) { v = step > 1.0001f ? step : 0; } ~SweepScope(){ v = 0; } };
     void point(float x, float y){
         if(!style.stroke) return;
@@ -797,6 +806,10 @@ private:
 
     void blankUnder(float x, float w){
         if(!blockOn) return;   // blocking off (instrument or layer): no black background, no eraser
+        // Whole pixels: every column the span touches. The hit or note that blanks is drawn from the
+        // whole pixel its start falls in; a blank with a fractional edge only dimmed that column, and
+        // what was there before showed through as a brighter line one pixel wide at the hit's start.
+        { float a = std::floor(x + 0.001f), b = std::ceil(x + w - 0.001f); x = a; w = std::max(1.0f, b - a); }
         clearSpans.push_back({x,w});
         pushStyle();
         style.stroke = false;
@@ -1527,6 +1540,11 @@ private:
                 uint32_t col = pickColour(colourMode);
                 strokeColour(col);
                 style.strokeWeight = thick;
+                // the note stays inside its own time span: from its step's start (x is half a
+                // thickness in) for its length. Without this a thick note runs a thickness past
+                // its end and can start a pixel early, and a blank or gate that cuts on the beat
+                // leaves that as a stray column.
+                PenScope pen(gc, x - thick / 2, x - thick / 2 + noteLen);
                 if(cell == 0){
                     NoteCell n;
                     n.x = x; n.p0 = (float)pitch; n.p1 = (float)pitch; n.w = noteLen;
@@ -1768,7 +1786,10 @@ private:
                     int dy = -pjRound(semis * (std::min(1.0f, i / (float)std::max(1, n - 1))) * noteh);
                     int dx0 = pjRound(xs + i * sw);
                     int wSl = i < n ? pjRound(sw) : std::min(pjRound(sw), xEnd - dx0);
-                    float openW = i < n ? sw * gate : wSl - sw * (1 - gate);
+                    // (whole pixels: a count like 1.333 for 4/3 makes the open part a fraction of a pixel
+                    // too long, and the gate then starts one column late, leaving the first column
+                    // of whatever begins there)
+                    float openW = (float)pjRound(i < n ? sw * gate : wSl - sw * (1 - gate));
                     for(int j = 0; j < wSl; j++){
                         int xd = dx0 + j, xsrc = srcStart + j;
                         if(xd < 0 || xd >= W || xsrc >= W) continue;

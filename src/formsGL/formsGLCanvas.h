@@ -125,6 +125,11 @@ public:
         return covTable()[qy * 64 + qx];
     }
     enum Cap { ROUND = 0, PROJECT = 1, SQUARE = 2 };
+    // The columns points and axis lines may touch, [penX0, penX1): a note is kept inside its own
+    // time span. A stamp wider than a pixel is centred on its column, so without this a thick note
+    // spills before its start and past its end (by up to its thickness), and whatever cuts on the
+    // beat (a blank, a gate, a repeat) leaves that spill as a stray column one or two pixels wide.
+    int penX0 = -(1 << 30), penX1 = 1 << 30;
     static float snapOf(int cap){ return cap == ROUND ? 0.0f : 0.00105f; }
     // One Java2D point of weight 1
     void point(float x, float y, int r, int g, int b, int a, int cap){
@@ -133,7 +138,7 @@ public:
         // and SQUARE caps (not with ROUND): measured, the same in x and y
         const float SNAP = snapOf(cap);
         int ix = (int)std::floor(x + SNAP), iy = (int)std::floor(y + SNAP);
-        if(ix < 0 || iy < 0 || ix >= w || iy >= h) return;
+        if(ix < 0 || iy < 0 || ix >= w || iy >= h || ix < penX0 || ix >= penX1) return;
         blend((size_t)iy * w + ix, r, g, b, cap == ROUND ? mul8(181, a) : a);
     }
 
@@ -151,7 +156,7 @@ public:
             int cx = (int)std::floor(x0 + SNAP), p = (int)std::floor(y0 + SNAP), q = (int)std::floor(y1 + SNAP);
             if(p > q) std::swap(p, q);
             if(p == q && horizontal){ point(x0, y0, r, g, b, a, cap); return true; }
-            if(cx < 0 || cx >= w) return true;
+            if(cx < 0 || cx >= w || cx < penX0 || cx >= penX1) return true;
             for(int k = std::max(0, p); k <= std::min(h - 1, q); k++)
                 blend((size_t)k * w + cx, r, g, b, (k == p || k == q) ? mul8(endCov, a) : a);
         }else{
@@ -159,7 +164,7 @@ public:
             if(p > q) std::swap(p, q);
             if(cy < 0 || cy >= h) return true;
             size_t row = (size_t)cy * w;
-            for(int k = std::max(0, p); k <= std::min(w - 1, q); k++)
+            for(int k = std::max(std::max(0, penX0), p); k <= std::min(std::min(w, penX1) - 1, q); k++)
                 blend(row + k, r, g, b, (k == p || k == q) ? mul8(endCov, a) : a);
         }
         return true;
@@ -172,7 +177,7 @@ public:
         const float SNAP = snapOf(cap);
         if(a <= 0 || cap == SQUARE) return;
         float cx = std::floor(x + SNAP) + 0.5f, cy = std::floor(y + SNAP) + 0.5f, hw = wgt / 2;
-        int x0 = std::max(0, (int)std::floor(cx - hw)), x1 = std::min(w - 1, (int)std::ceil(cx + hw));
+        int x0 = std::max(std::max(0, penX0), (int)std::floor(cx - hw)), x1 = std::min(std::min(w, penX1) - 1, (int)std::ceil(cx + hw));
         int y0 = std::max(0, (int)std::floor(cy - hw)), y1 = std::min(h - 1, (int)std::ceil(cy + hw));
         for(int yy = y0; yy <= y1; yy++) for(int xx = x0; xx <= x1; xx++){
             int cov;
@@ -239,7 +244,7 @@ public:
             // a partly covered row (the stamp's top and bottom edge) is a fainter stamp: its own table
             const float* t = lut;
             if(covy < 0.999f){ float af = a / 255.0f * covy; if(af != lutFor){ fill(rowLut, af); lutFor = af; } t = rowLut; }
-            int xs = std::max(0, (int)std::floor(X0 - c)), xe = std::min(w - 1, (int)std::ceil(X1 + c));
+            int xs = std::max(std::max(0, penX0), (int)std::floor(X0 - c)), xe = std::min(std::min(w, penX1) - 1, (int)std::ceil(X1 + c));
             size_t row = (size_t)yy * w;
             for(int xx = xs; xx <= xe; xx++){
                 float pc = xx + 0.5f;
