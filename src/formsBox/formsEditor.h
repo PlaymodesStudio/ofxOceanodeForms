@@ -110,6 +110,9 @@ class Editor {
 public:
     Engine* engine = nullptr;
     ofParameter<bool>* autoGo = nullptr;
+    // set by the node: why no new images are being asked for ("" while they are), and how to resume
+    std::function<std::string()> noNewImagesWhy;
+    std::function<void()> resumeImages;
     std::function<void(bool)> requestNext;                  // render the next image (force)
     std::function<void(const std::string&)> renderScene;    // preview render of a scene
     // editor previews: (tag, items) variants rendered with one scene's harmony and a shared seed
@@ -145,6 +148,7 @@ public:
     std::function<void()> drawPostTab, drawSoundTab, drawExportTab; // node-owned tabs
     std::function<void()> drawNodeTab;                    // set by the node: what is published (System tab)
     std::function<void()> drawRendererPanel;              // set by the node: the renderer's state (System tab)
+    std::function<void(float)> drawKickMeter;   // set by the node: the kick strip's level now, with this threshold marked
     std::function<void(int)> drawLayerLook, drawLayerSound; // set by the node: a layer's effects / sound (every scene)
     bool auditioning() const { return auditionSwitch && *auditionSwitch; }
     // mute / solo (set by the node; performance state, not in the scene): bit 1 muted, bit 2 soloed
@@ -181,7 +185,7 @@ public:
         int root = 24, notegrid = 100, imageH = 1080, trans = 0, chordRoot = 24;
         std::vector<float> scale;
         float width = 1920;                               // the player's width (px)
-        struct Span { int layer; float x, w; int bars; };  // an image on screen: layer (0..3), left edge, width (px), bars
+        struct Span { int layer; float x, w; double bars; };  // an image on screen: layer (0..3), left edge, width (px), bars
         std::vector<Span> spans;
     };
     std::function<GridInfo()> gridInfo;
@@ -269,6 +273,40 @@ public:
         ImGui::PopTextWrapPos();
     }
 
+    // ------------------------------------------------ where the user stands
+    // One colour per level of the tab map: main tabs blue, their sections teal, a section's sub-tabs violet.
+    // shade 0 = text of the path line, 1 = the lit tab / button, 2 = hovered
+    static ImVec4 levelColor(int level, int shade){
+        static const ImVec4 c[3][3] = {
+            {ImVec4(0.55f, 0.80f, 1.00f, 1), ImVec4(0.25f, 0.50f, 0.70f, 1), ImVec4(0.30f, 0.58f, 0.80f, 1)},
+            {ImVec4(0.50f, 0.90f, 0.80f, 1), ImVec4(0.16f, 0.50f, 0.45f, 1), ImVec4(0.20f, 0.60f, 0.54f, 1)},
+            {ImVec4(0.80f, 0.65f, 1.00f, 1), ImVec4(0.42f, 0.32f, 0.66f, 1), ImVec4(0.50f, 0.40f, 0.76f, 1)}};
+        return c[std::max(0, std::min(level, 2))][std::max(0, std::min(shade, 2))];
+    }
+    // the path: main tab > section > item (a scene, an instrument) > sub-tab; set while drawing, shown on the next frame
+    std::string here[4], hereShown[4];
+    void crumb(int level, const std::string& text){ if(level >= 0 && level < 4) here[level] = text; }
+    void drawPathLine(){
+        float zz = z();
+        static const int levelOf[4] = {0, 1, -1, 2};   // the item (a scene's name) is not a tab: plain text
+        bool any = false;
+        for(int i = 0; i < 4; i++){
+            if(hereShown[i].empty()) continue;
+            if(any){ ImGui::SameLine(0, 7 * zz); ImGui::TextDisabled(">"); ImGui::SameLine(0, 7 * zz); }
+            if(levelOf[i] < 0) ImGui::TextUnformatted(hereShown[i].c_str());
+            else ImGui::TextColored(levelColor(levelOf[i], 0), "%s", hereShown[i].c_str());
+            any = true;
+        }
+        if(!any) ImGui::TextDisabled(" ");
+    }
+    // a sub-tab bar in its level's colour (1 = a main tab's sections, 2 = a section's sub-tabs)
+    void pushTabLevel(int level){
+        ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.13f, 0.15f, 0.19f, 1));
+        ImGui::PushStyleColor(ImGuiCol_TabHovered, levelColor(level, 2));
+        ImGui::PushStyleColor(ImGuiCol_TabActive, levelColor(level, 1));
+    }
+    void popTabLevel(){ ImGui::PopStyleColor(3); }
+
     // ------------------------------------------------ window
 
     void drawWindowContent(){
@@ -277,30 +315,56 @@ public:
         if(!selected.empty() && !engine->scenes.count(selected)) selected.clear();
         if(selected.empty() && !engine->scenes.empty()) selected = engine->scenes.begin()->first;
 
+        applyInstAction();
         drawTopBar();
-        ImGui::Spacing();
-        if(ImGui::BeginTabBar("##formsTabs")){
+        drawPathLine();
+        // the main tabs: taller and blue, so the first level reads apart from the sub-tabs (teal, then violet)
+        float zt = z();
+        auto mainStyle = [zt](){
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16 * zt, 7 * zt));
+            ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.13f, 0.15f, 0.19f, 1));
+            ImGui::PushStyleColor(ImGuiCol_TabHovered, levelColor(0, 2));
+            ImGui::PushStyleColor(ImGuiCol_TabActive, levelColor(0, 1));
+        };
+        auto mainStyleEnd = [](){ ImGui::PopStyleColor(3); ImGui::PopStyleVar(); };
+        // a main tab: its content is drawn with the editor's own style, and says where it is (the path line)
+        auto mainTab = [&](const char* label, const char* name, ImGuiTabItemFlags flags, const std::function<void()>& content){
+            if(!ImGui::BeginTabItem(label, nullptr, flags)) return;
+            mainStyleEnd();
+            crumb(0, name);
+            content();
+            mainStyle();
+            ImGui::EndTabItem();
+        };
+        mainStyle();
+        bool mainBar = ImGui::BeginTabBar("##formsTabs");
+        if(!mainBar) mainStyleEnd();
+        if(mainBar){
             // Stage (what plays, all at once) | composing | the output; Gallery and System on the right edge
-            if(ImGui::BeginTabItem("Stage")){ drawStageTab(); ImGui::EndTabItem(); }
-            if(ImGui::BeginTabItem("Scenes", nullptr, showTab == "Scenes" ? ImGuiTabItemFlags_SetSelected : 0)){ drawScenesTab(); ImGui::EndTabItem(); }
-            std::string ins = std::string("Instruments") + (dirtyPresets.empty() ? "" : " *") + (auditioning() ? "  (audition)" : "") + "###instruments";
-            if(ImGui::BeginTabItem(ins.c_str())){ drawInstrumentsTab(); ImGui::EndTabItem(); }
-            std::string sl = std::string("Setlist") + (setlistDirty ? " *" : "") + "###setlist";
-            if(ImGui::BeginTabItem(sl.c_str())){ drawSetlistTab(); ImGui::EndTabItem(); }
-            std::string lib = std::string("Library") + (libraryDirty ? " *" : "") + "###library";
-            if(ImGui::BeginTabItem(lib.c_str())){ drawLibraryTab(); ImGui::EndTabItem(); }
+            mainTab("Stage", "Stage", 0, [this](){ drawStageTab(); });
+            // Compose: scenes, instruments and the library in one tab, a mode switch at the top
+            bool toCompose = showTab == "Compose" || showTab == "Scenes" || showTab == "Instruments" || showTab == "Library";
+            std::string comp = std::string("Compose") + ((dirty.empty() && dirtyPresets.empty() && !libraryDirty) ? "" : " *") + (auditioning() ? "  (audition)" : "") + "###compose";
+            mainTab(comp.c_str(), "Compose", toCompose ? ImGuiTabItemFlags_SetSelected : 0, [this](){ drawComposeTab(); });
+            // Programme: the setlist and the gallery of pages (replay, freeze, promote)
+            bool toProgramme = showTab == "Programme" || showTab == "Setlist" || showTab == "Gallery";
+            std::string prog = std::string("Programme") + (setlistDirty ? " *" : "") + (engine->replaying ? "  (replaying)" : "") + "###programme";
+            mainTab(prog.c_str(), "Programme", toProgramme ? ImGuiTabItemFlags_SetSelected : 0, [this](){ drawProgrammeTab(); });
+            // Output: post-processing, the sound engine, export (the node's own panels)
+            if(drawPostTab || drawSoundTab || drawExportTab){
+                bool toOutput = showTab == "Output" || showTab == "Post-processing" || showTab == "Sonification" || showTab == "Export";
+                mainTab("Output###output", "Output", toOutput ? ImGuiTabItemFlags_SetSelected : 0, [this](){ drawOutputTab(); });
+            }
             std::string as = std::string("Assistant") + (aiAuditioning ? "  (Keep / Discard)" : "") + "###assistant";
-            if(ImGui::BeginTabItem(as.c_str())){ drawAssistantTab(); ImGui::EndTabItem(); }
-            if(drawPostTab && ImGui::BeginTabItem("Post-processing")){ drawPostTab(); ImGui::EndTabItem(); }
-            if(drawSoundTab && ImGui::BeginTabItem("Sonification")){ drawSoundTab(); ImGui::EndTabItem(); }
-            if(drawExportTab && ImGui::BeginTabItem("Export")){ drawExportTab(); ImGui::EndTabItem(); }
-            std::string gal = std::string("Gallery") + (engine->replaying ? "  (replaying)" : "") + "###gallery";
-            if(ImGui::BeginTabItem(gal.c_str(), nullptr, ImGuiTabItemFlags_Trailing)){ drawGalleryTab(); ImGui::EndTabItem(); }
-            if(ImGui::BeginTabItem("System", nullptr, ImGuiTabItemFlags_Trailing)){ drawSystemTab(); ImGui::EndTabItem(); }
+            mainTab(as.c_str(), "Assistant", 0, [this](){ drawAssistantTab(); });
+            mainTab("System", "System", ImGuiTabItemFlags_Trailing, [this](){ drawSystemTab(); });
             showTab.clear();   // a requested tab is selected once
             ImGui::EndTabBar();
+            mainStyleEnd();
         }
+        for(int i = 0; i < 4; i++){ hereShown[i] = here[i]; here[i].clear(); }
         drawPickerPopup();
+        drawInstDeleteModal();
         drawCompareWindow();
         // undo / redo keys while the window has focus (not while typing)
         if(ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput){
@@ -378,7 +442,7 @@ private:
     char aiPrompt[2048] = "";
     std::future<ofxOceanodeAIAssistant::TextResult> aiFuture;
     std::string aiStatus, aiAnswer, aiUser, aiTempRef, aiTargetRef, aiSelBefore;
-    std::vector<std::string> aiProblems;
+    std::vector<std::string> aiProblems, aiNotes;   // problems of a rejected answer; slips fixed in an accepted one
     json aiProposal, aiBefore;
     void trackUndo();
     void doUndo(bool redo);
@@ -429,7 +493,7 @@ private:
         dl->AddRectFilled(p, ImVec2(p.x + tw, p.y + th), IM_COL32(10, 10, 12, 255), 3 * zz);
         if(auto* t = headerTexture()) ImGui::Image(texId(*t), ImVec2(tw, th)); else ImGui::Dummy(ImVec2(tw, th));
         if(ImGui::IsItemHovered()){
-            if(L.header) ImGui::SetTooltip("image %s  |  %d bars  |  %d BPM  |  %s  |  %s\n%d x %d  |  %d rendering  %d ready  shown %d  repeats %d  skipped %d",
+            if(L.header) ImGui::SetTooltip("image %s  |  %g bars  |  %d BPM  |  %s  |  %s\n%d x %d  |  %d rendering  %d ready  shown %d  repeats %d  skipped %d",
                                            L.header->id.c_str(), L.header->bars, L.header->bpm, L.header->scale.c_str(), L.header->palette.c_str(),
                                            imageW, imageH, (int)engine->pending.size(), (int)L.ready.size(), L.shown, L.repeats, engine->skipped);
             else ImGui::SetTooltip("waiting for the first image");
@@ -472,8 +536,22 @@ private:
         if(ImGui::SmallButton("details")) topBarExpanded = true;
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("The large header: preview, image details, render counts");
         ImGui::EndGroup();
+        drawNoNewImages();
+    }
+    // The image on stage repeats when nothing asks for a new one: say so, and why, where it cannot be missed
+    void drawNoNewImages(){
+        std::string why = noNewImagesWhy ? noNewImagesWhy() : std::string();
+        if(why.empty()) return;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(1, 0.45f, 0.2f, 1), "No new images: %s. The image on stage repeats.", why.c_str());
+        if(resumeImages){
+            ImGui::SameLine(0, 10 * z());
+            if(ImGui::Button("Resume images")) resumeImages();
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Turns Auto GO and the session sequence back on; the session timer starts again from 0");
+        }
     }
     void drawTopBarFull(){
+        drawNoNewImages();
         drawAutoGo();
         ImGui::SameLine(0, 12 * z());
         if(ImGui::SmallButton("compact")) topBarExpanded = false;
@@ -509,7 +587,7 @@ private:
         ImGui::SetWindowFontScale(theme::enabled() ? theme::fsXL() : 1.35f);
         ImGui::Text("%s", L.header ? L.header->scene.c_str() : "-");
         ImGui::SetWindowFontScale(1.0f);
-        if(L.header) ImGui::TextDisabled("image %s  |  %d bars  |  %d BPM  |  %s  |  %s", L.header->id.c_str(), L.header->bars, L.header->bpm,
+        if(L.header) ImGui::TextDisabled("image %s  |  %g bars  |  %d BPM  |  %s  |  %s", L.header->id.c_str(), L.header->bars, L.header->bpm,
                                          L.header->scale.c_str(), L.header->palette.c_str());
         ImGui::Spacing();
         const Scene* next = engine->currentScene();
@@ -543,10 +621,91 @@ private:
 
     void drawScenesTab();
     void drawLiveTab();
+    // Compose: Scenes | Instruments | Library behind one tab (the three old tabs' bodies)
+    int composeMode = 0;   // 0 scenes, 1 instruments, 2 library
+    int programmeMode = 0; // 0 setlist, 1 gallery
+    int outputMode = 0;    // 0 post-processing, 1 sound engine, 2 export
+    // a row of mode buttons (the lit one is the mode); labels with a dirty mark where asked
+    void modeButtons(int& mode, const std::vector<std::pair<std::string, bool>>& modes, const char* hint){
+        float zz = z();
+        for(int i = 0; i < (int)modes.size(); i++){
+            if(i) ImGui::SameLine(0, 2 * zz);
+            bool on = mode == i;
+            ImGui::PushStyleColor(ImGuiCol_Button, on ? levelColor(1, 1) : ImVec4(0.16f, 0.18f, 0.22f, 1));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? levelColor(1, 2) : ImVec4(0.22f, 0.26f, 0.32f, 1));
+            std::string lab = modes[i].first + (modes[i].second ? " *" : "");
+            if(ImGui::Button(lab.c_str(), ImVec2(130 * zz, 0))) mode = i;
+            ImGui::PopStyleColor(2);
+        }
+        if(mode >= 0 && mode < (int)modes.size()) crumb(1, modes[mode].first);
+        if(hint && *hint){ ImGui::SameLine(0, 16 * zz); ImGui::TextDisabled("%s", hint); }
+        ImGui::Separator();
+    }
+    void drawProgrammeTab(){
+        if(showTab == "Setlist") programmeMode = 0; else if(showTab == "Gallery") programmeMode = 1;
+        modeButtons(programmeMode, {{"Setlist", setlistDirty}, {"Gallery", false}},
+                    programmeMode == 0 ? "the order of the concert: scenes, images per entry, hard cuts" : "every page drawn so far: replay a session, freeze a page as a layer, promote one to a scene");
+        if(programmeMode == 0) drawSetlistTab(); else drawGalleryTab();
+    }
+    void drawOutputTab(){
+        if(showTab == "Post-processing") outputMode = 0; else if(showTab == "Sonification") outputMode = 1; else if(showTab == "Export") outputMode = 2;
+        std::vector<std::pair<std::string, bool>> modes;
+        std::vector<int> which;
+        if(drawPostTab){ modes.push_back({"Post-processing", false}); which.push_back(0); }
+        if(drawSoundTab){ modes.push_back({"Sound engine", false}); which.push_back(1); }
+        if(drawExportTab){ modes.push_back({"Export", false}); which.push_back(2); }
+        int idx = 0; for(int i = 0; i < (int)which.size(); i++) if(which[i] == outputMode) idx = i;
+        modeButtons(idx, modes, outputMode == 0 ? "the image after the layers: masks, feathers, levels, the header line (saved with the patch)"
+                               : outputMode == 1 ? "the sound of the whole node: partials, FX, EQ, compressor, kick samples, ducking (saved with the patch; a scene's own sound is in Compose)"
+                               : "render the setlist to video and audio");
+        outputMode = which.empty() ? 0 : which[std::max(0, std::min(idx, (int)which.size() - 1))];
+        if(outputMode == 0 && drawPostTab) drawPostTab(); else if(outputMode == 1 && drawSoundTab) drawSoundTab(); else if(outputMode == 2 && drawExportTab) drawExportTab();
+    }
+    void drawComposeTab(){
+        if(showTab == "Scenes") composeMode = 0; else if(showTab == "Instruments") composeMode = 1; else if(showTab == "Library") composeMode = 2;
+        float zz = z();
+        const char* names[3] = {"Scenes", "Instruments", "Library"};
+        bool dirtyMode[3] = {!dirty.empty(), !dirtyPresets.empty(), libraryDirty};
+        for(int i = 0; i < 3; i++){
+            if(i) ImGui::SameLine(0, 2 * zz);
+            bool on = composeMode == i;
+            ImGui::PushStyleColor(ImGuiCol_Button, on ? levelColor(1, 1) : ImVec4(0.16f, 0.18f, 0.22f, 1));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? levelColor(1, 2) : ImVec4(0.22f, 0.26f, 0.32f, 1));
+            std::string lab = std::string(names[i]) + (dirtyMode[i] ? " *" : "");
+            if(ImGui::Button(lab.c_str(), ImVec2(120 * zz, 0))) composeMode = i;
+            ImGui::PopStyleColor(2);
+        }
+        ImGui::SameLine(0, 16 * zz);
+        ImGui::TextDisabled(composeMode == 0 ? "a scene: its layers, look and harmony, sound, and each layer's instruments (click a cell to edit the instrument beside it)"
+                            : composeMode == 1 ? "every instrument preset: browse, edit, preview, add to the selected scene"
+                            : "the scales and palettes every scene picks from");
+        ImGui::Separator();
+        crumb(1, names[std::max(0, std::min(composeMode, 2))]);
+        if(composeMode == 1 && !selPreset.empty()) crumb(2, selPreset);
+        if(composeMode == 0) drawScenesTab(); else if(composeMode == 1) drawInstrumentsTab(); else drawLibraryTab();
+    }
     // Stage: the output, the scene under the header in six cards (layers, colour & harmony, levels &
     // stereo, live faders, movement, kick) and the scene pads, on one screen (formsEditorStage.h)
     void drawStageTab();
     bool drawSceneLook(Scene& s);                       // palette, scale, note grid, BPM, root, bass degree, harmony
+    // right-click menus (formsEditorMenus.h) and their clipboard
+    json clipValue; std::string clipKey;
+    void sceneFieldMenu(Scene& s, const char* id, const json& value, const json& def, const std::function<void(Scene&, const json&)>& set, bool& changed);
+    void perfParamMenu(Scene& s, const PerfParam& p, json& v, bool& changed);
+    void instrumentParamMenu(const ParamDef& p, json& v, bool& changed, bool& erase);
+    // The one right-click menu of an instrument, wherever it is listed: mute / solo, edit, send to a layer
+    // (move, when it sits in a scene's cell; add, from the library), remove from the layer, delete.
+    // scene / layer / cell: the cell it is listed from ("" / -1 in the library). The change is done at
+    // the start of the next frame (the lists are being drawn when the menu is clicked).
+    struct InstAction { int kind = 0; std::string scene, ref; int layer = -1, cell = -1, target = -1; };   // 1 move, 2 add, 3 remove from layer
+    InstAction instAction;
+    std::string instDeleteAsk;      // a preset to delete, once confirmed
+    void instrumentMenuItems(const std::string& ref, const std::string& scene = "", int layer = -1, int cell = -1);
+    bool instrumentMenu(const char* id, const std::string& ref, const std::string& scene = "", int layer = -1, int cell = -1);
+    void applyInstAction();
+    void drawInstDeleteModal();
+    bool drawSceneSound(Scene& s, bool columns = false); // levels & stereo, movement, kick: three columns, or folds
+    bool drawKickSettings(Scene& s);                    // the scene's kick (Stage and Compose)
     bool drawPerfParam(Scene& s, const PerfParam& p, float itemWidth = 0);   // one performance setting
     bool drawPerformanceCard(Scene& s, const std::vector<std::string>& keys, const std::vector<std::string>& more);
     void drawLiveFaders();
@@ -726,6 +885,7 @@ private:
     bool drawLinkedEditor(json& linked, const std::string& key);
 
     bool drawParamTabs(const GenDef& g, json& params);
+    std::string groupNotInUse(const GenDef& g, const std::string& grp, const json& params);
     bool drawCoverParams(json& params);
 
     bool beginParamTable(){
@@ -838,6 +998,34 @@ private:
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(-FLT_MIN);
             if(ImGui::Combo("##v", &mode, modes, 3)){ v = mode == 2 ? json{{"either", true}} : json(mode == 1); changed = true; }
+        }else if(p.isRange() && v.is_object() && v.contains("options")){
+            // a list of ranges, one picked per image: "0 : 1, 0.1 : 0.75"
+            std::string txt;
+            for(auto& o : v["options"]) if(o.is_array() && o.size() >= 2 && o[0].is_number() && o[1].is_number())
+                txt += (txt.empty() ? "" : ", ") + ofToString(o[0].get<float>()) + " : " + ofToString(o[1].get<float>());
+            auto& buf = listBufs[p.key];
+            if(listActive != p.key) snprintf(buf.data(), buf.size(), "%s", txt.c_str());
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputText("##v", buf.data(), buf.size());
+            if(ImGui::IsItemActive()) listActive = p.key;
+            else if(listActive == p.key) listActive.clear();
+            if(ImGui::IsItemDeactivatedAfterEdit()){
+                json l = json::array();
+                bool ints = p.type == "intRange";
+                for(auto& tok : ofSplitString(buf.data(), ",", true, true)){
+                    auto ab = ofSplitString(tok, ":", true, true);
+                    try {
+                        float a = ofClamp(std::stof(ab.at(0)), p.min, p.max), b = ofClamp(std::stof(ab.size() > 1 ? ab[1] : ab[0]), p.min, p.max);
+                        if(b < a) std::swap(a, b);
+                        l.push_back(ints ? json{(int)std::lround(a), (int)std::lround(b)} : json{a, b});
+                    } catch(...) {}
+                }
+                if(l.size() == 1) v = l[0];
+                else if(!l.empty()) v = json{{"options", l}};
+                changed = true;
+            }
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("one of these ranges per image, as  low : high  separated by commas\n(a single range turns it back into the two-handle slider)");
         }else if(p.isRange()){
             float a = v.is_array() && v.size() > 0 ? v[0].get<float>() : p.min;
             float b = v.is_array() && v.size() > 1 ? v[1].get<float>() : a;
@@ -887,6 +1075,7 @@ private:
             ImGui::TextDisabled("(%s)", p.type.c_str());
         }
 
+        instrumentParamMenu(p, v, changed, erase);   // right-click on the control
         ImGui::TableNextColumn();
         if(set){
             if(ImGui::SmallButton("x")) erase = true;
@@ -1081,3 +1270,4 @@ inline std::string Editor::previewSceneName() const { return !previewScene.empty
 #include "formsEditorTabs.h"
 #include "formsEditorBackports.h"
 #include "formsEditorStage.h"
+#include "formsEditorMenus.h"

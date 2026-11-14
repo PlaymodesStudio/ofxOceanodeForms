@@ -171,88 +171,93 @@ inline void Editor::drawScenesTab(){
     sceneLayer = ofClamp(sceneLayer, 0, (int)s.layers.size() - 1);
     const ImVec4 layerBlue(0.55f, 0.85f, 1.0f, 1);
 
-    // ---- LAYERS (left) | SCENE (right)
-    if(ImGui::BeginTable("##sceneTop", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)){
-        ImGui::TableSetupColumn("layers", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-        ImGui::TableSetupColumn("scene", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableNextColumn();
-        changed |= drawLayerStack(s);
-        ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.5f, 1), "SCENE");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(all layers)");
-        ImGui::SetNextItemWidth(110 * zz); changed |= ImGui::InputInt("BPM", &s.bpm); s.bpm = ofClamp(s.bpm, 1, 999);
-        changed |= paletteCombo("Palette", s.palette);
-        changed |= scaleCombo("Scale", s.scale);
-        if(engine->pitchFollow.scaleOn){
-            static const char* nn[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-            std::string nt; for(int n : engine->pitchFollow.notes) nt += (nt.empty() ? "" : " ") + ofToString(n);
-            ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1), "Global Pitch: %s on %s%s (the scene scale is overridden; untick Forms in the Global Pitch inspector to keep it)", nt.c_str(), nn[((engine->pitchFollow.rootPc % 12) + 12) % 12], engine->pitchFollow.shift ? (", shift " + ofToString(engine->pitchFollow.shift)).c_str() : "");
+    // ---- the editor in sub-tabs, each with the whole width and height (no small panels, no scrolling pages):
+    // layers | look & harmony | scene sound | the selected layer's instruments
+    LayerDef& l = s.layers[sceneLayer];
+    crumb(2, s.name);
+    pushTabLevel(2);
+    bool sceneTabs = ImGui::BeginTabBar("##sceneTabs");   // the colours stay on for the tab items
+    if(!sceneTabs) popTabLevel();
+    if(sceneTabs){
+        if(ImGui::BeginTabItem("Layers")){
+            crumb(3, "Layers");
+            ImGui::BeginChild("##tabLayers");
+            ImGui::TextDisabled("Bars per image, blend, order, kick layer, cover; opacity, blend and order act at once on what is playing.");
+            changed |= drawLayerStack(s);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
         }
-        ImGui::SetNextItemWidth(110 * zz); changed |= ImGui::InputInt("Notegrid", &s.notegrid); s.notegrid = ofClamp(s.notegrid, 12, 400);
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels per semitone in the images (100 in every 1920 scene)");
-        ImGui::SetNextItemWidth(110 * zz); changed |= ImGui::InputInt("Root note (sound)", &s.root); s.root = ofClamp(s.root, 0, 127);
-        ImGui::SetNextItemWidth(110 * zz); changed |= ImGui::InputInt("Bass degree", &s.bassDegree); s.bassDegree = ofClamp(s.bassDegree, 0, 11);
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Scale degree the bass instruments play, added to the bar's degree (0 = the root; past the scale's last degree it goes up an octave).\nAn instrument is a bass when its 'bass instrument' pitch option is on (next images).");
-        if(ImGui::TreeNode("Harmony (which degrees and transposes, per bar)")){
-            const ScaleDef es = engine->effectiveScale(s);
-            const ScaleDef* sd = es.name.empty() ? nullptr : &es;
-            changed |= weightBars("Degrees", s.degreeWeights, sd ? (int)sd->notes.size() : 12, true, sd);
-            changed |= weightBars("Transpose", s.transposeWeights, 12, false, nullptr);
-            changed |= drawHarmonyText(s);
+        if(ImGui::BeginTabItem("Look & harmony")){
+            crumb(3, "Look & harmony");
+            ImGui::BeginChild("##tabLook");
+            ImGui::TextDisabled((immediateSwitch && *immediateSwitch) ? "Palette, scale, grid, root, bass degree and degrees: into the pages on stage now (Immediate); BPM and root also act on the sound at once."
+                                                                       : "Palette, scale, grid, root, bass degree and degrees: from the next images (Immediate off); BPM and root act on the sound at once.");
+            changed |= drawSceneLook(s);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if(ImGui::BeginTabItem("Scene sound")){
+            crumb(3, "Scene sound");
+            ImGui::BeginChild("##tabSound");
+            ImGui::TextDisabled("This scene's sound: levels and stereo, movement, kick. Saved with the scene; acts at once while it plays.");
+            changed |= drawSceneSound(s, true);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        std::string instTab = "Instruments (layer " + ofToString(sceneLayer + 1) + ")###sceneInstruments";
+        if(ImGui::BeginTabItem(instTab.c_str())){
+            crumb(3, "Instruments (layer " + ofToString(sceneLayer + 1) + ")");
+            ImGui::BeginChild("##tabInstruments");
+        int active = 0;
+        for(int i = 0; i < std::min<int>(l.rows, (int)l.cells.size()); i++) if(!l.cells[i].item.empty() && l.cells[i].prob > 0) active++;
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.25f, 0.55f, 0.70f, 1));
+        ImGui::SeparatorText(("LAYER " + ofToString(sceneLayer + 1) + " INSTRUMENTS  (" + ofToString(active) + " active, " + barsText(l.bars) + " bars per image)").c_str());
+        ImGui::PopStyleColor();
+        changed |= drawLayerEffectPreset(s,sceneLayer);
+        if(ImGui::Button("+ Add instrument")){
+            onPick = [this, name = s.name, layerIdx = sceneLayer](const std::string& m){
+                auto it2 = engine->scenes.find(name);
+                if(it2 == engine->scenes.end()) return;
+                if(layerIdx >= (int)it2->second.layers.size()) return;
+                engine->addItemToScene(it2->second, layerIdx, m);
+                dirty.insert(name);
+            };
+            openPicker = true;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140 * zz);
+        changed |= ImGui::SliderFloat("image chance", &l.globalProb, 0, 100, "%.0f%%");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The chance that this layer draws anything at all in an image (the 1920 Global %%)");
+        ImGui::SameLine();
+        ImGui::TextDisabled("| click a thumbnail to edit the instrument, right-click to replace or move it, hover for details");
+        if(l.fixed.is_object()){
+            ImGui::TextColored(ImVec4(0.6f, 0.85f, 1, 1), "This layer is frozen: it always draws the image %s (from the Gallery).", l.fixed.value("from", std::string("?")).c_str());
+            ImGui::SameLine();
+            if(ImGui::SmallButton("unfreeze")){ l.fixed = json(); changed = true; }
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Back to a normal layer (its instruments are then the ones below; add some)");
+        }
+        if(ImGui::TreeNode("Groups and rows (advanced)")){
+            ImGui::Text("Group chance");
+            if(l.groupProb.size() < 7) l.groupProb.resize(7, 1.0f);
+            for(int g = 0; g < 7; g++){
+                if(g) ImGui::SameLine();
+                ImGui::PushID(g);
+                changed |= ImGui::VSliderFloat("##gp", ImVec2(22 * zz, 60 * zz), &l.groupProb[g], 0, 1, "");
+                if(ImGui::IsItemHovered()) ImGui::SetTooltip("Group G%d: %.0f%% (%d instruments)", g, l.groupProb[g] * 100, countGroup(l, g));
+                ImGui::PopID();
+            }
+            ImGui::SetNextItemWidth(120 * zz); changed |= ImGui::InputInt("Rows", &l.rows);
+            l.rows = ofClamp(l.rows, 1, 512);
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Only the first Rows instruments take part (the 1920 Director's Rows).");
             ImGui::TreePop();
         }
-        ImGui::EndTable();
-    }
-    changed |= drawPerformance(s);
-    ImGui::Spacing();
-
-    // ---- the selected layer's instruments
-    LayerDef& l = s.layers[sceneLayer];
-    int active = 0;
-    for(int i = 0; i < std::min<int>(l.rows, (int)l.cells.size()); i++) if(!l.cells[i].item.empty() && l.cells[i].prob > 0) active++;
-    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.25f, 0.55f, 0.70f, 1));
-    ImGui::SeparatorText(("LAYER " + ofToString(sceneLayer + 1) + " INSTRUMENTS  (" + ofToString(active) + " active, " + ofToString(l.bars) + " bars per image)").c_str());
-    ImGui::PopStyleColor();
-    changed |= drawLayerEffectPreset(s,sceneLayer);
-    if(ImGui::Button("+ Add instrument")){
-        onPick = [this, name = s.name, layerIdx = sceneLayer](const std::string& m){
-            auto it2 = engine->scenes.find(name);
-            if(it2 == engine->scenes.end()) return;
-            if(layerIdx >= (int)it2->second.layers.size()) return;
-            engine->addItemToScene(it2->second, layerIdx, m);
-            dirty.insert(name);
-        };
-        openPicker = true;
-    }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(140 * zz);
-    changed |= ImGui::SliderFloat("image chance", &l.globalProb, 0, 100, "%.0f%%");
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The chance that this layer draws anything at all in an image (the 1920 Global %%)");
-    ImGui::SameLine();
-    ImGui::TextDisabled("| click a thumbnail to swap, right-click to edit or move, hover for details");
-    if(l.fixed.is_object()){
-        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1, 1), "This layer is frozen: it always draws the image %s (from the Gallery).", l.fixed.value("from", std::string("?")).c_str());
-        ImGui::SameLine();
-        if(ImGui::SmallButton("unfreeze")){ l.fixed = json(); changed = true; }
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Back to a normal layer (its instruments are then the ones below; add some)");
-    }
-    if(ImGui::TreeNode("Groups and rows (advanced)")){
-        ImGui::Text("Group chance");
-        if(l.groupProb.size() < 7) l.groupProb.resize(7, 1.0f);
-        for(int g = 0; g < 7; g++){
-            if(g) ImGui::SameLine();
-            ImGui::PushID(g);
-            changed |= ImGui::VSliderFloat("##gp", ImVec2(22 * zz, 60 * zz), &l.groupProb[g], 0, 1, "");
-            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Group G%d: %.0f%% (%d instruments)", g, l.groupProb[g] * 100, countGroup(l, g));
-            ImGui::PopID();
+        changed |= drawCellCards(s, l);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
         }
-        ImGui::SetNextItemWidth(120 * zz); changed |= ImGui::InputInt("Rows", &l.rows);
-        l.rows = ofClamp(l.rows, 1, 512);
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Only the first Rows instruments take part (the 1920 Director's Rows).");
-        ImGui::TreePop();
+        ImGui::EndTabBar();
+        popTabLevel();
     }
-    changed |= drawCellCards(s, l);
 
     if(changed) dirty.insert(s.name);
     ImGui::EndChild();
@@ -329,6 +334,7 @@ inline void Editor::drawLiveTab(){
                 if(off) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.45f);
                 std::string lab = (u.depth ? std::string((size_t)u.depth * 2, ' ') + "- " : std::string()) + pi->second.name;
                 ImGui::TextColored(genColour(pi->second.gen), "%s", lab.c_str());
+                instrumentMenu("##instMenu", u.ref, u.depth ? std::string() : s.name, u.layer, u.depth ? -1 : u.cell);
                 if(ImGui::IsItemHovered()) methodTooltip(u.ref);
                 if(!u.depth){   // chance per image and volume, at the right of the row
                     float dragW = 50 * zz, gap = ImGui::GetStyle().ItemSpacing.x;
@@ -390,6 +396,14 @@ inline void Editor::drawLiveTab(){
 inline bool Editor::drawLayerStack(Scene& s, bool compact){
     float zz = z();
     bool changed = false;
+    // the full editor: the stack in a left column, the selected layer's settings (and its effects /
+    // sound on every scene) in a right column; compact (Stage): the rows only
+    bool twoCols = !compact && ImGui::BeginTable("##layersCols", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV);
+    if(twoCols){
+        ImGui::TableSetupColumn("stack", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("layer", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableNextColumn();
+    }
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.22f, 0.30f, 1));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.25f, 0.55f, 0.70f, 1));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10 * zz, 8 * zz));
@@ -407,7 +421,7 @@ inline bool Editor::drawLayerStack(Scene& s, bool compact){
         ImGui::PushStyleColor(ImGuiCol_Button, sel ? ImVec4(0.20f, 0.55f, 0.75f, 1) : ImVec4(0.14f, 0.20f, 0.25f, 1));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, sel ? ImVec4(0.25f, 0.62f, 0.82f, 1) : ImVec4(0.20f, 0.30f, 0.38f, 1));
         std::string lab = "Layer " + ofToString(i + 1) + (L.kick || (i == 0 && std::none_of(s.layers.begin(), s.layers.end(), [](const LayerDef& x){ return x.kick; })) ? "  [kick]" : "") +
-                          "\n" + ofToString(L.bars) + " bars" + (L.repeat > 1 ? " x" + ofToString(L.repeat) : std::string()) + ", " + L.blend;
+                          "\n" + barsText(L.bars) + " bars" + (L.repeat > 1 ? " x" + ofToString(L.repeat) : std::string()) + ", " + L.blend;
         if(ImGui::Button(lab.c_str(), ImVec2(150 * zz, 38 * zz))) sceneLayer = i;
         ImGui::PopStyleColor(2);
         ImGui::SameLine();
@@ -452,20 +466,45 @@ inline bool Editor::drawLayerStack(Scene& s, bool compact){
         changed = true;
     }
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("A transparent layer with its own bars per image (it scrolls at its own speed), instruments, blend and opacity");
-    // the selected layer's own settings
+    ImGui::EndChild();   // ##layerstack
+    if(twoCols) ImGui::TableNextColumn();
+    // the selected layer's own settings, in a box of their own
     LayerDef& sl = s.layers[sceneLayer];
-    ImGui::Separator();
+    ImGui::BeginChild("##layersel", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1), "Layer %d", sceneLayer + 1);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(90 * zz);
-    if(ImGui::InputInt("bars", &sl.bars)){ sl.bars = ofClamp(sl.bars, 1, 64); changed = true; }
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Bars per image: more bars scroll more slowly. %.1f s per image at speed 1.", sl.bars * 4 * 60.0f / std::max(1, s.bpm));
+    {
+        double b = sl.bars;
+        // +/-: whole bars from 1 up, halves below 1 (1, 0.5, 0.25 ...); any multiple of 1/16 can be typed
+        if(ImGui::InputDouble("bars", &b, 0, 0, "%g")){ sl.bars = std::min(64.0, quantBars(b)); changed = true; }
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Bars per image: more bars scroll more slowly; a fraction is shorter than a bar\n(0.5 = two beats, 0.25 = one beat; steps of 1/16 bar). %.2f s per image at speed 1.\n"
+                                                     "Short pages need many renders: with Repeat they keep up.", sl.bars * 4 * 60.0f / std::max(1, s.bpm));
+        ImGui::SameLine(0, 2);
+        if(ImGui::SmallButton("-##bars")){ sl.bars = sl.bars > 1 ? std::max(1.0, std::ceil(sl.bars) - 1) : std::max(1.0 / kBarGrid, quantBars(sl.bars / 2)); changed = true; }
+        ImGui::SameLine(0, 2);
+        if(ImGui::SmallButton("+##bars")){ sl.bars = sl.bars < 1 ? std::min(1.0, quantBars(sl.bars * 2)) : std::min(64.0, std::floor(sl.bars) + 1); changed = true; }
+    }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(90 * zz);
     if(ImGui::InputInt("repeat", &sl.repeat)){ sl.repeat = ofClamp(sl.repeat, 1, 16); changed = true; }
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Each image (page) plays this many times in a row, then a new one comes (rendered while it repeats).\n"
                                                  "1: a new image every time. On layer 1 the harmony repeats with it, so the other layers follow its chords.\n"
                                                  "Takes effect from the next image asked for. %.1f s per new image at speed 1.", sl.bars * sl.repeat * 4 * 60.0f / std::max(1, s.bpm));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90 * zz);
+    {
+        double ph = sl.phrase;
+        if(ImGui::InputDouble("phrase", &ph, 0, 0, ph > 0 ? "%g" : "off")){ sl.phrase = ph <= 0 ? 0 : std::min(64.0, quantBars(ph)); changed = true; }
+        int n = phraseSlices(sl);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Phrase (bars; 0 = off): one render draws the whole phrase and the layer shows it page by page,\n"
+                                                     "each page the next part of it, so patterns and long notes run on across short pages\n"
+                                                     "(e.g. bars 0.5, phrase 4: one 4-bar drawing shown in 8 pages). Rounded up to whole pages.\n"
+                                                     "Now: %s. One render every %.1f s at speed 1 (Repeat repeats the whole phrase).\n"
+                                                     "Drawn up to 16384 px wide; beyond that the pages are a little softer. Export and Gallery replay show the phrase whole.",
+                                                     n > 1 ? (std::to_string(n) + " pages of " + barsText(sl.bars) + " bars = " + barsText(phraseBars(sl)) + " bars").c_str() : "off (the phrase is not longer than the page)",
+                                                     phraseBars(sl) * sl.repeat * 4 * 60.0f / std::max(1, s.bpm));
+    }
     ImGui::SameLine();
     const char* blends[] = {"lighten", "add", "normal"};
     int bi = sl.blend == "add" ? 1 : sl.blend == "normal" ? 2 : 0;
@@ -510,33 +549,9 @@ inline bool Editor::drawLayerStack(Scene& s, bool compact){
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(2);
-    // the same layer's effects and sound: not the scene's (every scene, saved with the patch), so in
-    // a box of their own, and never marking the scene changed
-    if(drawLayerLook || drawLayerSound){
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.16f, 0.12f, 1));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.50f, 0.35f, 1));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10 * zz, 8 * zz));
-        ImGui::BeginChild("##layerEveryScene", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-        ImGui::TextColored(ImVec4(0.65f, 0.85f, 0.6f, 1), "Layer %d on every scene", sceneLayer + 1);
-        ImGui::SameLine();
-        savedWithPatchNote();
-        ImGui::PushID(sceneLayer);
-        if(ImGui::BeginTable("##everyScene", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV)){
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("effects (before the sound)");
-            ImGui::PushItemWidth(-90 * zz);
-            if(drawLayerLook) drawLayerLook(sceneLayer);
-            ImGui::PopItemWidth();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("sound");
-            if(drawLayerSound) drawLayerSound(sceneLayer);
-            ImGui::EndTable();
-        }
-        ImGui::PopID();
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(2);
-    }
+    // (the layer's every-scene effects and sound are not shown here: they are not the scene's, and the box
+    // read as part of it; they stay in Output > Post-processing and Output > Sound engine)
+    if(twoCols) ImGui::EndTable();
     return changed;
 }
 
@@ -582,6 +597,14 @@ inline bool Editor::drawPerfParam(Scene& s, const PerfParam& p, float itemWidth)
         // Folder samples retain their legacy names; a browsed sample belongs to this scene.
         std::string cur = v.is_string() ? v.get<std::string>() : std::string();
         std::string label=s.kickSample?s.kickSample->name+" (embedded)":cur.empty()?"(by number)":cur;
+        if(browseKickSample){   // leave room for the Browse button after the label, inside the column
+            float reserve = ImGui::CalcTextSize("Browse...").x + ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetStyle().ItemSpacing.x;
+            float base = itemWidth != 0 ? itemWidth : 220 * z();
+            float labelW = ImGui::CalcTextSize(p.label, nullptr, true).x + ImGui::GetStyle().ItemInnerSpacing.x;
+            if(base > 0) base = std::min(base, ImGui::GetContentRegionAvail().x - labelW);
+            else base = std::min(base, -labelW);   // the label gutter must hold the whole label
+            ImGui::SetNextItemWidth(base < 0 ? base - reserve : std::max(60 * z(), base - reserve));
+        }
         if(ImGui::BeginCombo(p.label,label.c_str())){
             if(ImGui::Selectable("(by number)",cur.empty()&&!s.kickSample)){v="";s.kickSample.reset();s.performance["kickSynth"]=0;changed=true;}
             for(auto& k:kickNames) if(ImGui::Selectable(k.c_str(),k==cur&&!s.kickSample)){
@@ -608,6 +631,7 @@ inline bool Editor::drawPerfParam(Scene& s, const PerfParam& p, float itemWidth)
         }
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Comma-separated values, Enter to apply");
     }
+    perfParamMenu(s, p, v, changed);   // right-click on the control
     ImGui::PopID();
     return changed;
 }
@@ -655,8 +679,9 @@ inline bool Editor::drawCellCards(Scene& s, LayerDef& l){
         if(t) clicked = ImGui::ImageButton("##thumb", texId(*t), ImVec2(thumbW, imgH), ImVec2(0, 0), ImVec2(1, 1));
         else { clicked = ImGui::Button("##thumb", ImVec2(thumbW, imgH)); dl->AddText(ImVec2(p.x + 6 * zz, p.y + imgH / 2 - 6 * zz), IM_COL32(110, 110, 110, 255), "no thumbnail"); }
         ImGui::PopStyleVar();
-        if(clicked){
-            onPick = [this, name = s.name, i, layerIdx = sceneLayer](const std::string& m){
+        // click: edit the instrument beside the cells (a legacy method has no editor: the picker instead)
+        auto replaceHere = [this, name = s.name, i, layerIdx = sceneLayer](){
+            onPick = [this, name, i, layerIdx](const std::string& m){
                 auto it2 = engine->scenes.find(name);
                 if(it2 != engine->scenes.end() && layerIdx < (int)it2->second.layers.size() && i < (int)it2->second.layers[layerIdx].cells.size()){
                     it2->second.layers[layerIdx].cells[i].item = m;
@@ -664,18 +689,17 @@ inline bool Editor::drawCellCards(Scene& s, LayerDef& l){
                 }
             };
             openPicker = true;
+        };
+        if(clicked){
+            if(engine->presets.count(c.item)) sceneInstrumentEditRef = c.item;
+            else replaceHere();
         }
         if(ImGui::IsItemHovered()) methodTooltip(c.item);
         if(ImGui::BeginPopupContextItem("##cellmenu")){
-            ImGui::TextDisabled("%s", shortName(c.item).c_str());
+            if(ImGui::MenuItem("Replace instrument...")) replaceHere();
+            if(engine->presets.count(c.item) && ImGui::MenuItem("Edit here, beside the cells")) sceneInstrumentEditRef = c.item;
             ImGui::Separator();
-            if(engine->presets.count(c.item) && ImGui::MenuItem("Edit instrument")) sceneInstrumentEditRef = c.item;
-            for(int k = 0; k < (int)s.layers.size(); k++){
-                if(k == sceneLayer) continue;
-                std::string lab = "Move to layer " + ofToString(k + 1) + " (" + ofToString(s.layers[k].bars) + " bars)";
-                if(ImGui::MenuItem(lab.c_str())){ moveCell = i; moveTo = k; }
-            }
-            if(ImGui::MenuItem("Move to a new layer")){ moveCell = i; moveTo = -1; }
+            instrumentMenuItems(c.item, s.name, sceneLayer, i);
             ImGui::EndPopup();
         }
         // family stripe + solo badge
@@ -753,7 +777,7 @@ inline bool Editor::drawCellCards(Scene& s, LayerDef& l){
 inline void Editor::drawSceneInstrumentEditor(std::string ref){
     float zz = z();
     if(ref.empty() || !engine->presets.count(ref)){
-        ImGui::TextDisabled("Right-click an instrument thumbnail and choose Edit instrument.");
+        ImGui::TextDisabled("Click an instrument thumbnail to edit it here.");
         return;
     }
     // This table follows the scene settings and may start near the viewport's bottom.
@@ -770,6 +794,9 @@ inline void Editor::drawSceneInstrumentEditor(std::string ref){
         ImGui::EndChild();
         return;
     }
+    ImGui::SameLine();
+    if(ImGui::SmallButton("Open in Instruments##sceneInstrumentEditor")){ selPreset = ref; composeMode = 1; showTab = "Compose"; }
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The full instrument page: preview, audition, stack layers, notes");
     ImGui::SameLine();
     bool isDirty = dirtyPresets.count(ref) > 0;
     if(ImGui::SmallButton(isDirty ? "Save *##sceneInstrumentEditor" : "Save##sceneInstrumentEditor")){
