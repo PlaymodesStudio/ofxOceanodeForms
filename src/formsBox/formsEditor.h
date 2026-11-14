@@ -117,6 +117,8 @@ public:
     std::function<std::string()> noNewImagesWhy;
     std::function<void()> resumeImages;
     std::function<void(bool)> requestNext;                  // render the next image (force)
+    std::function<void()> previousImage;                    // layer 1's previous image back under the header
+    std::function<bool()> canPreviousImage;
     std::function<void(const std::string&)> renderScene;    // preview render of a scene
     // editor previews: (tag, items) variants rendered with one scene's harmony and a shared seed
     std::function<void(const std::string&, const std::vector<std::pair<std::string, json>>&)> sendPreviews;
@@ -542,6 +544,17 @@ private:
         ImGui::SameLine(0, 8 * zz);
         if(ImGui::Button("Next image now")) requestNext(true);
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Ask for the next image at once: palette, scale and harmony edits show sooner");
+        if(previousImage){
+            ImGui::SameLine(0, 4 * zz);
+            bool can = canPreviousImage && canPreviousImage();
+            ImGui::BeginDisabled(!can);
+            if(ImGui::Button("Previous image")) previousImage();
+            ImGui::EndDisabled();
+            if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Bring back the image layer 1 played before this one: it takes the place of the one playing, now.\n"
+                                  "Press again to go one further back (the last 4 are kept, within the scene that plays).\n"
+                                  "With Auto GO on, new images follow when the page ends; with it off the recovered image stays.");
+        }
         ImGui::SameLine(0, 12 * zz);
         drawUndoButtons();
         ImGui::SameLine(0, 12 * zz);

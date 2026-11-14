@@ -244,6 +244,7 @@ public:
     void startReplay(const std::string& name, const std::deque<std::shared_ptr<Image>>& l1, const std::map<int, std::deque<std::shared_ptr<Image>>>& extra){
         if(l1.empty()){ note("replay: " + name + " has no layer-1 images"); return; }
         replaying = true; replayName = name;
+        playedImages.clear();
         replayAll1 = l1; replayAllX = extra;
         replayLoop = 0;
         replayLoopBeats = 0; for(auto& im : l1) replayLoopBeats += 4.0 * std::max(1.0 / kBarGrid, im->bars);
@@ -367,6 +368,7 @@ public:
         pendingSince.clear();
         skipped = lost = errors = 0;
         for(auto& l : schedule->layers){ l.ready.clear(); l.shown = 0; l.repeats = 0; l.slots.clear(); l.scheduledEnd = -1; l.dropped = 0; l.replaceNext.reset(); }
+        playedImages.clear();
         schedule->headerBeat = 0;
         harmonyBars.clear();
         layer1NextBar = 0;
@@ -1055,6 +1057,9 @@ public:
         img->kick = l.kick;
         img->bars = layerBars(l);
         img->repeat = (previewItem || !sceneOverride.empty()) ? 1 : std::max(1, l.repeat);
+        // "Next image now" with Switch now: the image that replaces the one playing stands for one
+        // more page, so after the rest of the current page it plays once in full (switchNow keepPages)
+        if(layerIndex == 0 && extraRepeatNext > 0 && !previewItem && sceneOverride.empty()){ img->repeat += extraRepeatNext; extraRepeatNext = 0; }
         // a phrase: one render for `slices` pages (editor renders draw the page alone, as before)
         img->slices = (previewItem || !sceneOverride.empty()) ? 1 : phraseSlices(l);
         const double span = layerBars(l) * img->slices;   // the bars this render covers
@@ -1532,7 +1537,10 @@ public:
     // whose right-hand copy gives way to the next one, else 1), so it scrolls on normally after. Returns the requests'
     // paths; goDebt: GOs to skip for layer 1's repeated pages (as Forms Box's request()).
     std::shared_ptr<Image> lastImage;  // the last image makeRequest asked for
-    std::vector<std::string> switchNow(double bar, int& goDebt, int ahead = 2){
+    int extraRepeatNext = 0;           // extra pages the next layer-1 request stands for (once)
+    // keepPages: the switch image plays this many more whole pages after the one it replaces
+    // (Next image now on the same scene: 1, so the new image is not gone when the page ends)
+    std::vector<std::string> switchNow(double bar, int& goDebt, int ahead = 2, int keepPages = 0){
         std::vector<std::string> out;
         goDebt = 0;
         if(replaying) return out;
@@ -1546,7 +1554,9 @@ public:
         if(!layer1Plan.empty() && layer1Plan.back().startBar + layer1Plan.back().bars > bar) layer1Plan.back().bars = bar - layer1Plan.back().startBar;
         harmonyBars.erase(harmonyBars.lower_bound(barIndex(bar)), harmonyBars.end());   // the new scene's own chords
         layer1NextBar = bar;
+        extraRepeatNext = std::max(0, keepPages);
         std::string p = makeRequest(true);
+        extraRepeatNext = 0;
         if(p.empty() || !lastImage) return out;
         out.push_back(p);
         auto first = lastImage;
@@ -1588,6 +1598,45 @@ public:
         syncLog.push_back("switch now to " + to.name + " at bar " + barsText(bar));
         return out;
     }
+    // ---- Previous image: layer 1's image before the one under the header comes back in its place,
+    // now (the same in-place swap as Switch now). The last few images layer 1 showed are kept
+    // (trackPlayed, every frame); each press goes one further back. Only inside the scene that is
+    // playing. It plays the rest of the page it replaces and one whole page; what was waiting to
+    // come next on layer 1 is skipped; new images follow as usual.
+    std::deque<std::shared_ptr<Image>> playedImages;   // layer 1: the distinct images it showed, oldest first
+    void trackPlayed(){
+        if(replaying) return;
+        auto& L = schedule->layers[0];
+        if(!L.header || L.header->preview || L.replaceNext) return;   // (a swap in flight: wait for it)
+        if(!playedImages.empty() && playedImages.back()->id == L.header->id && playedImages.back()->png == L.header->png) return;   // its repeats, a phrase's pages, a recalled copy
+        playedImages.push_back(L.header);
+        while(playedImages.size() > 5) playedImages.pop_front();
+    }
+    bool canPrevious() const {
+        if(replaying || playedImages.size() < 2) return false;
+        auto& L = schedule->layers[0];
+        return L.header && !L.replaceNext && playedImages[playedImages.size() - 2]->scene == L.header->scene;
+    }
+    bool previousImage(){
+        if(!canPrevious()) return false;
+        auto& L = schedule->layers[0];
+        auto c = std::make_shared<Image>(*playedImages[playedImages.size() - 2]);
+        // it takes the place (and the bars) of the page it replaces
+        c->startBar = L.header->startBar; c->startBeat = L.header->startBeat;
+        c->cancelled = false; c->cutBeat = -1; c->copiesUntil = -1; c->repeat = 1;
+        playedImages.pop_back();
+        // and one more whole page of it (as a page that repeats): without it the recovered image
+        // would be gone as soon as the page it replaced ends
+        auto again = std::make_shared<Image>(*c);
+        again->repeatIndex = 1;
+        if(again->startBar >= 0) again->startBar += std::max(1.0 / kBarGrid, c->bars);
+        L.ready.push_front(again);
+        L.ready.push_front(c);
+        L.replaceNext = c;
+        note("previous image: " + c->id + " back under the header");
+        return true;
+    }
+
     // a switch image that will never arrive (error, lost): nothing waits for it
     void forgetReplace(const std::string& id){
         for(auto& L : schedule->layers) if(L.replaceNext && L.replaceNext->id == id) L.replaceNext.reset();

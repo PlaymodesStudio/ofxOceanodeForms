@@ -393,7 +393,7 @@ inline void Editor::drawSizeControl(){
     sizeEditing = activeW || activeH;
     if(imageW * imageH > 1920 * 1080 * 2)
         ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "Large images render several times slower (4K about 4.7x): fine for prints, may not keep up live.");
-    ImGui::TextDisabled("The size every scene's images are drawn at, from the next image on. Not saved in the scene.\nThe node's Width/Height is the display size; exports pick their own size.");
+    ImGui::TextDisabled("The size every scene's images are drawn at (from the next image on) and the size of the output texture (at once).\nNot saved in the scene. The node's Width/Height can set another output size afterwards; exports pick their own size.");
 }
 
 } // namespace forms

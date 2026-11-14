@@ -254,9 +254,14 @@ public:
         editor.requestNext = [this](bool force){
             const forms::Scene* n = engine.currentScene();
             auto& h = engine.schedule->layers[0].header;
-            if(force && (editor.perform.switchNow || (n && h && h->scene != n->name))) switchPending = true;
+            const bool otherScene = n && h && h->scene != n->name;
+            // the same scene (Switch now ticked): the new image replaces the one playing and then
+            // plays once in full, instead of being gone when the page ends
+            if(force && (editor.perform.switchNow || otherScene)){ switchKeepImage = !otherScene; switchPending = true; }
             else request(force);
         };
+        editor.previousImage = [this](){ engine.previousImage(); };
+        editor.canPreviousImage = [this](){ return !gateBypass && engine.canPrevious(); };
         editor.switchScene = [this](){ switchPending = true; };
         editor.renderScene = [this](const std::string& name){ send(engine.makeRequest(true, name)); };
         editor.sendPreviews = [this](const std::string& scene, const std::vector<std::pair<std::string, forms::json>>& variants){
@@ -317,7 +322,10 @@ public:
             sceneWasRenamed(from, to);
         };
         editor.newSession = [this](){ engine.newSession(); primePending = true; };
-        editor.setImageSize = [this](int w, int h){ imageWidth = w; imageHeight = h; };
+        // the size chosen in Stage > Look & harmony: the images are drawn at it AND the output
+        // texture takes it (the node's Width / Height can still be set apart afterwards, e.g. to
+        // show large images on a smaller output)
+        editor.setImageSize = [this](int w, int h){ imageWidth = w; imageHeight = h; viewW = w; viewH = h; };
         editor.useSetlist = &useSetlistLocal;
         editor.playerOn = [this](){ return builtInPlayer.get(); };
         // the view: the final image (every layer, post-processed), else layer 1
@@ -488,7 +496,7 @@ public:
         }
         lastUseSetlist = useSetlistLocal;
         // Switch now: after the setlist setting caught up (a pad sets it this frame)
-        if(switchPending){ switchPending = false; switchNowRun(); }
+        if(switchPending){ switchPending = false; switchNowRun(switchKeepImage); switchKeepImage = false; }
         editor.imageW = imageWidth;
         editor.imageH = imageHeight;
         editor.tick();
@@ -644,6 +652,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         int stageLayers = nLayers;
         exportLayerCount = stageLayers;
         std::shared_ptr<forms::Image> keepHeader;
+        engine.trackPlayed();        // Previous image: what layer 1 showed
         bool audition = auditionStage();
         gateBypass = audition;       // audition is heard alone, whatever is muted
         if(audition){ stageLayers = 1; keepHeader = engine.schedule->layers[0].header; engine.schedule->layers[0].header = auditionImage(); }
@@ -1901,7 +1910,8 @@ protected:   // (Forms GL Box derives from Forms Box)
 
     // Switch now: the next scene replaces what plays, on every layer (Engine::switchNow)
     bool switchPending = false;
-    void switchNowRun(){
+    bool switchKeepImage = false;    // this switch is "Next image now" on the scene that plays
+    void switchNowRun(bool keepImage = false){
         auto& h = engine.schedule->layers[0].header;
         // in bars, on the 1/16-bar grid (layer 1's page may be shorter than a bar)
         double bar = builtInPlayer ? std::round(scroller.headerStart / 4.0 * forms::kBarGrid) / forms::kBarGrid
@@ -1909,7 +1919,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         // the header left of the wrap: the switch image plays once, one more image is needed ahead
         float c = clock.phase + (viewW > 0 ? head.headerPos / viewW : 0);
         int debt = 0;
-        auto paths = engine.switchNow(bar, debt, builtInPlayer && c < 1 ? 3 : 2);
+        auto paths = engine.switchNow(bar, debt, builtInPlayer && c < 1 ? 3 : 2, keepImage ? 1 : 0);
         if(paths.empty()) return;
         goDebt = debt;
         for(auto& p : paths) send(p);
