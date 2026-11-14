@@ -441,6 +441,14 @@ public:
                 auto it=std::find_if(g.params.begin(),g.params.end(),[&](const ParamDef& old){return old.key==p.key;});
                 if(it==g.params.end()) g.params.push_back(p); else *it=p;
             }
+        // Blocking: the switch of the black background, on every generator that can blank
+        // ("blank what is underneath"), shown first in that parameter's group.
+        for(auto& g : gens){
+            auto cc=std::find_if(g.params.begin(),g.params.end(),[](const ParamDef& p){return p.key=="clearChance";});
+            if(cc==g.params.end() || g.param("blocking")) continue;
+            auto def=genDefFromJson({{"params",json::array({formscover::blockingSchema(cc->group)})}});
+            g.params.insert(cc,def.params[0]);
+        }
         loadPresets();
         if(gen.contains("canvas") && gen["canvas"].size() == 2){
             rendererCanvasW = gen["canvas"][0].get<int>();
@@ -1106,6 +1114,7 @@ public:
         if(pd){ req["paletteName"] = pd->name; req["paletteColors"] = pd->colors; }
         req["performance"] = img->perf;
         req["layerCover"] = l.cover;   // archived in the sidecar
+        if(!l.blocking) req["blocking"] = false;   // the layer's instruments draw no black background
         // presets resolve after the selection and the harmony, so scenes without presets draw the
         // same random numbers as before
         json jitems = json::array();
@@ -1733,6 +1742,8 @@ public:
                     for(auto& entry:cover.items()) if(!sharedHere.contains(entry.key())) sharedHere[entry.key()]=entry.value();
             }
             if(!pr.linked.empty()){ json pick = json::object(); applyLinked(pick, pr.linked, rng); for(auto& [k, v] : pick.items()) sharedHere[k] = v; }
+            // blocking off on the stack switches it off in all its layers (on leaves each layer its own)
+            if(!formscover::blocking(pr.params)) sharedHere["blocking"] = false;
             // which layers play in this image
             std::vector<bool> on(pr.layers.size(), true);
             if(pr.pick == "group" && !pr.layers.empty()){
@@ -1961,6 +1972,7 @@ public:
                      {"size", {width, height}}, {"scene", s.name}, {"snapshot", s.snapshot},
                      {"bars", barsJson(layerBars(l))}, {"notegrid", s.notegrid}, {"bpm", barsJson(s.bpm)},
                      {"roots", h.roots}, {"trans", h.trans}, {"compat", s.compat}, {"preview", tag}, {"bassDegree", s.bassDegree}, {"lineWeight", s.lineWeight}};
+            if(!l.blocking) req["blocking"] = false;
             req["scale"] = sd ? sd->legacyIndex : -1;
             req["palette"] = pd ? pd->legacyIndex : -1;
             if(sd){ req["scaleName"] = sd->name; req["scaleNotes"] = sd->notes; }

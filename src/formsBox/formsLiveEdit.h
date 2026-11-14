@@ -303,6 +303,10 @@ inline bool patchForScene(Engine& e, json& req, const Scene& s){
     req["notegrid"] = s.notegrid;
     req["bassDegree"] = s.bassDegree;
     req["lineWeight"] = s.lineWeight;
+    {   // the layer's blocking switch as it is now
+        int li = req.value("layer", 1) - 1;
+        if(li >= 0 && li < (int)s.layers.size() && !s.layers[li].blocking) req["blocking"] = false; else req.erase("blocking");
+    }
     if(sd){ req["scaleName"] = sd->name; req["scaleNotes"] = sd->notes; }
     if(pd){ req["paletteName"] = pd->name; req["paletteColors"] = pd->colors; }
     json b = before; b.erase("result");

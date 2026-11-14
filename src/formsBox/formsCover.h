@@ -51,6 +51,19 @@ inline json schema(){
         {{"key","coverLayers"},{"type","enum"},{"label","Acts on"},{"group","cover"},{"default","allBelow"},{"options",{"allBelow","layerBelow","all"}}}
     });
 }
+// "blocking" (on unless a false is stored): whether an instrument's black background ("blank what
+// is underneath") is drawn at all. Off = it neither blanks its own image nor erases the layers below.
+// Read from an instrument's params, a scene layer or a render request.
+inline bool blocking(const json& j){
+    if(!j.is_object()) return true;
+    auto p=j.find("blocking");
+    if(p==j.end()) return true;
+    return p->is_boolean() ? p->get<bool>() : p->is_number() ? p->get<double>()>=.5 : true;
+}
+inline json blockingSchema(const std::string& group){
+    return {{"key","blocking"},{"type","bool"},{"group",group},{"default",true},{"basic",true},
+            {"label","blocking: black background under it (off = never blanks; the other instruments and layers stay visible)"}};
+}
 // source / dest are positions in the visual stack, not the layer's immutable number.
 inline bool affects(const Settings& s, int source, int dest){
     return s.enabled && s.amount>0 && (s.target=="all" ? dest!=source : s.target=="layerBelow" ? dest==source-1 : dest<source);

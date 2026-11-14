@@ -505,6 +505,14 @@ inline bool Editor::drawLayerStack(Scene& s, bool compact){
                 ImGui::SetTooltip(first ? "Beat offset. Layer 1 is the time reference (the clock follows it): offset the other layers against it."
                                         : "Beat offset: shifts this layer in time, in beats: positive plays it later, negative earlier (0.25 = a sixteenth, 1 = a beat, 4 = a bar).\nActs at once; drag, Ctrl-click to type, right-click for 0. Saved with the scene.\nIts kick detection and sound shift with it; its chords are still the ones of the bars it was drawn for.");
         }
+        {   // blocking: the black background of this layer's blocking instruments (solo snares, bass gates...)
+            flow(labelled("blocking", ImGui::GetFrameHeight()));
+            if(ImGui::Checkbox("blocking", &L.blocking)) changed = true;
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blocking instruments (blocking snares, coin snares, trance bass gates...) draw a black background\n"
+                                                         "under their figures: it blanks the rest of their image and covers the layers below, like a solo.\n"
+                                                         "Off: no instrument of this layer does that; their figures are drawn over everything else.\n"
+                                                         "On: each instrument follows its own \"blocking\" option. Takes effect from the next image.");
+        }
         flow(labelled("phrase", 44 * zz));
         ImGui::SetNextItemWidth(44 * zz);
         {
@@ -851,6 +859,7 @@ inline void Editor::drawSceneInstrumentEditor(std::string ref){
     }
     ImGui::Separator();
     if(p.isStack()){
+        if(drawStackBlocking(p.params)) dirtyPresets.insert(ref);
         if(ImGui::CollapsingHeader("Cover (whole instrument)"))
             if(drawCoverParams(p.params)) dirtyPresets.insert(ref);
         if(sceneStackFor != ref){ sceneStackFor = ref; sceneStackLayer = 0; }

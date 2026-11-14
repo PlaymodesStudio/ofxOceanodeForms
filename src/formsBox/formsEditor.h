@@ -950,6 +950,7 @@ private:
     bool drawParamTabs(const GenDef& g, json& params);
     std::string groupNotInUse(const GenDef& g, const std::string& grp, const json& params);
     bool drawCoverParams(json& params);
+    bool drawStackBlocking(json& params);
 
     bool beginParamTable(){
         float zz = z();

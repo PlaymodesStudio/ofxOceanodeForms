@@ -303,6 +303,8 @@ public:
                 // Draw the cover silhouette from an independent copy of this exact render state.
                 // It must neither include earlier instruments nor consume their random stream.
                 clearSpans.clear();
+                // blocking: the request's (the scene layer's switch) and the instrument's own
+                blockOn = formscover::blocking(req) && formscover::blocking(item.value("params", json::object()));
                 auto cover = formscover::read(item.value("params", json::object()));
                 if(cover.enabled && cover.amount > 0 && item.value("gen", std::string()) != "effects"){
                     Sketch silhouette(*this);
@@ -354,7 +356,7 @@ public:
                     mask.alpha=alpha;out.covers.push_back(std::move(mask));
                 }
                 clipX0 = -1e9f; clipX1 = 1e9f; clipBar0 = -1; clipBar1 = -1;
-                hasShareKey = false; itemShareKey.clear();
+                hasShareKey = false; itemShareKey.clear(); blockOn = true;
                 if(!before.empty() && before.size() == c.px.size()){
                     uint32_t gi = (uint32_t)std::lround(igain * 256);
                     for(size_t q = 0; q < c.px.size(); q++){
@@ -415,6 +417,7 @@ private:
     float clipX0 = -1e9f, clipX1 = 1e9f;
     int clipBar0 = -1, clipBar1 = -1;
     bool hasShareKey = false;
+    bool blockOn = true;   // this item's black background ("blank what is underneath") is drawn
     std::string itemShareKey;
     uint32_t genImageColour = 0;
 
@@ -792,6 +795,7 @@ private:
     }
 
     void blankUnder(float x, float w){
+        if(!blockOn) return;   // blocking off (instrument or layer): no black background, no eraser
         clearSpans.push_back({x,w});
         pushStyle();
         style.stroke = false;

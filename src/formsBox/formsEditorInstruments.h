@@ -505,6 +505,7 @@ inline void Editor::drawInstrumentsTab(){
     json* refLayer = nullptr;        // a stack layer that plays another preset
     json* editLinked = nullptr;      // where "linked" lives for what is being edited
     if(pr.isStack()){
+        if(drawStackBlocking(pr.params)) dirtyPresets.insert(ref);
         if(ImGui::CollapsingHeader("Cover (whole instrument)"))
             if(drawCoverParams(pr.params)) dirtyPresets.insert(ref);
         if(stackFor != ref){ stackFor = ref; stackLayer = 0; }
@@ -730,6 +731,20 @@ inline bool Editor::drawLinkedEditor(json& linked, const std::string& key){
         } catch(std::exception& e){ linkedError[key] = e.what(); }
     }
     if(linkedError.count(key)) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Not saved: %s", linkedError[key].c_str());
+    return changed;
+}
+
+// A layered instrument's blocking switch: off switches the black background off in all its layers
+inline bool Editor::drawStackBlocking(json& params){
+    bool on = formscover::blocking(params);
+    bool changed = false;
+    if(ImGui::Checkbox("Blocking (whole instrument)", &on)){
+        if(on) params.erase("blocking"); else params["blocking"] = false;
+        changed = true;
+    }
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The black background its layers draw under their figures (\"blank what is underneath\"):\n"
+                                                 "it blanks the rest of the image and covers the layers below, like a solo.\n"
+                                                 "Off: none of its layers does that. On: each layer follows its own \"blocking\" option.");
     return changed;
 }
 

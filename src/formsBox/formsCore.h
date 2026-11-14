@@ -69,6 +69,7 @@ struct LayerDef {
     std::string effectPreset;         // effect-only instrument appended after this whole layer
     double bars = 8;                  // real bar count of each image (fractions: quantBars)
     int repeat = 1;                   // each image (page) plays this many times before a new one
+    bool blocking = true;             // off: this layer's instruments never draw their black background (no blank, no erasing of the layers below)
     float beatOffset = 0;             // beats this layer plays later (+) or earlier (-) than the others; layers 2 and up
     // Phrase (0 = off): with a phrase longer than the page, one render draws the whole phrase and
     // the layer shows it page by page (each page the next window of it), so patterns and notes
@@ -226,6 +227,7 @@ inline void to_json(json& j, const LayerDef& l){
     if(!l.cover.empty()) j["cover"] = l.cover;
     if(l.repeat > 1) j["repeat"] = l.repeat;
     if(l.beatOffset != 0) j["beatOffset"] = l.beatOffset;
+    if(!l.blocking) j["blocking"] = false;   // only when off: scenes stay as they were
     if(l.phrase > 0) j["phrase"] = barsJson(l.phrase);
     if(l.z >= 0) j["z"] = l.z;
     if(l.fixed.is_object()) j["fixed"] = l.fixed;
@@ -234,6 +236,7 @@ inline void to_json(json& j, const LayerDef& l){
 inline void from_json(const json& j, LayerDef& l){
     l.bars = barsFrom(j, "bars", 8);
     l.cover = j.value("cover", json::object());
+    l.blocking = formscover::blocking(j);
     l.effectPreset=j.value("effectPreset",std::string());
     l.everyN = j.value("everyN", 1);
     l.globalProb = j.value("globalProb", 100.0f);
