@@ -239,7 +239,7 @@ struct LRBalance {
     float l = 1, r = 1;
     float rand01(){ rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return (rng & 0xffffff) / float(0xffffff); }
     // phLock: the header's position in its image (0..1); bars: the image's bars; bpm; dt (s)
-    void step(float phLock, int bars, float bpm, float dt, const nlohmann::json& perf, bool enabled){
+    void step(float phLock, double bars, float bpm, float dt, const nlohmann::json& perf, bool enabled){
         auto f = [&](const char* k, float d){ return perf.contains(k) && perf[k].is_number() ? perf[k].get<float>() : d; };
         float amount = enabled ? f("LRDryWet", 0) : 0;
         if(amount <= 0){ l = r = 1; eased = go = 0; return; }
@@ -250,7 +250,7 @@ struct LRBalance {
             chances.clear();
             for(auto& v : perf["LRprobSteps[]"]) chances.push_back(v.is_number() ? v.get<float>() : 1);
         }
-        float pos = phLock * std::max(1, bars);                 // bars into the image
+        float pos = phLock * (float)std::max(1.0 / 16, bars);               // bars into the image
         float ph = pos * th; ph -= std::floor(ph);
         float s = std::sin(6.2831853f * (ph + 0.25f));
         float k = 1 - 0.95f * std::max(0.0f, std::min(1.0f, hard));   // 1 sine .. 0.05 almost square

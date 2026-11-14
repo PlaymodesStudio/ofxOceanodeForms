@@ -17,6 +17,8 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <filesystem>
+#include <system_error>
 
 namespace forms {
 
@@ -28,6 +30,7 @@ struct SoundView {
     std::vector<float> layerLevel = std::vector<float>(SOUND_LAYERS); // mean brightness the banks read
     std::vector<bool> layerActive = std::vector<bool>(SOUND_LAYERS);
     float kickLevel = 0;                 // the kick strip's brightness now
+    float kickThreshold = 0.5f;          // the threshold of the scene being read now
     int kicksFired = 0;
     std::string kickScene;               // the scene at the header
     std::string kickChosen;              // the sample it plays
@@ -58,7 +61,25 @@ struct SoundControls {
     ofParameter<float> compThr, compRatio, compKnee, compAtk, compRel, compMakeup, compRms, compHpf, compMix;
     int eqDragBand = -1;
 
+    // The kick samples' folder is saved with the patch as a full path: when that folder is gone (moved,
+    // another machine), the app's own folder is used instead, so the scenes' kicks by number or by name
+    // still sound, and the patch gets the working folder on its next save.
+    std::string defaultKickFolderPath, kickFolderChecked, kickFolderMissing;
+    void checkKickFolder(){
+        const std::string cur = kickFolder.get();
+        if(cur == kickFolderChecked) return;
+        kickFolderChecked = cur;
+        std::error_code ec;
+        if(defaultKickFolderPath.empty() || cur == defaultKickFolderPath) return;
+        if(cur.empty() || !std::filesystem::is_directory(cur, ec)){
+            kickFolderMissing = cur;
+            kickFolder = defaultKickFolderPath;
+            kickFolderChecked = defaultKickFolderPath;
+        }else kickFolderMissing.clear();
+    }
+
     void setup(ControlRegistry& reg, const std::string& defaultKickFolder){
+        defaultKickFolderPath = defaultKickFolder;
         on.set("Sound", true);
         volume.set("Volume", 1, 0, 8);
         for(int l = 0; l < (int)layerOn.size(); l++){
@@ -255,6 +276,15 @@ struct SoundControls {
         ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + height + 4 * zoom));
     }
 
+    // The kick strip's brightness now, with a scene's threshold on it (the detection settings are each scene's)
+    void drawKickMeter(const SoundView& v, float threshold){
+        char kb[48]; snprintf(kb, sizeof(kb), "%.2f  (%d fired)", v.kickLevel, v.kicksFired);
+        ImGui::ProgressBar(v.kickLevel, ImVec2(ImGui::CalcItemWidth(), 0), kb);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Mean brightness of the measured strip of the kick layer at the header, now; the line is the threshold");
+        ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        float x = a.x + (b.x - a.x) * std::max(0.0f, std::min(1.0f, threshold));
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(x, a.y), ImVec2(x, b.y), IM_COL32(255, 120, 80, 255), 2);
+    }
     void draw(ControlRegistry& reg, const SoundView& v){
         float z = ofxOceanodeShared::getZoomLevel();
         if(!v.hasSC) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "This build has no SuperCollider: no sound.");
@@ -346,20 +376,9 @@ struct SoundControls {
         ImGui::SeparatorText("Kick");
         reg.check(kickOn, "Kick on");
         if(v.editKickSynth && ImGui::Button("Sample / Synth settings...")) v.editKickSynth();
-        char kb[48]; snprintf(kb, sizeof(kb), "%.2f  (%d fired)", v.kickLevel, v.kicksFired);
-        ImGui::ProgressBar(v.kickLevel, ImVec2(ImGui::CalcItemWidth(), 0), kb);
-        // the threshold on the meter
-        {
-            ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-            float x = a.x + (b.x - a.x) * kickThreshold;
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(x, a.y), ImVec2(x, b.y), IM_COL32(255, 120, 80, 255), 2);
-        }
-        reg.slider(kickThreshold, "%.2f", "Threshold");
-        reg.slider(kickStrip, "%.3f", "Strip height");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The bottom part of the kick layer's header column that is measured (fraction of the height)");
-        reg.slider(kickGap, "%.2f s", "Min gap");
-        reg.slider(kickTune, "%.1f st", "Tune");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("On top of the scene's transpose (-2: the 1920 speed)");
+        drawKickMeter(v, v.kickThreshold);
+        ImGui::TextDisabled("Threshold, strip, gap and tune are each scene's:");
+        ImGui::TextDisabled("Stage > Sound > Kick");
         reg.slider(kickLevel, "%.2f", "Level");
         ImGui::SeparatorText("Ducking");
         reg.check(duckFullBand,"Duck whole image");
@@ -377,6 +396,11 @@ struct SoundControls {
         strncpy(folder, kickFolder.get().c_str(), sizeof(folder)); folder[sizeof(folder) - 1] = 0;
         if(ImGui::InputText("Folder", folder, sizeof(folder), ImGuiInputTextFlags_EnterReturnsTrue)) kickFolder = std::string(folder);
         reg.menu(kickFolder.getEscapedName());
+        if(!kickFolderMissing.empty()){
+            ImGui::PushTextWrapPos(0);
+            ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "The patch's folder was not found, so the app's own kicks folder is used (save the patch to keep it):\n%s", kickFolderMissing.c_str());
+            ImGui::PopTextWrapPos();
+        }
         ImGui::PopItemWidth();
         ImGui::TextDisabled("Scene at the header: %s", v.kickScene.empty() ? "-" : v.kickScene.c_str());
         ImGui::TextDisabled("plays: %s", v.kickChosen.empty() ? "-" : v.kickChosen.c_str());

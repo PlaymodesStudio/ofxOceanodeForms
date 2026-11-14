@@ -39,6 +39,9 @@ check(abs(db(r["s_half"]["tailrms"] / r["s_wet"]["tailrms"])) < 6, "send 0.5 tai
 check(r["s_half"]["p440"] > 1e-3, "send 0.5: the layer is heard while playing")
 m = r["s_mixed"]
 check(m["p440"] > 1e-3 and m["p659"] > 1e-3, "two layers: both heard while playing")
-check(db(m["t659"]) - db(m["t440"]) > 40, "two layers: the tail holds only the sent layer (659 Hz), not the dry one (440 Hz)")
+# (MicroSpace is a modulated reverb: its tail of the 659 Hz layer spreads a little around it. Measured
+# 2026-11-11: 440 Hz is 34 dB under 659 Hz in the tail with the 659 layer alone, 28 dB with the dry
+# 440 layer added, so the limit is 20 dB, not the 40 of the static allpass reverb before it.)
+check(db(m["t659"]) - db(m["t440"]) > 20, "two layers: the tail holds the sent layer (659 Hz), not the dry one (440 Hz)")
 print("ALL OK" if fails == 0 else f"{fails} FAILED")
 sys.exit(1 if fails else 0)

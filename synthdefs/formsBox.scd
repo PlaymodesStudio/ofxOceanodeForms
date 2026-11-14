@@ -1,5 +1,7 @@
 // Forms Box (ESPECTRES 2027) synth defs: the image column turned into sound.
-// Compile:  sclang formsBox.scd   (writes CompiledSynthdefs/Forms/*.scsyndef next to this file)
+// Compile:  ./compile.sh   (the addon's bundled sclang with the Oceanode classes and FormsSparseBank;
+//           writes CompiledSynthdefs/Forms/*.scsyndef next to this file)
+// The server needs FormsSparseBank.scx (ugens/FormsSparseBank) in its Extensions folder.
 // See README.md for the controls. All controls lower case. Stereo throughout.
 //
 // Faithful ports of the Oceanode patch chain (OceanAudio/.../SynthdefSources):
@@ -11,7 +13,7 @@ dir = thisProcess.nowExecutingPath.dirname +/+ "CompiledSynthdefs" +/+ "Forms";
 File.mkdir(dir);
 
 // ---------------------------------------------------------------------------
-// FormsBank512: 512 partials, a left and a right sine each (1024 SinOsc).
+// FormsBank512: 512 partials, a left and a right sine each, in one FormsSparseBank unit.
 // amp of partial i = Lag(In.kr(ampbus)[i], lag) * (1 - duckw[i] * duck)
 // L = sum SinOsc((pitch+bend).midicps) * amp * gl ; R = same at pitch+bend+detune * gr
 // out = [L, R] * gain * level, split equal-power by send (this layer's reverb amount, 0..1):
@@ -21,26 +23,20 @@ File.mkdir(dir);
 t0 = Main.elapsedTime;
 SynthDef(\FormsBank512, {
 	var n = 512;
-	var amps, pitch, bend, detune, gl, gr, duckw, duck, a, fl, fr, l, r, sig, send;
+	var amps, pitch, gl, gr, duckw, duck, sig, send;
 	amps   = In.kr(\ampbus.kr(0), n);
 	pitch  = \pitch.kr(60 ! n);
-	bend   = \bend.kr(0);
-	detune = \detune.kr(0.0746);
 	gl     = \gl.kr(0 ! n);
 	gr     = \gr.kr(0 ! n);
 	duckw  = \duckw.kr(0 ! n);
-	duck   = Sanitize.kr(In.kr(\duckbus.kr(0), 1)).clip(0, 1);
+	duck   = In.kr(\duckbus.kr(0), 1);
 
-	// guard before the Lag: a NaN/inf amp would otherwise stick in the Lag state forever
-	a = Lag.kr(Sanitize.kr(amps).clip(0, 1), \lag.kr(0.05)) * (1 - (duckw * duck));
-	fl = Sanitize.kr((pitch + bend).midicps).clip(0, 20000);
-	fr = Sanitize.kr((pitch + bend + detune).midicps).clip(0, 20000);
+	// FormsSparseBank (ugens/FormsSparseBank): the 1024 sines, the amplitude Lag, the duck and the
+	// NaN / range guards in one unit that only runs the partials that sound. Same maths as the
+	// SinOsc graph it replaces (random start phases, gains ramped across the block).
+	sig = FormsSparseBank.ar(amps, pitch, gl, gr, duckw, \lag.kr(0.05), \bend.kr(0), \detune.kr(0.0746), duck);
 
-	// Rand(-25, 25) start phase per oscillator, as Additive1080_
-	l = SinOsc.ar(fl, { Rand(-25, 25) } ! n, a * gl).sum;
-	r = SinOsc.ar(fr, { Rand(-25, 25) } ! n, a * gr).sum;
-
-	sig = Sanitize.ar([l, r] * \gain.kr(0.0216) * \level.kr(1));
+	sig = Sanitize.ar(sig * \gain.kr(0.0216) * \level.kr(1));
 	send = \send.kr(0, 1/30).clip(0, 1) * 0.5pi;
 	Out.ar(\out.kr(0), sig * send.cos);
 	Out.ar(\wetout.kr(0), sig * send.sin);
@@ -87,7 +83,7 @@ SynthDef(\FormsKick, {
 }).writeDefFile(dir);
 
 // ---------------------------------------------------------------------------
-// FormsFX: dry (in) + LongReverb of what the layers send (wetin) -> eq13 -> CompressorB
+// FormsFX: dry (in) + MicroSpace reverb of what the layers send (wetin) -> eq13 -> CompressorB
 //          crossfade -> EQ5 high shelf -> filter13 (RLPF) -> * gain
 // ---------------------------------------------------------------------------
 SynthDef(\FormsFX, {
@@ -97,14 +93,21 @@ SynthDef(\FormsFX, {
 	dry = Sanitize.ar(In.ar(\in.kr(0), 2));   // before LeakDC: a NaN would stay in its state
 	dry = LeakDC.ar(dry);
 
-	// LongReverb (Time 4, Lowpass 100 midi, Hipass 17 midi, Predelay 0, inputlevel 1) on what the
-	// layers send (each its own amount: FormsBank512's send)
+	// the reverb on what the layers send (each its own amount: FormsBank512's send)
 	revtime = \revtime.kr(4);
 	send = LeakDC.ar(Sanitize.ar(In.ar(\wetin.kr(0), 2)));
-	temp = DelayN.ar(send, 1, \predelay.kr(0));
-	32.do { temp = AllpassL.ar(temp, 0.05, { Rand(0.001, 0.05) } ! 2, revtime) };
-	wet = LPF.ar(temp, \revlowpass.kr(100).midicps);
-	wet = HPF.ar(wet, \revhipass.kr(17).midicps);
+	// MicroSpace (OceanodeMicroSpace.box, the Box synths' reverb), all wet: the dry part of the
+	// layers is already on `in`. revtime is its decay (RT60, s); predelay in seconds as before;
+	// revlowpass / revhipass (midi) are the tone after it; the rest are the Box reverb's controls.
+	// Matched to the reverb it replaces on the same send (measured, NRT): decay = revtime / 2 gives
+	// about the same tail length for a given Reverb Time, revgain 0.65 the same wet level.
+	temp = OceanodeMicroSpace.box(send,
+		\revsize.kr(30, 0.05), (revtime * 0.5).max(0.05),
+		\predelay.kr(0, 0.05) * 1000, \revlowpass.kr(123.2, 0.05).midicps.clip(20, 20000),
+		\revposition.kr(0.8, 0.05).clip(0, 1), \revspread.kr(0.15, 0.05).clip(-1, 1),
+		1, \revhighdamp.kr(6, 0.05), \revlowdamp.kr(0, 0.05),
+		\revmodfreq.kr(0.2, 0.05), \revspin.kr(1, 0.05), \revwander.kr(0.25, 0.05), 1);
+	wet = HPF.ar(temp, \revhipass.kr(17).midicps) * \revgain.kr(0.65, 0.05);
 	sig = dry + wet;
 
 	// eq13 (rs 1; the original's `wet.tanh;` is a no-op statement, so no tanh here)

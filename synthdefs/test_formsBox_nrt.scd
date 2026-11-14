@@ -20,7 +20,9 @@ opts = ServerOptions.new
 	.numOutputBusChannels_(6).numInputBusChannels_(0)
 	.sampleRate_(sr).memSize_(65536).maxSynthDefs_(4096)
 	.numControlBusChannels_(16384).numAudioBusChannels_(1024)
-	.numWireBufs_(4096).blockSize_(64);
+	.numWireBufs_(4096).blockSize_(64)
+	// FormsBank512 needs the FormsSparseBank plugin (the app's Extensions folder)
+	.memSize_(262144).ugenPluginsPath_([(here +/+ "../../../apps/Playmodes/OceanodeScroller/bin/data/Supercollider/Extensions/OceanodeForms").standardizePath, Platform.resourceDir +/+ "plugins", Platform.userExtensionDir]);
 
 // test-only helper defs (sent as bytes, never written to the Forms folder)
 tapDuck = SynthDef(\formsTestDuckTap, { Out.ar(\out.kr(2), K2A.ar(In.kr(\duckbus.kr(0)))) });

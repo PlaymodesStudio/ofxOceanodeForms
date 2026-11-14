@@ -13,7 +13,9 @@ File.mkdir(outDir);
 opts = ServerOptions.new
 	.numOutputBusChannels_(2).numInputBusChannels_(0)
 	.sampleRate_(sr).memSize_(65536)
-	.numControlBusChannels_(4096).numAudioBusChannels_(256).blockSize_(64);
+	.numControlBusChannels_(4096).numAudioBusChannels_(256).blockSize_(64)
+	// FormsBank512 needs the FormsSparseBank plugin (the app's Extensions folder)
+	.memSize_(262144).ugenPluginsPath_([(here +/+ "../../../apps/Playmodes/OceanodeScroller/bin/data/Supercollider/Extensions/OceanodeForms").standardizePath, Platform.resourceDir +/+ "plugins", Platform.userExtensionDir]);
 
 // a bank whose partial 0 is at `pitch`, amp from control bus `ampbus` (partial 0 only), send `send`
 bank = { |id, ampbus, pitch, send|
