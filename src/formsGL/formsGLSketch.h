@@ -461,11 +461,12 @@ private:
     // > 0 inside a loop that stamps points every `sweepStep` pixels (images taller than 1080 lines):
     // point() then draws swept stamps (Canvas::sweptPoint). 1080-line images keep the measured path.
     float sweepStep = 0;
+    float sweepSpan = 0;   // a piece of the step (drawNote: notes whose pitch moves), 0 = the whole step
     struct SweepScope { float& v; SweepScope(float& ref, float step) : v(ref) { v = step > 1.0001f ? step : 0; } ~SweepScope(){ v = 0; } };
     void point(float x, float y){
         if(!style.stroke) return;
         uint32_t s = style.strokeColor;
-        if(sweepStep > 0){ gc->sweptPoint(x, y, std::max(1.0f, style.strokeWeight), sweepStep, red(s), green(s), blue(s), (s >> 24) & 255, style.cap); return; }
+        if(sweepStep > 0){ gc->sweptPoint(x, y, std::max(1.0f, style.strokeWeight), sweepStep, red(s), green(s), blue(s), (s >> 24) & 255, style.cap, sweepSpan); return; }
         if(style.strokeWeight > 1.0001f) gc->thickPoint(x, y, style.strokeWeight, red(s), green(s), blue(s), (s >> 24) & 255, style.cap);
         else gc->point(x, y, red(s), green(s), blue(s), (s >> 24) & 255, style.cap);
     }
@@ -1311,7 +1312,15 @@ private:
                 if(n.lfoCycHi > 0) lc = n.lfoCycLo + random(n.lfoCycHi - n.lfoCycLo);
                 if(n.taper > 0) style.strokeWeight = baseWeight * pjPow(std::max(0.0f, 1 - ph1), n.taper);
                 SweepScope sweep(sweepStep, UY);
-                for(float i = 0; i < L; i += UY){
+                // Above 1080 lines a note is a row of stamps UY pixels apart. Where its pitch moves
+                // along its length (vibrato, a slide) each stamp is drawn in pieces about a pixel
+                // wide, each at the curve's height there: no stair-steps as wide as the stamp. A
+                // note of steady pitch, and every note at 1080 lines, is drawn exactly as before.
+                const int pieces = (sweepStep > 0 && (n.vibamp != 0 || n.slide)) ? std::max(1, (int)std::floor(UY)) : 1;
+                const float di = UY / pieces;
+                const float pieceShift = pieces > 1 ? (di - UY) / 2 : 0;   // the pieces tile the stamp's own span
+                sweepSpan = pieces > 1 ? di : 0;
+                for(float i = 0; i < L; i += di){
                     float ph2 = i / L;
                     float ySum = 0;
                     if(n.slide) ySum = ydiff * (((1 - pjCos(ph2 * P_PI)) + 1) / 2);
@@ -1336,15 +1345,16 @@ private:
                     if(n.pgStyle){
                         strokeARGB(n.col, alpha);
                         style.strokeWeight = 2 * (height / 1080.0f) * lineWeight;
-                        point(n.x + xo + i, ya + vib + partYoffset - tr);
-                        point(n.x + xo + i, yb + vib + partYoffset - tr);
+                        point(n.x + xo + i + pieceShift, ya + vib + partYoffset - tr);
+                        point(n.x + xo + i + pieceShift, yb + vib + partYoffset - tr);
                         strokeColour(n.col);
                     }else{
                         strokeRGBA(fr, fg, fb, alpha);
-                        point(n.x + xo + i, ya + vib + partYoffset - tr);
-                        point(n.x + xo + i, yb + vib + partYoffset - tr);
+                        point(n.x + xo + i + pieceShift, ya + vib + partYoffset - tr);
+                        point(n.x + xo + i + pieceShift, yb + vib + partYoffset - tr);
                     }
                 }
+                sweepSpan = 0;
             }
         }
     }

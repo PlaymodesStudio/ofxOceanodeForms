@@ -199,11 +199,17 @@ public:
     // it, and the alpha that share of a stamp gives (1 - (1 - a)^share), so a row of stamps adds up
     // to the same opacity everywhere and the envelope glides from one stamp to the next. The cells
     // of consecutive stamps meet on whole pixels.
-    void sweptPoint(float x, float y, float wgt, float step, int r, int g, int b, int a, int cap){
+    // span (0 = the whole step): this call draws only a piece of the step, `span` pixels wide and
+    // centred on x, at its own height: a note whose pitch moves along its length (vibrato, a slide)
+    // is drawn as several pieces per step, each where the curve is there, instead of one flat
+    // block per step (stair-steps as wide as the step at large sizes). The shares are still those
+    // of the whole step, so the pieces of one step add up to the same opacity.
+    void sweptPoint(float x, float y, float wgt, float step, int r, int g, int b, int a, int cap, float span = 0){
         if(a <= 0 || cap == SQUARE || step <= 0) return;
         const float SNAP = snapOf(cap);
         float cy = std::floor(y + SNAP) + 0.5f, hw = wgt / 2;
-        int X0 = (int)std::floor(x - step / 2 + 0.5f), X1 = (int)std::floor(x + step / 2 + 0.5f);
+        const float reach = span > 0 ? span : step;
+        int X0 = (int)std::floor(x - reach / 2 + 0.5f), X1 = (int)std::floor(x + reach / 2 + 0.5f);
         if(X1 <= X0) X1 = X0 + 1;
         // a stamp narrower than its step (a thin line) still fills the step along x: only its height is thin
         float widen = hw < step / 2 ? step / (2 * hw) : 1;
