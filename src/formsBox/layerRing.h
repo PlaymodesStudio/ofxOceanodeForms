@@ -84,6 +84,15 @@ public:
                 double st = std::ceil(B / 4.0) * 4.0 - len;
                 for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ st = sl.start; break; }
                 if(st > B) st = len < 4.0 ? std::floor(B / len + 1e-9) * len : B;   // a page shorter than a bar: on its own grid
+                // Switch now: the engine gave it its place on the layer's own grid (Engine::layerGrid).
+                // A page there under the header takes it, whatever the old page's place was. A phrase
+                // stays where it is in the bar: its pages before the header are past (not shown), the
+                // one under the header replaces what plays, the rest follow.
+                if(once && !immediate && img->startBeat >= 0 && img->startBeat <= B + 1e-9){
+                    double P = img->startBeat;
+                    if(img->slices > 1 && B >= P + len){ onceId = img->id; onceStart = P; onceSwap = true; continue; }
+                    if(B < P + len) st = P;
+                }
                 for(auto it = L.slots.begin(); it != L.slots.end();){
                     // (Switch now: also everything after it, e.g. repeats of the old image)
                     if((it->start < st + len - 1e-6 && it->end() > st + 1e-6) || (once && it->start >= st - 1e-6)) it = L.slots.erase(it); else ++it;
@@ -101,6 +110,12 @@ public:
             // Switch now: the switch image's next copies follow it (they arrive with it: no pop-in)
             bool follows = !onceId.empty() && img->id == onceId && img->repeatIndex > 0;
             if(follows){ start = onceStart + img->repeatIndex * len; img->startBeat = start; img->cutBeat = -1; }
+            if(follows && onceSwap){
+                // (a phrase swapped in mid-way: see above)
+                if(start + len <= B + 1e-9) continue;   // a page of it that is already past
+                onceSwap = false;
+                for(auto it = L.slots.begin(); it != L.slots.end();){ if(it->end() > start + 1e-6) it = L.slots.erase(it); else ++it; }
+            }
             bool taken = !follows && screenX(L, B, start, headerPos, w, len) < w;   // its left edge would be inside the view
             if(!follows) for(auto& sl : L.slots) if(sl.seen && sl.start < start + len - 1e-6 && sl.end() > start + 1e-6) taken = true;
             if(taken){
@@ -327,6 +342,7 @@ private:
     std::string loadingPng;
     std::string onceId;                       // the last Switch now image, and where it was placed
     double onceStart = 0;
+    bool onceSwap = false;                    // a phrase swapped in mid-way: its page under the header is still to come
 };
 
 } // namespace forms

@@ -1497,6 +1497,9 @@ public:
                 next = pe->startBar + pe->bars;                  // skip to the next planned image
             }
             if(!s) continue;
+            // on the layer's own grid (layerGrid): a start inherited from pages of another length, a
+            // scene that began inside a bar, or a cut there, waits for its next line
+            { double g = layerGrid(layerSpan(s->layers[i])); next = std::ceil(next / g - 1e-6) * g; }
             double bars = layerBars(s->layers[i]);
             double span = layerSpan(s->layers[i]) * std::max(1, s->layers[i].repeat);   // the page (or phrase) and its repeats
             // not due yet: its deadline is further than the lead (one image ahead is always kept)
@@ -1582,6 +1585,14 @@ public:
             auto& L = schedule->layers[i];
             double lb = std::ceil(B / 4.0 - 1e-9) - layerSpan(to.layers[i]);
             for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ lb = std::floor(sl.start / 4.0 * kBarGrid + 1e-9) / kBarGrid; break; }
+            // a phrase keeps its place in the bar (the page under the header is one of its inner
+            // pages, not its first); so does a page whose place is off the layer's own grid
+            // (layerGrid): the line at or before the header. LayerRing puts it there.
+            {
+                double g = layerGrid(layerSpan(to.layers[i]));
+                double off = lb / g - std::floor(lb / g + 1e-6);
+                if(phraseSlices(to.layers[i]) > 1 || off > 1e-6) lb = std::floor(B / 4.0 / g + 1e-9) * g;
+            }
             std::string q = makeRequest(true, "", nullptr, i, lb, &to, -1);
             if(q.empty()) continue;
             out.push_back(q);
@@ -1795,6 +1806,15 @@ public:
         return quantBars(barAdd < 0 ? std::max(m + barAdd, std::min(1.0, m)) : m + barAdd);
     }
     double layerSpan(const LayerDef& l) const { return layerBars(l) * phraseSlices(l); }   // the page, or its whole phrase
+    // The lines an extra layer may start on: the coarsest grid its own cycle (the page, or its
+    // whole phrase) shares with the bar. A 1-bar phrase of 1/8-bar pages: bar lines; a 0.5-bar page:
+    // half bars; 0.75 bars: beats; whole bars: bar lines. Counted from bar 0, so it never depends on
+    // where a scene happened to start, what was under the header, or the lengths played before.
+    static double layerGrid(double span){
+        long u = std::max(1L, std::lround(span * kBarGrid)), g = (long)kBarGrid;
+        while(u){ long r = g % u; g = u; u = r; }
+        return g / kBarGrid;
+    }
     json presetItems(const Preset& pr, int depth = 0, const json& shared = json::object(), int clipFrom = -1, int clipTo = -1){
         json out = json::array();
         if(depth > 4){ note("presets nested too deep at " + pr.ref() + " (a preset that includes itself?)"); return out; }
