@@ -200,6 +200,9 @@ public:
                 engine.onReady(d.id, d.png, d.json);
                 // drawn with an older mute / solo: drawn again (in place) with the current one
                 if(d.filterGen != filterGen && d.recipe){ formsgl::json q = *d.recipe; q.erase("result"); submitImmediate(q, KIND_FILTER); }
+                // asked for at an older Density (Immediate): drawn again (in place) at the current one
+                else if(immediateOn && d.recipe && d.recipe->value("chanceDensity", 0.0f) != engine.density)
+                    for(auto& im : stagePages()) if(im && im->id == d.id){ densityRedraw(im); break; }
             }else engine.onError(d.id, "Forms GL Box: " + d.error);
         }
         watchEdits();
@@ -383,6 +386,41 @@ private:
             immediateSceneEdit(name, before, sit->second);
             f->second = now;
         }
+        // the node's Density: with Immediate on, a change re-picks the instruments of the pages on
+        // stage and waiting (patchDensity); while a batch is in flight it waits, so the latest value wins
+        if(engine.density != densityApplied){
+            if(!immediateOn) densityApplied = engine.density;
+            else if(immediateInFlight == 0){ densityApplied = engine.density; immediateDensity(); }
+        }
+    }
+    float densityApplied = 0;
+    // one page at the node's Density as it is now (false: nothing to draw again)
+    bool densityRedraw(const std::shared_ptr<forms::Image>& im){
+        if(!im || im->preview) return false;
+        auto rc = recipes.find(im->id);
+        auto sit = engine.scenes.find(im->scene);
+        if(rc == recipes.end() || !rc->second || sit == engine.scenes.end()) return false;
+        const forms::Scene& sc = sit->second;
+        formsgl::json req = *rc->second;
+        req.erase("result");
+        if(req.contains("preview")) return false;
+        int li = req.value("layer", 1) - 1;
+        if(li < 0 || li >= (int)sc.layers.size() || sc.layers[li].fixed.is_object()) return false;
+        if(req.value("chanceDensity", 0.0f) == engine.density) return false;
+        forms::Engine::OwnScope ownScope(engine, &sc);   // this scene's own versions of its instruments
+        formsgl::json oldItems = req.value("items", formsgl::json::array());
+        req = forms::patchDensity(engine, req, sc.layers[li], engine.density, req.value("seed", 0u), li);
+        engine.applyLayerEffect(req, sc.layers[li], req.value("seed", 0u));
+        forms::Engine::globalEffectsLast(req);
+        if(req["items"] == oldItems){ rc->second = std::make_shared<formsgl::json>(req); return false; }   // same picture: only the note of its density
+        submitImmediate(req);
+        return true;
+    }
+    void immediateDensity(){
+        std::set<std::string> done;
+        int n = 0;
+        for(auto& im : stagePages()) if(im && done.insert(im->id).second && densityRedraw(im)) n++;
+        if(n) engine.note("immediate: density " + std::to_string((int)std::lround(engine.density * 100)) + ", " + std::to_string(n) + " pages drawn again");
     }
 
     // ---- audition
@@ -535,6 +573,7 @@ private:
                 engine.applyLayerEffect(req,sit->second.layers[li],req.value("seed",0u));
                 forms::Engine::globalEffectsLast(req);
             }else req=forms::patchForPreset(engine,req,b,a,seed);
+            req.erase("densityBase");   // Density now starts from the page as it is
             submitImmediate(req);
             n++;
         }
@@ -577,7 +616,8 @@ private:
             bool changed = forms::patchForScene(engine, req, after);
             int li = req.value("layer", 1) - 1;
             if(li >= 0 && li < (int)before.layers.size() && li < (int)after.layers.size() && !after.layers[li].fixed.is_object()){
-                formsgl::json sel = forms::patchSelection(engine, req, before.layers[li], after.layers[li], req.value("seed", 0u), li);
+                const float dens = req.value("chanceDensity", 0.0f);   // the chances the page was drawn with (the node's Density)
+                formsgl::json sel = forms::patchSelection(engine, req, forms::withDensity(before.layers[li], dens), forms::withDensity(after.layers[li], dens), req.value("seed", 0u), li);
                 if(sel["items"] != req["items"]){ req = sel; changed = true; }
             }
             if(li>=0 && li<(int)after.layers.size()) for(auto& oe : ownEdits){
@@ -599,6 +639,7 @@ private:
                 if(oldItems!=req["items"])changed=true;
             }
             if(!changed) continue;
+            req.erase("densityBase");   // Density now starts from the page as it is
             submitImmediate(req);
             n++;
         }

@@ -310,7 +310,16 @@ inline void from_json(const json& j, SetlistEntry& e){
 // probabilityDropdownList::generateOutput(): global roll, one roll per group, then one roll per
 // cell of an active group. Empty / "none" cells are skipped; solo isolates soloed cells.
 // gains (optional): each selected item's cell gain, in the same order
-inline std::vector<std::string> selectItems(const LayerDef& l, Rng& rng, std::vector<float>* gains = nullptr){
+// Density (the node's, -1..1; 0 = the chances as written): below 0 every cell's chance shrinks
+// towards 0 (-1: nothing plays), above 0 it grows towards 100 (+1: every cell that is on plays).
+// Cells at 0 stay off; the group and whole-image gates are left as written. Same rolls either way,
+// so 0 gives exactly the images it gave before.
+inline float densityProb(float prob, float density){
+    if(prob <= 0 || density == 0) return prob;
+    float p = std::min(100.0f, prob), d = std::max(-1.0f, std::min(1.0f, density));
+    return d < 0 ? p * (1 + d) : p + (100 - p) * d;
+}
+inline std::vector<std::string> selectItems(const LayerDef& l, Rng& rng, std::vector<float>* gains = nullptr, float density = 0){
     std::vector<std::string> out;
     if(!(uniform(rng, 100) < l.globalProb)) return out;
 
@@ -326,7 +335,7 @@ inline std::vector<std::string> selectItems(const LayerDef& l, Rng& rng, std::ve
         if(c.item.empty() || c.item == "none") continue;
         if(anySolo && !c.solo) continue;
         bool groupActive = c.group >= (int)l.groupProb.size() || activeGroups[c.group];
-        if(groupActive && uniform(rng, 100) < c.prob){
+        if(groupActive && uniform(rng, 100) < densityProb(c.prob, density)){
             out.push_back(c.item);
             if(gains) gains->push_back(c.gain);
         }

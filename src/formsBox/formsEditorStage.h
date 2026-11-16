@@ -644,6 +644,18 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
                     if(nodeParamMenu) nodeParamMenu(barAdd->getEscapedName());
                     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Whole bars added to every layer of every scene, after the multiplier (bars x multiplier + this).\n"
                                                                  "Negative takes bars away (a layer never goes below one bar that way). From the next image asked for.%s", plays.c_str());
+                    if(density){
+                        ImGui::SameLine(0, 12 * z());
+                        float de = density->get();
+                        ImGui::SetNextItemWidth(140 * z());
+                        if(ImGui::SliderFloat("density", &de, density->getMin(), density->getMax(), "%+.0f")) *density = ofClamp(de, density->getMin(), density->getMax());
+                        if(ImGui::IsItemClicked(ImGuiMouseButton_Right) && !nodeParamMenu) *density = 0;
+                        if(nodeParamMenu) nodeParamMenu(density->getEscapedName());
+                        if(ImGui::IsItemHovered()) ImGui::SetTooltip("How many instruments play, in every scene: bends each instrument's chance.\n"
+                                                                     "Below 0 the chances shrink (-100: nothing plays); above 0 they grow (+100: every instrument that is on plays every image).\n"
+                                                                     "0 = the chances as written (ctrl-click the slider to type a value). Instruments at 0%% stay off; frozen layers and previews are not touched.\n"
+                                                                     "From the next image asked for (with Immediate on: the pages on stage change at once); saved with the patch, not the scene.");
+                    }
                 }
                 ImGui::Separator();
                 if(ImGui::BeginTable("##layersAndInstruments", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)){

@@ -1103,7 +1103,8 @@ public:
         if(previewItem) img->previewOf = previewItem->ref();
         std::vector<std::string> items;
         std::vector<float> itemGains;   // the cells' volume, per selected item
-        if(!frozen) items = selectItems(l, rng, &itemGains);
+        const float dens = previewItem ? 0 : density;   // a previewed instrument always plays
+        if(!frozen) items = selectItems(l, rng, &itemGains, dens);
         Harmony h;
         bool live = !previewItem && sceneOverride.empty();
         const int nb = barCount(span);   // harmony entries: one per bar it touches (the renderer's ceil(bars))
@@ -1165,6 +1166,7 @@ public:
             req["slices"] = img->slices;
         }
         if(barAdd != 0) req["barAdd"] = barAdd;
+        if(dens != 0 && !frozen) req["chanceDensity"] = dens;   // for the record: the cells' chances were bent by this
         if(barMult != 1) req["barMult"] = barMult;   // "bars" / "pageBars" are the multiplied lengths (promote / freeze divide)
         // the scale and palette themselves travel with the request
         req["scale"] = sd ? sd->legacyIndex : -1;
@@ -1849,6 +1851,7 @@ public:
     // plays (requests, plan, harmony timeline) is layerBars / layerSpan. From the next image asked for.
     double barMult = 1;
     int barAdd = 0;                    // Bar Add (the node's): whole bars added after the multiplier (may be negative)
+    float density = 0;                 // Density (the node's, -1..1): bends every cell's chance (densityProb); from the next image asked for
     double layerBars(const LayerDef& l) const {
         if(barMult == 1 && barAdd == 0) return l.bars;
         double m = l.bars * barMult;

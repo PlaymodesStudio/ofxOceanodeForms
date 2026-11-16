@@ -268,6 +268,31 @@ inline json patchSelection(Engine& e, const json& recipe, const LayerDef& before
     return req;
 }
 
+// Density (the node's) on a page already drawn (Immediate): the layer's cells with their chances bent
+// (densityProb), and the page's instruments at a new density. The page keeps, in its recipe, what it
+// was first drawn with ("densityBase": that density and those items); every new value is worked out
+// from there with patchSelection, so the result depends only on the value: going down removes
+// instruments, going up adds them, and coming back to a value gives the same page again (the first
+// density: the page as it was drawn). Any other edit of the page drops the base (it starts again
+// from the page as it is then).
+inline LayerDef withDensity(LayerDef l, float density){
+    for(auto& c : l.cells) c.prob = densityProb(c.prob, density);
+    return l;
+}
+inline json patchDensity(Engine& e, const json& recipe, const LayerDef& layer, float density, unsigned pageSeed, int li){
+    json req = recipe;
+    req.erase("result");
+    json base = req.contains("densityBase") && req["densityBase"].is_object() ? req["densityBase"]
+              : json{{"d", req.value("chanceDensity", 0.0f)}, {"items", req.value("items", json::array())}};
+    const float d0 = base.value("d", 0.0f);
+    json from = req;
+    from["items"] = base.value("items", json::array());
+    req["items"] = patchSelection(e, from, withDensity(layer, d0), withDensity(layer, density), pageSeed, li)["items"];
+    if(density != 0) req["chanceDensity"] = density; else req.erase("chanceDensity");
+    if(density != d0) req["densityBase"] = base; else req.erase("densityBase");
+    return req;
+}
+
 // Instrument mute / solo: what a page is drawn with (its recipe stays whole). The sets hold item refs,
 // already expanded with itemRefs (a stack: its own and the presets it plays). Muted wins over soloed;
 // items without a preset (legacy methods, the test underlay) stay under mute and go under solo.

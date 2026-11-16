@@ -110,6 +110,7 @@ public:
         maxMinutes.set("Max Minutes", 11, 0.1, 600);
         barMult.set("Bar Multiplier", 1, 0.25, 16);   // every layer's bars times this (wide projections keep their proportions)
         barAdd.set("Bar Add", 0, -16, 64);   // whole bars added to every layer after the multiplier
+        density.set("Density", 0, -100, 100);   // bends every instrument's chance: -100 nothing plays, 0 as written, +100 every instrument that is on
         sessionLimit.set("Session Limit", false);   // off: images never stop by themselves (a show turns it on)
         autoHeader.set("Auto Header", false);
         tremoloOn.set("Tremolo", false);
@@ -118,7 +119,7 @@ public:
         headerMax.set("Header Max", 4.0f / 7, 0, 1);
         viewW.set("Width", 1920, 1, 16384);
         viewH.set("Height", 1080, 1, 16384);
-        ctl.reg(resetSetlist); ctl.reg(actualBarIn); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes); ctl.reg(sessionLimit); ctl.reg(barMult); ctl.reg(barAdd);
+        ctl.reg(resetSetlist); ctl.reg(actualBarIn); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes); ctl.reg(sessionLimit); ctl.reg(barMult); ctl.reg(barAdd); ctl.reg(density);
         ctl.reg(autoHeader); ctl.reg(tremoloOn); ctl.reg(hardCut); ctl.reg(headerMin); ctl.reg(headerMax);
         ctl.reg(viewW); ctl.reg(viewH);
         // the transport follows Forms Box's beat (off: the transport runs on its own)
@@ -213,7 +214,7 @@ public:
         editor.engine = &engine;
         editor.autoGo = &autoGo;
         // Stage > Layers: the bar multiplier / add for every layer (node settings)
-        editor.barMult = &barMult; editor.barAdd = &barAdd;
+        editor.barMult = &barMult; editor.barAdd = &barAdd; editor.density = &density;
         editor.nodeParamMenu = [this](const std::string& key){ ctl.menu(key); };
         editor.noNewImagesWhy = [this]() -> std::string {
             if(engine.replaying) return "";
@@ -565,6 +566,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         clock.limitSession = sessionLimit;
         engine.barMult = forms::quantBars(barMult);   // on the 1/16 grid, like the lengths
         engine.barAdd = barAdd;
+        engine.density = density / 100.0f;
         clock.seqFade = seqFade;
         int g = clock.goCount, r = clock.restartCount;
         clock.step(now, dt);
@@ -1845,7 +1847,7 @@ protected:   // (Forms GL Box derives from Forms Box)
     ofParameter<bool> builtInPlayer, analogMode, sequence, autoPng, sequenceOut, autoHeader, autoGo, sessionLimit;
     ofParameter<bool> tremoloOn;              // the scenes' opacity tremolo (off by default)
     ofParameter<int> pause, viewW, viewH, actualBarOut;
-    ofParameter<float> speed, bpmAdd, maxMinutes, barMult, seqFade, header, headerPlus, smooth, headerMin, headerMax;
+    ofParameter<float> speed, bpmAdd, maxMinutes, barMult, density, seqFade, header, headerPlus, smooth, headerMin, headerMax;
     ofParameter<float> phaseOut, bpmOut, pitchBend, fade, seqMinutes, speedOut;
     ofParameter<float> headerPosOut, headerNorm, phLock, phOff, opacity;
     ofParameter<int> kickOut;

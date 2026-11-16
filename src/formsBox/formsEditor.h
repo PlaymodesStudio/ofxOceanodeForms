@@ -112,6 +112,7 @@ public:
     ofParameter<bool>* autoGo = nullptr;
     ofParameter<float>* barMult = nullptr;                  // the node's Bar Multiplier / Bar Add (Stage > Layers)
     ofParameter<int>* barAdd = nullptr;
+    ofParameter<float>* density = nullptr;                  // the node's Density (Stage > Layers)
     std::function<void(const std::string&)> nodeParamMenu;  // right-click menu of a node setting (publish, timeline)
     // set by the node: why no new images are being asked for ("" while they are), and how to resume
     std::function<std::string()> noNewImagesWhy;
