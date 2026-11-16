@@ -321,17 +321,13 @@ inline void Editor::drawStageTab(){
     std::string name;
     if(const Scene* hs = engine->sceneAtHeader()) name = hs->name;
     else if(L.header) name = L.header->scene;
-    auto it = engine->scenes.find(name);
-    Scene* sp = it != engine->scenes.end() ? &it->second : nullptr;
-    if(sp && sp->layers.empty()) sp = nullptr;
-    bool changed = false;
-    bool immediate = immediateSwitch && *immediateSwitch;
 
-    // ---- left: the output and, folded, the transport
+    // ---- left: the show's settings (the output is on the stage itself, and small in the top bar)
     if(stageShowOutput){
         ImGui::BeginChild("##stageLeft", ImVec2(leftW, gridH));
-        drawOutputView(ImGui::GetContentRegionAvail().x, std::min(gridH * 0.55f, ImGui::GetContentRegionAvail().x * 9 / 16));
-        ImGui::Spacing();
+        // the left column is the show's (saved with the patch); the right one is the scene's
+        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+        if(ImGui::CollapsingHeader("Every scene (bars, density, image size)")) drawEveryScene();
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
         if(ImGui::CollapsingHeader("Transport, header, scroller")){ if(drawPlayControls) drawPlayControls(); }
         ImGui::EndChild();
@@ -342,7 +338,6 @@ inline void Editor::drawStageTab(){
     ImGui::BeginChild("##stageRight", ImVec2(0, gridH));
     drawSceneWorkspace(name);
     ImGui::EndChild();
-    (void)sp; (void)changed; (void)immediate;
 }
 
 // The instruments of the selected layer, as a list: mute / solo, order (arrows), name (double-click or
@@ -542,6 +537,49 @@ inline bool Editor::drawGlobalEffects(Scene& s){
     return changed;
 }
 
+// The settings that act on every scene (saved with the patch, not with a scene): the bar multiplier and
+// bar add, the density, the image size. In Stage's left column, with the transport: the right
+// column is the scene's.
+inline void Editor::drawEveryScene(){
+    savedWithPatchNote();
+    auto it = engine->scenes.find(selected);
+    const Scene* sp = it != engine->scenes.end() ? &it->second : nullptr;
+    if(barMult && barAdd){
+        std::string plays;
+        if(sp && (engine->barMult != 1 || engine->barAdd != 0)){
+            for(auto& l : sp->layers) plays += (plays.empty() ? "" : ", ") + barsText(l.bars) + " > " + barsText(engine->layerBars(l));
+            plays = "\nThe layers of " + sp->name + " now play as (bars): " + plays;
+        }
+        float bm = barMult->get();
+        ImGui::SetNextItemWidth(92 * z());
+        if(ImGui::InputFloat("bar multiplier", &bm, 1.0f, 1.0f, "x%g")) *barMult = ofClamp(bm, barMult->getMin(), barMult->getMax());
+        if(nodeParamMenu) nodeParamMenu(barMult->getEscapedName());
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Every layer of every scene lasts its bars times this, so a wide projection keeps its picture proportions\n"
+                                                     "(a view 3 screens wide: x3, and an 8-bar layer draws 24 bars across it). -/+ in steps of 1; a fraction can be typed.\n"
+                                                     "The scenes keep their own lengths. From the next image asked for; saved with the patch, not the scene.%s", plays.c_str());
+        int ba = barAdd->get();
+        ImGui::SetNextItemWidth(92 * z());
+        if(ImGui::InputInt("bar add", &ba, 1, 4)) *barAdd = ofClamp(ba, barAdd->getMin(), barAdd->getMax());
+        if(nodeParamMenu) nodeParamMenu(barAdd->getEscapedName());
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Whole bars added to every layer of every scene, after the multiplier (bars x multiplier + this).\n"
+                                                     "Negative takes bars away (a layer never goes below one bar that way). From the next image asked for.%s", plays.c_str());
+        if(density){
+            float de = density->get();
+            ImGui::SetNextItemWidth(140 * z());
+            if(ImGui::SliderFloat("density", &de, density->getMin(), density->getMax(), "%+.0f")) *density = ofClamp(de, density->getMin(), density->getMax());
+            if(ImGui::IsItemClicked(ImGuiMouseButton_Right) && !nodeParamMenu) *density = 0;
+            if(nodeParamMenu) nodeParamMenu(density->getEscapedName());
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("How many instruments play, in every scene: bends each instrument's chance.\n"
+                                                         "Below 0 the chances shrink (-100: nothing plays); above 0 they grow (+100: every instrument that is on plays every image).\n"
+                                                         "0 = the chances as written (ctrl-click the slider to type a value). Instruments at 0%% stay off; frozen layers and previews are not touched.\n"
+                                                         "From the next image asked for (with Live edits on: the pages on stage change at once); saved with the patch, not the scene.");
+        }
+    }
+    ImGui::Spacing();
+    ImGui::TextDisabled("Image size");
+    drawSizeControl();
+}
+
 // The scene editor: which scene (the playing one while "follow what plays" is ticked), its own line
 // (name, bank, save), and its tabs. The only place a scene is edited.
 inline void Editor::drawSceneWorkspace(const std::string& playing){
@@ -621,42 +659,6 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
             if(!sp) nothing(); else {
                 Scene& s = *sp;
                 changed |= drawGlobalEffects(s);
-                if(barMult && barAdd){
-                    // on the same row, at its right: every layer of every scene plays bars x multiplier + add
-                    // (wide projections keep their proportions); node settings, not the scene's
-                    std::string plays;
-                    if(engine->barMult != 1 || engine->barAdd != 0){
-                        for(auto& l : s.layers) plays += (plays.empty() ? "" : ", ") + barsText(l.bars) + " > " + barsText(engine->layerBars(l));
-                        plays = "\nThis scene's layers now play as (bars): " + plays;
-                    }
-                    ImGui::SameLine(0, 24 * z());
-                    float bm = barMult->get();
-                    ImGui::SetNextItemWidth(92 * z());
-                    if(ImGui::InputFloat("bar multiplier", &bm, 1.0f, 1.0f, "x%g")) *barMult = ofClamp(bm, barMult->getMin(), barMult->getMax());
-                    if(nodeParamMenu) nodeParamMenu(barMult->getEscapedName());
-                    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Every layer of every scene lasts its bars times this, so a wide projection keeps its picture proportions\n"
-                                                                 "(a view 3 screens wide: x3, and an 8-bar layer draws 24 bars across it). -/+ in steps of 1; a fraction can be typed.\n"
-                                                                 "The scenes keep their own lengths. From the next image asked for; saved with the patch, not the scene.%s", plays.c_str());
-                    ImGui::SameLine(0, 12 * z());
-                    int ba = barAdd->get();
-                    ImGui::SetNextItemWidth(92 * z());
-                    if(ImGui::InputInt("bar add", &ba, 1, 4)) *barAdd = ofClamp(ba, barAdd->getMin(), barAdd->getMax());
-                    if(nodeParamMenu) nodeParamMenu(barAdd->getEscapedName());
-                    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Whole bars added to every layer of every scene, after the multiplier (bars x multiplier + this).\n"
-                                                                 "Negative takes bars away (a layer never goes below one bar that way). From the next image asked for.%s", plays.c_str());
-                    if(density){
-                        ImGui::SameLine(0, 12 * z());
-                        float de = density->get();
-                        ImGui::SetNextItemWidth(140 * z());
-                        if(ImGui::SliderFloat("density", &de, density->getMin(), density->getMax(), "%+.0f")) *density = ofClamp(de, density->getMin(), density->getMax());
-                        if(ImGui::IsItemClicked(ImGuiMouseButton_Right) && !nodeParamMenu) *density = 0;
-                        if(nodeParamMenu) nodeParamMenu(density->getEscapedName());
-                        if(ImGui::IsItemHovered()) ImGui::SetTooltip("How many instruments play, in every scene: bends each instrument's chance.\n"
-                                                                     "Below 0 the chances shrink (-100: nothing plays); above 0 they grow (+100: every instrument that is on plays every image).\n"
-                                                                     "0 = the chances as written (ctrl-click the slider to type a value). Instruments at 0%% stay off; frozen layers and previews are not touched.\n"
-                                                                     "From the next image asked for (with Immediate on: the pages on stage change at once); saved with the patch, not the scene.");
-                    }
-                }
                 ImGui::Separator();
                 if(ImGui::BeginTable("##layersAndInstruments", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)){
                     ImGui::TableSetupColumn("layers", ImGuiTableColumnFlags_WidthStretch, 1.25f);
@@ -679,8 +681,6 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
         if(ImGui::BeginTabItem(lookTab.c_str())){
             crumb(1, "Look & harmony");
             ImGui::BeginChild("##stLook");
-            ImGui::SeparatorText("Image size (all scenes)");
-            drawSizeControl();
             if(!sp) nothing(); else changed |= drawSceneLook(*sp);
             ImGui::EndChild();
             ImGui::EndTabItem();

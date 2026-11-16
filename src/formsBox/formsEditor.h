@@ -754,7 +754,7 @@ private:
     bool stageFollow = true;
     std::string stageSelectedSeen;   // the scene the editor showed last: a change made elsewhere (Gallery, Assistant, New) is kept
     bool layerSettingsBelow = false; // drawLayerStack: the selected layer's settings under the stack (not beside it)
-    bool stageShowOutput = true;   // the output view and transport at the left of Stage
+    bool stageShowOutput = true;   // Stage's left column: the show's settings (every scene, transport)
     void drawSceneWorkspace(const std::string& playing);
     void drawSceneList();
     bool drawSceneHeader(Scene& s);
@@ -1350,6 +1350,7 @@ private:
     void drawSystemTab();
 
     void drawSizeControl();
+    void drawEveryScene();   // Stage, left column: bar multiplier / add, density, image size (the patch's, not a scene's)
 };
 
 inline std::string Editor::previewSceneName() const { return !previewScene.empty() ? previewScene : selected; }

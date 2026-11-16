@@ -164,7 +164,7 @@ inline bool Editor::drawSceneHeader(Scene& s){
             if(ImGui::MenuItem("Render a preview image")) renderScene(s.name);
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("Render one image of this scene now (unsaved edits included); it scrolls in next. The setlist doesn't move.");
             ImGui::Separator();
-            if(ImGui::MenuItem(stageShowOutput ? "Hide the output view" : "Show the output view")) stageShowOutput = !stageShowOutput;
+            if(ImGui::MenuItem(stageShowOutput ? "Hide the left column (every scene, transport)" : "Show the left column (every scene, transport)")) stageShowOutput = !stageShowOutput;
             if(s.snapshot >= 0) ImGui::TextDisabled("from 1920 Director slot %d", s.snapshot);
         }
         ImGui::EndPopup();

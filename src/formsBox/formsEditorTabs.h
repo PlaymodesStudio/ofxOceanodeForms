@@ -294,7 +294,7 @@ inline void Editor::drawSystemTab(){
     ImGui::SeparatorText("Data folder");
     ImGui::TextWrapped("%s", engine->rendererFolder.string().c_str());
     ImGui::SeparatorText("Image size");
-    ImGui::Text("%d x %d", imageW, imageH); ImGui::SameLine(); ImGui::TextDisabled("set in Stage > Look & harmony");
+    ImGui::Text("%d x %d", imageW, imageH); ImGui::SameLine(); ImGui::TextDisabled("set in Stage > Every scene");
     ImGui::SeparatorText("Session");
     ImGui::Text("%s   requested %d   rendering %d   ready %d   shown %d   repeats %d", engine->session.c_str(), engine->counter,
                 (int)engine->pending.size(), (int)L.ready.size(), L.shown, L.repeats);
@@ -391,9 +391,11 @@ inline void Editor::drawSizeControl(){
     bool activeH = ImGui::IsItemActive();
     if(ImGui::IsItemDeactivatedAfterEdit()) setImageSize(imageW, ofClamp(editH, 16, 16384));
     sizeEditing = activeW || activeH;
+    ImGui::PushTextWrapPos(0.0f);   // (a narrow column in Stage: the notes wrap)
     if(imageW * imageH > 1920 * 1080 * 2)
         ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "Large images render several times slower (4K about 4.7x): fine for prints, may not keep up live.");
-    ImGui::TextDisabled("The size every scene's images are drawn at (from the next image on) and the size of the output texture (at once).\nNot saved in the scene. The node's Width/Height can set another output size afterwards; exports pick their own size.");
+    ImGui::TextDisabled("The size every scene's images are drawn at (from the next image on) and the size of the output texture (at once). Not saved in the scene. The node's Width/Height can set another output size afterwards; exports pick their own size.");
+    ImGui::PopTextWrapPos();
 }
 
 } // namespace forms
