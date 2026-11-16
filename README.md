@@ -287,9 +287,9 @@ Forms Box now contains the clock (Forms Transport), the play-head (Forms Header)
   it) is off unless **Tremolo** is ticked (Play tab / node parameter; off by default, since 2026-11-05).
 - **Scroller:** Width and Height; outputs Output (the scrolling picture) and In Header.
 
-At each wrap it asks for the next image itself. **Built-in Player** (inspector) switches this off;
-then Forms Box works with separate Forms Transport / Forms Header / Layer Scroller nodes through
-its Schedule output, as in the older patches (3--, 4--, 5--, which have it off). Preset
+At each wrap it asks for the next image itself. (The **Built-in Player** switch and the Schedule
+output, which let separate Forms Transport / Forms Header / Layer Scroller nodes play the images in
+the older patches 3--, 4--, 5--, were removed on 2026-11-15: those nodes no longer exist.) Preset
 `6--ESPECTRES_2027_4` is 5-- with the three nodes replaced by Forms Box (generated, same wiring).
 
 ### Play tab

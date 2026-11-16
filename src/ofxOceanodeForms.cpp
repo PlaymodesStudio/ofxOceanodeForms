@@ -47,8 +47,7 @@ void registerModels(ofxOceanode &o){
 }
 
 void registerType(ofxOceanode &o){
-    // ESPECTRES 2027: the schedule of rendered images
-    o.registerType<forms::Schedule*>("FormsSchedule", nullptr);
+    // (the Schedule port type went with the external player, 2026-11-15: Forms GL Box plays its own images)
 }
 
 void registerCollection(ofxOceanode &o){

@@ -54,7 +54,6 @@ public:
     virtual ~formsBox(){
         ofxOceanodeGlobalPitch::unfollow(this);
         releaseTransport();
-        scheduleOut = nullptr;
     }
 
     std::string getWindowTitle() override { return "Forms GL Box " + ofToString(getNumIdentifier()); }
@@ -104,7 +103,6 @@ public:
 
         // ---- the window's settings (publishable with a right-click; the legacy ones were on the node)
         resetSetlist.set("Reset Setlist");
-        actualBarIn.set("actualBarIn", 0, 0, 64);
         analogMode.set("Analog Mode", false);
         bpmAdd.set("BPM Add", 0, -1, 1);
         maxMinutes.set("Max Minutes", 11, 0.1, 600);
@@ -119,7 +117,7 @@ public:
         headerMax.set("Header Max", 4.0f / 7, 0, 1);
         viewW.set("Width", 1920, 1, 16384);
         viewH.set("Height", 1080, 1, 16384);
-        ctl.reg(resetSetlist); ctl.reg(actualBarIn); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes); ctl.reg(sessionLimit); ctl.reg(barMult); ctl.reg(barAdd); ctl.reg(density);
+        ctl.reg(resetSetlist); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes); ctl.reg(sessionLimit); ctl.reg(barMult); ctl.reg(barAdd); ctl.reg(density);
         ctl.reg(autoHeader); ctl.reg(tremoloOn); ctl.reg(hardCut); ctl.reg(headerMin); ctl.reg(headerMax);
         ctl.reg(viewW); ctl.reg(viewH);
         // the transport follows Forms Box's beat (off: the transport runs on its own)
@@ -132,33 +130,19 @@ public:
         pitchBend.set("Pitch Bend", 0, -48, 48);
         fade.set("Fade", 1, 0, 1);
         seqMinutes.set("Seq Minutes", 0, 0, 600);
-        speedOut.set("Speed Out", 1, -24, 24);
         autoPng.set("Auto", true);
-        sequenceOut.set("Sequence Out", true);
         restartSetlist.set("Restart Setlist");
         phLock.set("phLock", 0, 0, 1);
-        phOff.set("phOff", 0, 0, 1);
         actualBarOut.set("actualBar", 0, 0, 64);
         opacity.set("Opacity", 1, 0, 1);
         inHeader.set("In Header", "");
-        scheduleOut.set("Schedule", nullptr);
-        actualBPM.set("actualBPM", 120, 1, 999);
-        actualBars.set("actualBars", 8, 0, 256);
-        actualNoteGrid.set("actualNoteGrid", 100, 0, 999);
-        actualRoot.set("actualRoot", 0, 0, 64);
-        actualScale.set("actualScale", {0}, {0}, {48});
-        actualSnapshot.set("actualSnapshot", -1, -1, 255);
-        actualTrans.set("actualTrans", 0, -48, 48);
-        sceneName.set("Scene Name", "");
         // What the 1920 Director output directly: the scene root and the Director slot of the scene the setlist is on
         sceneRoot.set("Root", 24, 0, 127);
         setlistSnapshot.set("Setlist Snapshot", -1, -1, 255);
-        ctl.regOutput(pitchBend); ctl.regOutput(fade); ctl.regOutput(seqMinutes); ctl.regOutput(speedOut);
-        ctl.regOutput(autoPng); ctl.regOutput(sequenceOut); ctl.regOutput(restartSetlist); ctl.regOutput(phLock);
-        ctl.regOutput(phOff); ctl.regOutput(actualBarOut); ctl.regOutput(opacity); ctl.regOutput(inHeader);
-        ctl.regOutput(scheduleOut); ctl.regOutput(actualBPM); ctl.regOutput(actualBars); ctl.regOutput(actualNoteGrid);
-        ctl.regOutput(actualRoot); ctl.regOutput(actualScale); ctl.regOutput(actualSnapshot); ctl.regOutput(actualTrans);
-        ctl.regOutput(sceneName); ctl.regOutput(sceneRoot); ctl.regOutput(setlistSnapshot);
+        ctl.regOutput(pitchBend); ctl.regOutput(fade); ctl.regOutput(seqMinutes);
+        ctl.regOutput(autoPng); ctl.regOutput(restartSetlist); ctl.regOutput(phLock);
+        ctl.regOutput(actualBarOut); ctl.regOutput(opacity); ctl.regOutput(inHeader);
+        ctl.regOutput(sceneRoot); ctl.regOutput(setlistSnapshot);
         // The scene's performance settings (what Macro_8 output), smoothed like the patch's Smoothers
         for(auto& p : forms::perfParams()){
             if(!p.output) continue;
@@ -171,11 +155,11 @@ public:
         }
         // the old node's parameters, in its order (a patch without "formsPublished" gets them back)
         legacyKeys.clear();
-        for(auto* p : std::vector<ofAbstractParameter*>{&resetSetlist, &actualBarIn, &analogMode, &bpmAdd, &maxMinutes,
+        for(auto* p : std::vector<ofAbstractParameter*>{&resetSetlist, &analogMode, &bpmAdd, &maxMinutes,
                 &autoHeader, &tremoloOn, &hardCut, &headerMin, &headerMax, &viewW, &viewH,
-                &pitchBend, &fade, &seqMinutes, &speedOut, &autoPng, &sequenceOut, &restartSetlist, &phLock, &phOff,
-                &actualBarOut, &opacity, &inHeader, &scheduleOut, &actualBPM, &actualBars, &actualNoteGrid,
-                &actualRoot, &actualScale, &actualSnapshot, &actualTrans, &sceneName, &sceneRoot, &setlistSnapshot})
+                &pitchBend, &fade, &seqMinutes, &autoPng, &restartSetlist, &phLock,
+                &actualBarOut, &opacity, &inHeader,
+                &sceneRoot, &setlistSnapshot})
             legacyKeys.push_back(p->getEscapedName());
         for(auto& o : perfOuts) legacyKeys.push_back(o->p->type == 'f' ? o->f.getEscapedName() : o->p->type == 'i' ? o->i.getEscapedName() : o->v.getEscapedName());
         // a new node: the few that are worth modulating
@@ -195,7 +179,6 @@ public:
         addInspectorParameter(immediateReplace.set("Replace at Playhead", false));
         addInspectorParameter(pitchclassFolder.set("Pitchclass", "Supercollider/Pitchclass"));
         listeners.push(pitchclassFolder.newListener([this](string&){ reload(); }));
-        addInspectorParameter(builtInPlayer.set("Built-in Player", true));
         addInspectorParameter(saveFrame.set("Save Frame"));
         listeners.push(saveFrame.newListener([this](){ saveFramePending = true; }));
         clock.noise2 = [](float x, float seed){ return ofNoise(x, seed); };
@@ -429,20 +412,12 @@ public:
         laneMemo.clear();                 // the lane's answers, once per frame
         lane.syncRows(sceneNames);
         ctl.update();
-        if(builtInPlayer) runPlayer();
+        runPlayer();
         driveTransportStep();
 
-        auto v = engine.headerValues(builtInPlayer ? head.actualBar : actualBarIn.get());
+        auto v = engine.headerValues(head.actualBar);
         if(v.valid){
-            if(actualBPM != v.bpm) actualBPM = v.bpm;
-            if(actualBars != forms::barCount(v.bars)) actualBars = forms::barCount(v.bars);   // an int output: bars it touches (0.25 -> 1)
-            if(actualNoteGrid != v.notegrid) actualNoteGrid = v.notegrid;
-            if(actualRoot != v.root) actualRoot = v.root;
-            if(actualTrans != v.trans) actualTrans = v.trans;
-            if(actualSnapshot != v.snapshot) actualSnapshot = v.snapshot;
-            if(actualScale.get() != v.scale) actualScale = v.scale;
             auto& h = engine.schedule->layers[0].header;
-            if(h && sceneName.get() != h->scene) sceneName = h->scene;
             if(h){
                 auto it = engine.scenes.find(h->scene);
                 int r0 = it != engine.scenes.end() ? engine.effectiveRoot(it->second) : (h->root >= 0 ? h->root : sceneRoot.get());   // live, as the partials
@@ -458,7 +433,6 @@ public:
         if(const forms::Scene* next = engine.currentScene()){
             if(setlistSnapshot != next->snapshot) setlistSnapshot = next->snapshot;
         }
-        scheduleOut = engine.schedule.get(); // re-set every frame, so a late connection still gets it
         scroller.immediate = immediateReplace;
         for(auto& r : rings) r.immediate = immediateReplace;
 
@@ -552,10 +526,8 @@ protected:   // (Forms GL Box derives from Forms Box)
         pitchBend = clock.pitchBend;
         fade = clock.fade;
         seqMinutes = clock.seqMinutes;
-        speedOut = clock.speedOut;
         bool generating = autoGo && clock.autoPng;
         if(autoPng != generating) autoPng = generating;
-        if(sequenceOut != sequence.get()) sequenceOut = sequence.get();
         for(int i = r; i < clock.restartCount; i++) restartSetlist.trigger();
         for(int i = g; i < clock.goCount; i++) goTick();
 
@@ -575,7 +547,6 @@ protected:   // (Forms GL Box derives from Forms Box)
         headerPosOut = head.headerPos;
         headerNorm = head.headerNorm;
         phLock = head.phLock;
-        phOff = head.phOff;
         if(actualBarOut != head.actualBar) actualBarOut = head.actualBar;
         opacity = head.opacity;
 
@@ -841,7 +812,7 @@ protected:   // (Forms GL Box derives from Forms Box)
 #ifdef FORMS_HAS_TRANSPORT
         auto* c = getHostContainer();
         auto root = c ? c->getRootTransport() : nullptr;
-        if(!(driveTransport && builtInPlayer && root)){ releaseTransport(); transportStatus = driveTransport ? "no transport" : ""; return; }
+        if(!(driveTransport && root)){ releaseTransport(); transportStatus = driveTransport ? "no transport" : ""; return; }
         if(claimed.lock() != root || root->getExternalClockOwner() != this){
             if(root->hasExternalClock() && root->getExternalClockOwner() != this && !claimed.lock()){
                 transportStatus = "another clock drives the transport (MIDI clock?)";
@@ -886,10 +857,6 @@ protected:   // (Forms GL Box derives from Forms Box)
     // The Play tab's controls (the window's widgets write these parameters)
     void drawPlayControls(){
         float z = ofxOceanodeShared::getZoomLevel();
-        if(!builtInPlayer){
-            ImGui::TextDisabled("Built-in Player is off (inspector): nothing plays here; the Schedule output carries the images.");
-            return;
-        }
         forms::savedWithPatchNote();
         // two columns: the transport | the header and, under it, the scroller
         if(!ImGui::BeginTable("##play", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) return;
@@ -1810,21 +1777,18 @@ protected:   // (Forms GL Box derives from Forms Box)
 
     ofParameter<bool> showWindow, useSetlist;
     ofParameter<void> go, resetSetlist;
-    ofParameter<int> sceneIndex, actualBarIn;
-    ofParameter<forms::Schedule*> scheduleOut;
+    ofParameter<int> sceneIndex;
     ofParameter<int> barAdd;
-    ofParameter<int> actualBPM, actualBars, actualNoteGrid, actualRoot, actualSnapshot, actualTrans;
     ofParameter<int> sceneRoot, setlistSnapshot;
-    ofParameter<vector<float>> actualScale;
-    ofParameter<string> sceneName, rendererFolder, pitchclassFolder;
+    ofParameter<string> rendererFolder, pitchclassFolder;
     ofParameter<int> prime, maxPending, imageWidth, imageHeight;
     // built-in player
-    ofParameter<bool> builtInPlayer, analogMode, sequence, autoPng, sequenceOut, autoHeader, autoGo, sessionLimit;
+    ofParameter<bool> analogMode, sequence, autoPng, autoHeader, autoGo, sessionLimit;
     ofParameter<bool> tremoloOn;              // the scenes' opacity tremolo (off by default)
     ofParameter<int> pause, viewW, viewH, actualBarOut;
     ofParameter<float> speed, bpmAdd, maxMinutes, barMult, density, seqFade, header, headerPlus, smooth, headerMin, headerMax;
-    ofParameter<float> phaseOut, bpmOut, pitchBend, fade, seqMinutes, speedOut;
-    ofParameter<float> headerPosOut, headerNorm, phLock, phOff, opacity;
+    ofParameter<float> phaseOut, bpmOut, pitchBend, fade, seqMinutes;
+    ofParameter<float> headerPosOut, headerNorm, phLock, opacity;
     ofParameter<int> kickOut;
     // the Global Pitch node's values, read each frame into the engine (and the lagged transpose for the sound)
     float gpTranspose = 0;
@@ -1945,14 +1909,13 @@ protected:   // (Forms GL Box derives from Forms Box)
     void switchNowRun(bool keepImage = false){
         auto& h = engine.schedule->layers[0].header;
         // in bars, on the 1/16-bar grid (layer 1's page may be shorter than a bar)
-        double bar = builtInPlayer ? std::round(scroller.headerStart / 4.0 * forms::kBarGrid) / forms::kBarGrid
-                                   : (h && h->startBar >= 0) ? h->startBar : std::floor(engine.schedule->headerBeat / 4.0);
+        double bar = std::round(scroller.headerStart / 4.0 * forms::kBarGrid) / forms::kBarGrid;
         // the header left of the wrap: the switch image plays once, one more image is needed ahead
         float c = clock.phase + (viewW > 0 ? head.headerPos / viewW : 0);
         int debt = 0;
         // Auto GO off: only the switch image. Nothing follows it, so images asked ahead would play
         // one after the other and the last of them would stay instead of the one asked for.
-        const int ahead = !autoGo ? 1 : (builtInPlayer && c < 1 ? 3 : 2);
+        const int ahead = !autoGo ? 1 : (c < 1 ? 3 : 2);
         auto paths = engine.switchNow(bar, debt, ahead, keepImage ? 1 : 0);
         if(paths.empty()) return;
         goDebt = debt;
