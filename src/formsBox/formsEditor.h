@@ -119,6 +119,9 @@ public:
     std::function<std::string()> noNewImagesWhy;
     std::function<void()> resumeImages;
     std::function<void(bool)> requestNext;                  // render the next image (force)
+    std::function<void()> resetLayers;                      // every layer back to the start of the image it plays
+    ofParameter<float>* headerParam = nullptr;              // the node's Header (0..1 of the view) and Smooth: top bar
+    ofParameter<float>* smoothParam = nullptr;
     std::function<void()> previousImage;                    // layer 1's previous image back under the header
     std::function<bool()> canPreviousImage;
     std::function<void(const std::string&)> renderScene;    // preview render of a scene
@@ -540,6 +543,31 @@ private:
         }
         ImGui::SameLine(0, 12 * zz);
         drawUndoButtons();
+        // line 3: where the header is, and the reset of the layers
+        if(headerParam){
+            float hv = headerParam->get();
+            ImGui::SetNextItemWidth(260 * zz);
+            if(ImGui::SliderFloat("Header", &hv, headerParam->getMin(), headerParam->getMax(), "%.3f")) *headerParam = ofClamp(hv, headerParam->getMin(), headerParam->getMax());
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Where the header (the line that plays) is across the view: 0 = left edge, 1 = right edge.\n"
+                                                         "Ctrl-click to type a value. Saved with the patch; also \"Header\" on the node.");
+        }
+        if(smoothParam){
+            ImGui::SameLine(0, 14 * zz);
+            float sv = smoothParam->get();
+            ImGui::SetNextItemWidth(150 * zz);
+            if(ImGui::SliderFloat("Smooth", &sv, smoothParam->getMin(), smoothParam->getMax(), "%.4f", ImGuiSliderFlags_Logarithmic)) *smoothParam = ofClamp(sv, smoothParam->getMin(), smoothParam->getMax());
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("How slowly the header glides to a new position (0 = at once; close to 1 = very slowly).\n"
+                                                         "Saved with the patch; also \"Smooth\" on the node.");
+        }
+        if(resetLayers){
+            ImGui::SameLine(0, 18 * zz);
+            if(ImGui::Button("Reset layers")) resetLayers();
+            if(nodeParamMenu) nodeParamMenu("Reset_Layers");
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Every layer jumps back to the start of the image it is playing, so they all start together at the header\n"
+                                                         "(the same images; nothing new is drawn). Layer 1 starts again on a bar line.\n"
+                                                         "The other layers then play a little behind the plan until the next scene, so their harmony bars can sit\n"
+                                                         "offset from layer 1's. Right-click: put \"Reset Layers\" on the node (cable, MIDI, timeline).");
+        }
         ImGui::EndGroup();
         drawNoNewImages();
     }

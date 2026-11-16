@@ -68,6 +68,41 @@ public:
     }
     int fboFormat = 0;   // what the buffer was allocated with
 
+    // Reset layers: a wrap happens on this frame's phase (the slots have not moved yet): wait a frame
+    bool wrapsAt(float phase) const { return std::fabs(oldPhase - phase) > 0.5f; }
+    // Reset layers: the image under the header starts again, with its left edge at the header and
+    // that edge at `beat` (a bar line, chosen by the node). It fills both slots (its tail shows left
+    // of the header); the image that was to come next still comes next. Returns the phase the clock
+    // must take, or -1 when it cannot be done on this frame (an image is loading, nothing plays).
+    float restartHeaderImage(Schedule::Layer* L, float phase, float headerPos, int w, double beat){
+        if(isLoading || w <= 0) return -1;
+        float c = phase + headerPos / w;
+        const int cur = c < 1 ? leavingIndex : appearingIndex;
+        if(!entries[cur] || !loaded(cur)) return -1;
+        // the image waiting to come in after it, and (header still in the leaving image) the one after that
+        int next = -1;
+        if(c < 1 && appearingIndex != cur && loaded(appearingIndex)){
+            next = appearingIndex;
+            if(loadingIndex != cur && loadingIndex != next && entries[loadingIndex] && L) L->ready.push_front(entries[loadingIndex]);   // back in the queue
+        }else if(loadingIndex != cur && loaded(loadingIndex)) next = loadingIndex;
+        leavingIndex = appearingIndex = cur;
+        loadingIndex = next >= 0 ? next : (cur + 1) % 3;
+        const int other = 3 - cur - loadingIndex;
+        images[other].clear(); entries[other].reset();
+        if(next < 0){ images[loadingIndex].clear(); entries[loadingIndex].reset(); }
+        // the appearing copy's left edge at the header: phase + headerPos / w = 1 (header at the
+        // left edge of the view: phase 0, and the leaving copy starts there)
+        float np = 1.0f - headerPos / w;
+        if(np >= 1.0f || np < 0.0f){ np = 0; origin = beat; }
+        else{
+            while(np + headerPos / w < 1.0f) np = std::nextafter(np, 2.0f);
+            if(np >= 1.0f){ np = 0; origin = beat; } else origin = beat - beatsOf(cur);
+        }
+        oldPhase = np;   // no wrap is read into this jump
+        swapDup = false;
+        return np;
+    }
+
     // One frame: load, wrap on phase, draw into the FBO, report the header image to L
     void update(Schedule::Layer* L, float phase, float headerPos, int w, int h){
         beatRebased = false;

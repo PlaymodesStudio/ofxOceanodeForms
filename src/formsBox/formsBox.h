@@ -107,6 +107,7 @@ public:
 
         // ---- the window's settings (publishable with a right-click; the legacy ones were on the node)
         resetSetlist.set("Reset Setlist");
+        resetLayers.set("Reset Layers");   // every layer back to the start of the image it plays
         analogMode.set("Analog Mode", false);
         bpmAdd.set("BPM Add", 0, -1, 1);
         maxMinutes.set("Max Minutes", 11, 0.1, 600);
@@ -121,7 +122,7 @@ public:
         headerMax.set("Header Max", 4.0f / 7, 0, 1);
         viewW.set("Width", 1920, 1, 16384);
         viewH.set("Height", 1080, 1, 16384);
-        ctl.reg(resetSetlist); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes); ctl.reg(sessionLimit); ctl.reg(barMult); ctl.reg(barAdd); ctl.reg(density);
+        ctl.reg(resetSetlist); ctl.reg(resetLayers); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes); ctl.reg(sessionLimit); ctl.reg(barMult); ctl.reg(barAdd); ctl.reg(density);
         ctl.reg(autoHeader); ctl.reg(tremoloOn); ctl.reg(hardCut); ctl.reg(headerMin); ctl.reg(headerMax);
         ctl.reg(viewW); ctl.reg(viewH);
         // the transport follows Forms Box's beat (off: the transport runs on its own)
@@ -249,6 +250,9 @@ public:
             else request(force);
         };
         editor.previousImage = [this](){ engine.previousImage(); };
+        editor.resetLayers = [this](){ resetLayersPending = 30; };
+        listeners.push(resetLayers.newListener([this](){ resetLayersPending = 30; }));
+        editor.headerParam = &header; editor.smoothParam = &smooth;
         editor.canPreviousImage = [this](){ return !gateBypass && engine.canPrevious(); };
         editor.switchScene = [this](){ switchPending = true; };
         editor.renderScene = [this](const std::string& name){ send(engine.makeRequest(true, name)); };
@@ -573,6 +577,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         scroller.defaultBars = forms::barCount(clock.bars);
         // the live buffers' depth (Forms GL Box's option; 16 bits unless switched off)
         { const int fmt = liveFormat(); scroller.bufferFormat = fmt; for(auto& r : rings) r.bufferFormat = fmt; layerFx.internalFormat = fmt; post.internalFormat = fmt; }
+        if(resetLayersPending > 0 && resetLayersNow(L)){ feed.restart(); laneMemo.clear(); }
         scroller.update(L, clock.phase, head.headerPos, viewW, viewH);
         if(scroller.beatRebased){ feed.restart(); laneMemo.clear(); }
         engine.schedule->headerBeat = scroller.headerBeat;
@@ -597,6 +602,10 @@ protected:   // (Forms GL Box derives from Forms Box)
             ring.active = cs && i < (int)cs->layers.size();
             // the layer's beat offset (its scene's, live): it shows what the others showed that many beats ago
             double offsetBeats = (cs && i < (int)cs->layers.size()) ? cs->layers[i].beatOffset : 0.0;
+            // Reset layers: what the layer was rewound by (it plays that many beats behind the plan);
+            // gone when another scene reaches the header
+            if(cs && cs->name != layerRewindScene){ layerRewindScene = cs->name; layerRewind.clear(); }
+            if(i < (int)layerRewind.size()) offsetBeats += layerRewind[i];
             ring.update(engine.schedule->layer(i), scroller.headerBeat - offsetBeats, head.headerPos, viewW, viewH);
         }
         logBarLine(nLayers);
@@ -956,6 +965,46 @@ protected:   // (Forms GL Box derives from Forms Box)
     ofFbo compositeFbo;
     int lastLoggedBar = -1;
     std::shared_ptr<forms::Image> lastSyncedHeader;
+    // ---- Reset layers: every layer back to the start of the image it plays, together at the header.
+    // Layer 1's image starts again on a bar line (the scroller's beat stays on the grid, and the plan
+    // is lined up with it); each extra layer is rewound to the start of the page under the header and
+    // from then on plays that many beats behind the plan (layerRewind), until the scene changes.
+    int resetLayersPending = 0;            // frames left to try (a wrap or a loading image: next frame)
+    std::vector<double> layerRewind;       // per layer (index 0 unused), beats
+    std::string layerRewindScene;
+    bool resetLayersNow(forms::Schedule::Layer* L){
+        resetLayersPending--;
+        if(viewW <= 0 || scroller.wrapsAt(clock.phase)) return false;
+        const double hb = scroller.beatAt(clock.phase, head.headerPos, viewW);
+        const forms::Scene* cs = engine.sceneAtHeader();
+        if(cs && cs->name != layerRewindScene){ layerRewindScene = cs->name; layerRewind.clear(); }
+        const int n = (int)engine.schedule->layers.size();
+        // the start of the page each extra layer plays (in the plan's beats), and its beat offset
+        std::vector<double> start(n, -1), off(n, 0);
+        double need = -1e18;
+        for(int i = 1; i < n; i++){
+            off[i] = (cs && i < (int)cs->layers.size()) ? cs->layers[i].beatOffset : 0.0;
+            const double B = hb - off[i] - (i < (int)layerRewind.size() ? layerRewind[i] : 0.0);
+            for(auto& sl : engine.schedule->layers[i].slots) if(sl.start <= B && B < sl.end()){ start[i] = sl.start; break; }
+            if(start[i] >= 0) need = std::max(need, start[i] + off[i]);
+        }
+        // layer 1 starts again on its grid (bar lines; a page shorter than a bar: its own length), at
+        // the line before the header, or the next one when a layer's page began after that line
+        // (a layer is never asked to play ahead of the plan)
+        const double grid = std::min(4.0, std::max(4.0 / forms::kBarGrid, (double)scroller.headerLen));
+        double HB = std::floor(hb / grid + 1e-9) * grid;
+        if(HB < need - 1e-6) HB = std::ceil(hb / grid - 1e-9) * grid;
+        if(HB < need - 1e-6) HB = std::ceil(need / grid - 1e-9) * grid;
+        const float np = scroller.restartHeaderImage(L, clock.phase, head.headerPos, viewW, HB);
+        if(np < 0) return false;
+        clock.phase = np;
+        layerRewind.assign(n, 0.0);
+        for(int i = 1; i < n; i++) if(start[i] >= 0) layerRewind[i] = HB - off[i] - start[i];
+        lastSyncedHeader.reset();          // the plan lines up with where layer 1's image now starts
+        resetLayersPending = 0;
+        engine.note("layers reset: every layer at the start of its image");
+        return true;
+    }
 
     // Reads `rows` pixels of column x of an FBO, from row y0 (row 0 = top), as RGBA bytes. The
     // pixel-pack state is set and restored around it: other nodes may leave a PBO bound (which
@@ -1800,7 +1849,7 @@ protected:   // (Forms GL Box derives from Forms Box)
     std::vector<std::string> sceneNames;
 
     ofParameter<bool> showWindow, useSetlist;
-    ofParameter<void> go, resetSetlist;
+    ofParameter<void> go, resetSetlist, resetLayers;
     ofParameter<int> sceneIndex;
     ofParameter<int> barAdd;
     ofParameter<int> sceneRoot, setlistSnapshot;
