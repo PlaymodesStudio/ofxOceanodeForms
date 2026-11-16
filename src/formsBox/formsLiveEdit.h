@@ -328,6 +328,9 @@ inline bool patchForScene(Engine& e, json& req, const Scene& s){
     req["notegrid"] = s.notegrid;
     req["bassDegree"] = s.bassDegree;
     req["lineWeight"] = s.lineWeight;
+    if(s.hueDeviation > 0) req["hueDeviation"] = s.hueDeviation; else req.erase("hueDeviation");
+    if(s.satDeviation > 0) req["satDeviation"] = s.satDeviation; else req.erase("satDeviation");
+    if(s.lightDeviation > 0) req["lightDeviation"] = s.lightDeviation; else req.erase("lightDeviation");
     {   // the layer's blocking switch as it is now
         int li = req.value("layer", 1) - 1;
         if(li >= 0 && li < (int)s.layers.size() && !s.layers[li].blocking) req["blocking"] = false; else req.erase("blocking");

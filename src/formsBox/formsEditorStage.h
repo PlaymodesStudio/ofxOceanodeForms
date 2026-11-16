@@ -144,12 +144,33 @@ inline bool Editor::drawSceneLook(Scene& s){
     sceneFieldMenu(s, "palette", s.palette, engine->paletteLib.empty() ? json("") : json(engine->paletteLib[0].name), [](Scene& x, const json& v){ if(v.is_string()) x.palette = v.get<std::string>(); }, changed);
     ImGui::SameLine();
     if(ImGui::SmallButton("edit##pal")){ libSelPalette = s.palette; composeMode = 2; showTab = "Compose"; }
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Edit this palette's colours (Library > Scales & palettes; every scene using it changes)");
-    if(const PaletteDef* pd = engine->findPalette(s.palette)){
-        ImVec2 p = ImGui::GetCursorScreenPos(); auto* dl = ImGui::GetWindowDrawList();
-        for(int i = 0; i < (int)pd->colors.size(); i++)
-            dl->AddRectFilled(ImVec2(p.x + i * 22 * zz, p.y), ImVec2(p.x + i * 22 * zz + 20 * zz, p.y + 14 * zz), hexColor(pd->colors[i]));
-        ImGui::Dummy(ImVec2(std::max<size_t>(1, pd->colors.size()) * 22 * zz, 16 * zz));
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Rename the palette, add or remove colours (Library > Scales & palettes). The colours themselves can be changed on the swatches below.");
+    // the palette's colours, editable here (click a swatch): the palette is the library's, so every
+    // scene using it changes; with Live edits on the pages on stage are drawn again at once
+    for(auto& d : engine->paletteLib) if(d.name == s.palette){
+        int users = 0;
+        for(auto& [n, sc] : engine->scenes) if(sc.palette == d.name) users++;
+        ImGui::PushID("stagePalette");
+        for(int i = 0; i < (int)d.colors.size(); i++){
+            ImGui::PushID(i);
+            if(i) ImGui::SameLine(0, 3 * zz);
+            unsigned v = 0;
+            try { v = std::stoul(d.colors[i], nullptr, 16); } catch(...) {}
+            float c[3] = {((v >> 16) & 0xFF) / 255.f, ((v >> 8) & 0xFF) / 255.f, (v & 0xFF) / 255.f};
+            if(ImGui::ColorEdit3("##c", c, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoTooltip)){
+                char buf[8];
+                snprintf(buf, sizeof(buf), "%02X%02X%02X", (int)(c[0] * 255 + .5f), (int)(c[1] * 255 + .5f), (int)(c[2] * 255 + .5f));
+                d.colors[i] = buf;
+                libraryDirty = true;
+            }
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Click to change this colour of the palette \"%s\" (used by %d %s).\n"
+                                                         "Live edits on: the pages on stage change at once; off: from the next images.\n"
+                                                         "Kept with Save all (top bar). Add or remove colours with \"edit\".", d.name.c_str(), users, users == 1 ? "scene" : "scenes");
+            ImGui::PopID();
+        }
+        if(users > 1){ ImGui::SameLine(0, 8 * zz); ImGui::TextDisabled("shared by %d scenes", users); }
+        ImGui::PopID();
+        break;
     }
     changed |= scaleCombo("Scale", s.scale);
     sceneFieldMenu(s, "scale", s.scale, engine->scaleLib.empty() ? json("") : json(engine->scaleLib[0].name), [](Scene& x, const json& v){ if(v.is_string()) x.scale = v.get<std::string>(); }, changed);
@@ -178,6 +199,21 @@ inline bool Editor::drawSceneLook(Scene& s){
     ImGui::SetNextItemWidth(160 * zz); changed |= ImGui::SliderFloat("Line weight", &s.lineWeight, 0.25f, 8.0f, "x %.2f", ImGuiSliderFlags_Logarithmic); s.lineWeight = ofClamp(s.lineWeight, 0.1f, 16.0f);
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Thins or thickens every line instrument of this scene: notes, harmonics, flow lines, shape outlines (x 1 = as each instrument says).\nBlocks, hits, masses' fills and textures don't change. Thicker lines also sound fuller (more partials lit).\nA line is never thinner than 1 pixel: at 1080 lines, values below 1 only thin instruments thicker than 1.\nCtrl-click to type. Right-click: default, copy / paste, every scene.");
     sceneFieldMenu(s, "lineWeight", s.lineWeight, 1.0f, [](Scene& x, const json& v){ if(v.is_number()) x.lineWeight = ofClamp(v.get<float>(), 0.1f, 16.0f); }, changed);
+    // random deviation of every colour picked from the palette (hue, saturation, lightness)
+    ImGui::TextDisabled("Colour deviation (each coloured element, at random)");
+    ImGui::SetNextItemWidth(160 * zz); changed |= ImGui::SliderFloat("Hue deviation", &s.hueDeviation, 0.0f, 180.0f, "+/- %.0f deg"); s.hueDeviation = ofClamp(s.hueDeviation, 0.0f, 180.0f);
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Each coloured element takes its palette colour turned by a random hue within +/- this many degrees\n"
+                                                 "(0 = the palette as it is; 180 = any hue). White and greys have no hue: they do not change.\n"
+                                                 "The shapes of an image stay the same. Live edits on: the pages on stage change at once.");
+    sceneFieldMenu(s, "hueDeviation", s.hueDeviation, 0.0f, [](Scene& x, const json& v){ if(v.is_number()) x.hueDeviation = ofClamp(v.get<float>(), 0.0f, 180.0f); }, changed);
+    ImGui::SetNextItemWidth(160 * zz); changed |= ImGui::SliderFloat("Saturation deviation", &s.satDeviation, 0.0f, 100.0f, "+/- %.0f%%"); s.satDeviation = ofClamp(s.satDeviation, 0.0f, 100.0f);
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Each coloured element is more or less saturated at random, within +/- this (%% of the full range).\n"
+                                                 "White and greys stay grey.");
+    sceneFieldMenu(s, "satDeviation", s.satDeviation, 0.0f, [](Scene& x, const json& v){ if(v.is_number()) x.satDeviation = ofClamp(v.get<float>(), 0.0f, 100.0f); }, changed);
+    ImGui::SetNextItemWidth(160 * zz); changed |= ImGui::SliderFloat("Lightness deviation", &s.lightDeviation, 0.0f, 100.0f, "+/- %.0f%%"); s.lightDeviation = ofClamp(s.lightDeviation, 0.0f, 100.0f);
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Each coloured element is lighter or darker at random, within +/- this (%% of the full range).\n"
+                                                 "White can only get darker. The image's brightness is what sounds, so this also varies each element's loudness.");
+    sceneFieldMenu(s, "lightDeviation", s.lightDeviation, 0.0f, [](Scene& x, const json& v){ if(v.is_number()) x.lightDeviation = ofClamp(v.get<float>(), 0.0f, 100.0f); }, changed);
     if(cols) ImGui::TableNextColumn();
     ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.5f, 1), "HARMONY");
     ImGui::SameLine(); ImGui::TextDisabled("per bar: the chance of each scale degree and of each transpose (semitones); every bar draws from these");

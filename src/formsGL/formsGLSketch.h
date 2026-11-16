@@ -241,6 +241,10 @@ public:
         bpm = req.value("bpm", bpm);
         bassDegree = req.value("bassDegree", 0);
         lineWeight = std::clamp(req.value("lineWeight", 1.0f), 0.1f, 16.0f);
+        hueDeviation = std::clamp(req.value("hueDeviation", 0.0f), 0.0f, 180.0f);
+        satDeviation = std::clamp(req.value("satDeviation", 0.0f), 0.0f, 100.0f);
+        lightDeviation = std::clamp(req.value("lightDeviation", 0.0f), 0.0f, 100.0f);
+        hueRng.setSeed((int64_t)seed ^ 0x48554544LL);   // its own stream: the shapes of a page do not change with the deviation
         if(req.contains("scaleNotes")){
             std::vector<int> notes;
             for(auto& n : req["scaleNotes"]) notes.push_back(ji(n));
@@ -409,6 +413,33 @@ private:
     uint32_t customColour[5] = {0xFFFFFFFF, 0xFFBF0000, 0xFFFFCC00, 0xFF00139F, 0xFF065535};
     int rootList[60] = {}, transposeList[60] = {};
     int bassDegree = 0;
+    // the scene's colour deviations: each colour picked from the palette moves at random within
+    // +/- hueDeviation degrees of hue, +/- satDeviation and +/- lightDeviation (% of the full range),
+    // in HSL. All 0 = the palette as it is. Greys have no hue, so hue and saturation leave them alone.
+    float hueDeviation = 0, satDeviation = 0, lightDeviation = 0;
+    JavaRandom hueRng;
+    uint32_t hueTurn(uint32_t col){
+        if(hueDeviation <= 0 && satDeviation <= 0 && lightDeviation <= 0) return col;
+        // three draws per colour whatever the palette and the settings: the stream stays the same
+        float dh = (hueRng.nextFloat() * 2 - 1) * hueDeviation;
+        float ds = (hueRng.nextFloat() * 2 - 1) * satDeviation / 100;
+        float dl = (hueRng.nextFloat() * 2 - 1) * lightDeviation / 100;
+        float r = ((col >> 16) & 0xFF) / 255.f, g = ((col >> 8) & 0xFF) / 255.f, b = (col & 0xFF) / 255.f;
+        float mx = std::max(r, std::max(g, b)), mn = std::min(r, std::min(g, b)), d = mx - mn;
+        float l = (mx + mn) / 2, sat = d <= 0 ? 0 : d / (1 - std::fabs(2 * l - 1)), h = 0;
+        if(d > 0){
+            h = mx == r ? std::fmod((g - b) / d, 6.0f) : mx == g ? (b - r) / d + 2 : (r - g) / d + 4;   // sixths of a turn
+            h = std::fmod(h * 60 + dh + 720, 360.0f) / 60;
+            sat = std::clamp(sat + ds, 0.0f, 1.0f);
+        }
+        l = std::clamp(l + dl, 0.0f, 1.0f);
+        float cc = (1 - std::fabs(2 * l - 1)) * sat, x = cc * (1 - std::fabs(std::fmod(h, 2.0f) - 1)), m = l - cc / 2;
+        float rr = 0, gg = 0, bb = 0;
+        switch((int)h % 6){ case 0: rr = cc; gg = x; break; case 1: rr = x; gg = cc; break; case 2: gg = cc; bb = x; break;
+                            case 3: gg = x; bb = cc; break; case 4: rr = x; bb = cc; break; default: rr = cc; bb = x; }
+        auto to8 = [m](float v){ return (uint32_t)std::clamp((int)std::lround((v + m) * 255), 0, 255); };
+        return (col & 0xFF000000u) | (to8(rr) << 16) | (to8(gg) << 8) | to8(bb);
+    }
     float lineWeight = 1;   // the scene's Line weight: multiplies the stroke of the line instruments (notes, harmonics, flow lines, shape outlines)
     // scale degree idx (any sign) as semitones: past the last degree up an octave, below 0 down one
     int degreeSemis(int idx, int len) const { int o = (int)std::floor(idx / (double)std::max(1, len)); return scale[idx - o * len] + 12 * o; }   // the scene's bass degree: bass instruments add it to the bar's degree
@@ -556,9 +587,9 @@ private:
     }
     int drawInt(const std::array<float, 2>& r){ int lo = pjRound(r[0]), hi = pjRound(r[1]); return lo == hi ? lo : lo + (int)random((float)(hi - lo + 1)); }
     uint32_t pickColour(int mode){
-        if(mode == 3) return genImageColour;
-        if(mode == 1) return customColour[0];
-        if(mode == 2) return customColour[(int)random(5)];
+        if(mode == 3) return hueTurn(genImageColour);
+        if(mode == 1) return hueTurn(customColour[0]);
+        if(mode == 2) return hueTurn(customColour[(int)random(5)]);
         return 0xFFFFFFFFu;   // color(255)
     }
 
@@ -1036,7 +1067,7 @@ private:
                     cc.window = p.b("window");
                     cc.op = level;
                     cc.opAlways = p.b("levelAlways");
-                    if(scc > 0 && random(100) < scc) cc.col = customColour[(int)random(5)];
+                    if(scc > 0 && random(100) < scc) cc.col = hueTurn(customColour[(int)random(5)]);
                     if(p.option("noiseAxis") == 1){ cc.columns = true; cc.ranRange = 20000; }
                     drawSpectral(cc);
                 }
@@ -2348,7 +2379,7 @@ private:
                     tys[i] = random(H / 6.0f, H - ths[i]);
                 }
                 tls[i] = drawIn(tlR);
-                if(tcol) tcs[i] = customColour[(int)random(5)];
+                if(tcol) tcs[i] = hueTurn(customColour[(int)random(5)]);
             }
             bool tearExtra = tlR[0] < 1 || tcol;
             parallelRows(H, [&](int y){

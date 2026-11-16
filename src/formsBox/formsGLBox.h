@@ -375,6 +375,9 @@ private:
             forms::Scene editState=sit->second; editState.kickSample.reset();
             forms::json now = editState;
             { auto es = engine.effectiveScale(sit->second); now["_globalPitch"] = {{"notes", es.notes}, {"root", engine.effectiveRoot(sit->second)}}; }   // a Global Pitch change counts as a scene edit
+            // so does an edit of the library palette the scene uses (its colours are not in the scene):
+            // without this a colour changed in the library reached the stage only with the next images
+            if(const forms::PaletteDef* pd = engine.findPalette(sit->second.palette)) now["_palette"] = pd->colors;
             auto f = sceneApplied.find(name);
             if(f == sceneApplied.end()){ sceneApplied[name] = now; continue; }
             if(f->second == now) continue;

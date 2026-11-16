@@ -194,6 +194,10 @@ struct Scene {
     int snapshot = -1;                // Director slot this scene came from (drives Macro_8 in the patch)
     std::vector<float> degreeWeights = std::vector<float>(12, 0.0f);
     std::vector<float> transposeWeights = std::vector<float>(12, 0.0f);
+    // every colour the renderer picks from the palette deviates at random within +/- these
+    float hueDeviation = 0;           // degrees of hue, 0..180
+    float satDeviation = 0;           // saturation, 0..100 (% of the full range)
+    float lightDeviation = 0;         // lightness, 0..100 (% of the full range)
     float lineWeight = 1;             // multiplies the stroke of this scene's line instruments (1 = as the instruments say)
     int bassDegree = 0;               // scale degree the bass instruments add to the bar's degree (0 = the root)
     // Effect-only instruments applied to every layer, bar by bar: each bar of the timeline gets one
@@ -265,6 +269,9 @@ inline void to_json(json& j, const Scene& s){
              {"layers", s.layers}, {"performance", s.performance}, {"compat", s.compat}};
     if(s.bassDegree) j["bassDegree"] = s.bassDegree;
     if(s.lineWeight != 1) j["lineWeight"] = s.lineWeight;
+    if(s.hueDeviation != 0) j["hueDeviation"] = s.hueDeviation;
+    if(s.satDeviation != 0) j["satDeviation"] = s.satDeviation;
+    if(s.lightDeviation != 0) j["lightDeviation"] = s.lightDeviation;
     if(!s.globalEffects.empty()) j["globalEffects"] = s.globalEffects;
     if(s.instruments.is_object() && !s.instruments.empty()) j["instruments"] = s.instruments;   // only when there are any: scenes stay as they were
     if(s.kickSample) j["kickSampleAsset"]=formskick::serialize(*s.kickSample);
@@ -281,6 +288,9 @@ inline void from_json(const json& j, Scene& s){
     s.transposeWeights = j.value("transposeWeights", std::vector<float>(12, 0.0f));
     s.bassDegree = std::clamp(j.value("bassDegree", 0), 0, 11);
     s.lineWeight = std::clamp(j.value("lineWeight", 1.0f), 0.1f, 16.0f);
+    s.hueDeviation = std::clamp(j.value("hueDeviation", 0.0f), 0.0f, 180.0f);
+    s.satDeviation = std::clamp(j.value("satDeviation", 0.0f), 0.0f, 100.0f);
+    s.lightDeviation = std::clamp(j.value("lightDeviation", 0.0f), 0.0f, 100.0f);
     s.globalEffects = j.value("globalEffects", std::vector<std::string>());
     s.instruments = (j.contains("instruments") && j["instruments"].is_object()) ? j["instruments"] : json::object();
     s.layers = j.value("layers", std::vector<LayerDef>());

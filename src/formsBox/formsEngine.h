@@ -1157,6 +1157,9 @@ public:
                  {"size", {width, height}}, {"scene", s->name}, {"snapshot", s->snapshot},
                  {"bars", barsJson(span)}, {"notegrid", s->notegrid}, {"bpm", barsJson(s->bpm)},
                  {"roots", h.roots}, {"trans", h.trans}, {"compat", s->compat}, {"bassDegree", s->bassDegree}, {"lineWeight", s->lineWeight}};
+            if(s->hueDeviation > 0) req["hueDeviation"] = s->hueDeviation;
+            if(s->satDeviation > 0) req["satDeviation"] = s->satDeviation;
+            if(s->lightDeviation > 0) req["lightDeviation"] = s->lightDeviation;
         if(img->slices > 1){
             // the phrase is drawn `slices` views wide (at most 16384 px: past that the pages are
             // stretched); pixel sizes follow the view (viewWidth), not the canvas
@@ -2140,6 +2143,9 @@ public:
                      {"size", {width, height}}, {"scene", s.name}, {"snapshot", s.snapshot},
                      {"bars", barsJson(layerBars(l))}, {"notegrid", s.notegrid}, {"bpm", barsJson(s.bpm)},
                      {"roots", h.roots}, {"trans", h.trans}, {"compat", s.compat}, {"preview", tag}, {"bassDegree", s.bassDegree}, {"lineWeight", s.lineWeight}};
+            if(s.hueDeviation > 0) req["hueDeviation"] = s.hueDeviation;
+            if(s.satDeviation > 0) req["satDeviation"] = s.satDeviation;
+            if(s.lightDeviation > 0) req["lightDeviation"] = s.lightDeviation;
             if(!l.blocking) req["blocking"] = false;
             req["scale"] = sd ? sd->legacyIndex : -1;
             req["palette"] = pd ? pd->legacyIndex : -1;
