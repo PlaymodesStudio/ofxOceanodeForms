@@ -112,6 +112,7 @@ public:
     ofParameter<bool>* autoGo = nullptr;
     ofParameter<float>* barMult = nullptr;                  // the node's Bar Multiplier / Bar Add (Stage > Layers)
     ofParameter<int>* barAdd = nullptr;
+    ofParameter<float>* masterLevel = nullptr;              // the node's Master Level (top bar): picture and sound together
     ofParameter<float>* density = nullptr;                  // the node's Density (Stage > Layers)
     std::function<void(const std::string&)> nodeParamMenu;  // right-click menu of a node setting (publish, timeline)
     // set by the node: why no new images are being asked for ("" while they are), and how to resume
@@ -495,7 +496,28 @@ private:
         if(muteSummary){ std::string ms = muteSummary(); if(!ms.empty()){ ImGui::SameLine(0, 12 * zz); ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1), "%s", ms.c_str()); ImGui::SameLine(); if(clearMuteSolo && ImGui::SmallButton("clear")) clearMuteSolo(); } }
         if(auditioning()){ ImGui::SameLine(0, 12 * zz); ImGui::TextColored(ImVec4(1, 0.55f, 0.2f, 1), "AUDITION: the edited instrument alone on stage"); }
         drawUnsaved();
-        // line 2: the switches
+        // line 2: the master fader, then the switches
+        if(masterLevel){
+            float m = masterLevel->get();
+            bool down = m < 0.999f;
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, down ? ImVec4(0.45f, 0.22f, 0.08f, 1) : ImVec4(0.12f, 0.30f, 0.18f, 1));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, down ? ImVec4(0.55f, 0.28f, 0.10f, 1) : ImVec4(0.16f, 0.38f, 0.22f, 1));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, down ? ImVec4(0.60f, 0.32f, 0.12f, 1) : ImVec4(0.18f, 0.42f, 0.25f, 1));
+            ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(0.95f, 0.95f, 0.95f, 1));
+            ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(1, 1, 1, 1));
+            ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 18 * zz);
+            ImGui::SetNextItemWidth(260 * zz);
+            float pct = m * 100;   // shown as a percentage; the value itself is 0..1
+            if(ImGui::SliderFloat("##masterLevel", &pct, 0.0f, 100.0f, pct <= 0.1f ? "LEVEL  0%%  (black, silent)" : "LEVEL  %.0f%%", ImGuiSliderFlags_NoInput)) m = pct / 100;
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(5);
+            if(ImGui::IsItemClicked(ImGuiMouseButton_Right)) m = 1;
+            if(m != masterLevel->get()) *masterLevel = ofClamp(m, 0.0f, 1.0f);
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Master fader: the picture and the sound of what plays, together (toward black and silence).\n"
+                                                         "Right-click: back to 100%%. Also \"Master Level\" on the node (cable, MIDI, timeline).\n"
+                                                         "Not saved: it is at 100%% every time the patch opens. Saved frames and exports are not faded.");
+            ImGui::SameLine(0, 12 * zz);
+        }
         drawAutoGo(true);
         ImGui::SameLine(0, 8 * zz);
         if(ImGui::Checkbox("Setlist", &sl) && useSetlist) *useSetlist = sl;

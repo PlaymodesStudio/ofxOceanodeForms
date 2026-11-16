@@ -68,6 +68,9 @@ public:
         // ---- always on the node
         addParameter(showWindow.set("Show", false));
         addCustomRegion(faceRegion.set("Preview", [this](){ editor.drawNodeFace(); }), [this](){ editor.drawNodeFace(); });
+        // the master fader: the picture and the sound of what plays, together (1 = as it is, 0 = black and
+        // silent). Not saved: the app saves the patch when it quits, and a show ends on a fade-out.
+        addParameter(masterLevel.set("Master Level", 1, 0, 1), ofxOceanodeParameterFlags_DisableSavePreset);
         addParameter(go.set("GO"));
         // no plain widget: the Preview region draws it as the big coloured button (its pin shows only while connected)
         addParameter(autoGo.set("Auto GO", true), ofxOceanodeParameterFlags_NoGuiWidget);
@@ -198,7 +201,7 @@ public:
         editor.engine = &engine;
         editor.autoGo = &autoGo;
         // Stage > Layers: the bar multiplier / add for every layer (node settings)
-        editor.barMult = &barMult; editor.barAdd = &barAdd; editor.density = &density;
+        editor.barMult = &barMult; editor.barAdd = &barAdd; editor.density = &density; editor.masterLevel = &masterLevel;
         editor.nodeParamMenu = [this](const std::string& key){ ctl.menu(key); };
         editor.noNewImagesWhy = [this]() -> std::string {
             if(engine.replaying) return "";
@@ -642,7 +645,27 @@ protected:   // (Forms GL Box derives from Forms Box)
             px.setNumChannels(3);
             ofSaveImage(px, ofToDataPath("FormsBox_frame_output.png", true));
         }
+        // the master fader, after everything (saved frames and exports are not faded): toward black
+        if(ofTexture* shown = output.get(); shown && masterLevel < 1){
+            int w = (int)shown->getWidth(), h = (int)shown->getHeight();
+            if(!masterFbo.isAllocated() || (int)masterFbo.getWidth() != w || (int)masterFbo.getHeight() != h || masterFormat != liveFormat()){
+                ofFboSettings st; st.width = w; st.height = h; st.internalformat = masterFormat = liveFormat();
+                masterFbo.allocate(st);
+            }
+            masterFbo.begin();
+            ofClear(0, 0, 0, 255);
+            ofPushStyle();
+            ofEnableBlendMode(OF_BLENDMODE_DISABLED);
+            ofSetColor(ofFloatColor(masterLevel, masterLevel, masterLevel, 1));
+            shown->draw(0, 0, w, h);
+            ofPopStyle();
+            masterFbo.end();
+            output = const_cast<ofTexture*>(&masterFbo.getTexture());
+        }
     }
+    ofFbo masterFbo;
+    int masterFormat = 0;
+    ofParameter<float> masterLevel;
 
     // The first hard cut (layer 1's plan, or predicted from the setlist) at a beat in (a, b], or -1
     // (the layer rings never repeat an image across one)
@@ -1251,7 +1274,7 @@ protected:   // (Forms GL Box derives from Forms Box)
             frame.duckCurve = snd.duckCurve;
             frame.comp = ofClamp(forms::perfF(perf, "Compressor", 0), 0, 1);
             frame.fxGain = perfOutValue("SpectrumGain", forms::perfF(perf, "SpectrumGain", 2));
-            frame.fade = clock.fade;
+            frame.fade = clock.fade * masterLevel * masterLevel;   // the master fader (squared: an even fade to the ear)
             frame.lgain = lrBal.l;
             frame.rgain = lrBal.r;
             frame.volume = snd.volume;
