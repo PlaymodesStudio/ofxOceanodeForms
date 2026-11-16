@@ -1766,7 +1766,15 @@ public:
     // The scene playing at the header (layer 1's plan at the header bar)
     const Scene* sceneAtHeader() const {
         const PlanEntry* pe = planAt(schedule->headerBeat / 4.0);
-        if(!pe) return nullptr;
+        // past the end of the plan (Auto GO off, or the renderer late: layer 1 goes round on its
+        // last image, and the plan only grows with its requests): that image's scene still plays.
+        // Without this the extra layers stopped repeating and went away one by one.
+        if(!pe){
+            if(layer1Plan.empty() || replaying) return nullptr;
+            const auto& h = schedule->layers[0].header;
+            auto it = h && !h->preview ? scenes.find(h->scene) : scenes.end();
+            return it != scenes.end() ? &it->second : nullptr;
+        }
         auto it = scenes.find(pe->scene);
         return it != scenes.end() ? &it->second : nullptr;
     }

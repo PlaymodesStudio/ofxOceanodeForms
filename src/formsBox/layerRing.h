@@ -70,6 +70,21 @@ public:
         return x + (beat - edge) / lenAfter * w;
     }
 
+    // A hard cut in (from, to] that ends this image: one into another scene. A cut into the image's
+    // own scene does not (Switch now / a scene loaded with Hard cut on: the new scene's images take
+    // the place of what was under the header, so they start before the cut the switch itself made;
+    // they are that scene's and go on repeating. With Auto GO off nothing else would follow them.)
+    bool cutEnds(const Image& im, double from, double to) const {
+        if(!hardCutIn) return false;
+        for(int guard = 0; guard < 16; guard++){
+            double c = hardCutIn(from, to);
+            if(c < 0) return false;
+            if(!sceneAt || sceneAt(c) != im.scene) return true;
+            from = c;
+        }
+        return false;
+    }
+
     void update(Schedule::Layer& L, double B, float headerPos, int w, int h){
         allocate(w, h);
         // 1. ready images take their place (a real image replaces a repeat placeholder)
@@ -161,7 +176,7 @@ public:
             // never across a hard cut: an image from before a cut is not repeated after it (the
             // new scene's image comes, or nothing if that scene has no such layer)
             double imgStart = last.img->startBeat >= 0 ? last.img->startBeat : last.start;
-            if(hardCutIn && hardCutIn(imgStart, end) >= 0) break;
+            if(cutEnds(*last.img, imgStart, end)) break;
             Schedule::Layer::Slot r = last;
             r.start = end; r.repeat = true; r.seen = false; r.cut = -1;
             if(hardCutIn){ double c = hardCutIn(end, end + r.len); if(c > end + 1e-6 && c < end + r.len - 1e-6) r.cut = c; }
@@ -180,7 +195,7 @@ public:
                 if(!(end <= B || screenX(L, B, end, headerPos, w, a.len) < w)) break;
                 if(sceneAt && sceneAt(end) != a.img->scene) continue;      // another scene there: its own images
                 double imgStart = a.img->startBeat >= 0 ? a.img->startBeat : a.start;
-                if(hardCutIn && hardCutIn(imgStart, end) >= 0) continue;
+                if(cutEnds(*a.img, imgStart, end)) continue;
                 Schedule::Layer::Slot r = a;
                 r.start = end; r.repeat = true; r.seen = false; r.cut = -1;
                 if(n.start < end + r.len - 1e-6) r.cut = n.start;           // up to the next image

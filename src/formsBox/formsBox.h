@@ -1973,7 +1973,10 @@ protected:   // (Forms GL Box derives from Forms Box)
         // the header left of the wrap: the switch image plays once, one more image is needed ahead
         float c = clock.phase + (viewW > 0 ? head.headerPos / viewW : 0);
         int debt = 0;
-        auto paths = engine.switchNow(bar, debt, builtInPlayer && c < 1 ? 3 : 2, keepImage ? 1 : 0);
+        // Auto GO off: only the switch image. Nothing follows it, so images asked ahead would play
+        // one after the other and the last of them would stay instead of the one asked for.
+        const int ahead = !autoGo ? 1 : (builtInPlayer && c < 1 ? 3 : 2);
+        auto paths = engine.switchNow(bar, debt, ahead, keepImage ? 1 : 0);
         if(paths.empty()) return;
         goDebt = debt;
         for(auto& p : paths) send(p);
