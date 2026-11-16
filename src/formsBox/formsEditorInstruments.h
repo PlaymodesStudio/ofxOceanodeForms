@@ -10,11 +10,6 @@
 
 namespace forms {
 
-inline void Editor::drawMethodsTab(){
-    ImGui::TextDisabled("Every method the renderer offers. Click one to add it to \"%s\".", selected.c_str());
-    drawBrowser([this](const std::string& m){ addMethodToScene(m); });
-}
-
 inline void Editor::drawPickerPopup(){
     if(openPicker){ ImGui::OpenPopup("Pick an instrument"); openPicker = false; }
     float zz = z();

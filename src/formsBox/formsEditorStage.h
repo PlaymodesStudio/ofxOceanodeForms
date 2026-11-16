@@ -623,7 +623,6 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
         if(!drawSceneHeader(*sp)){ stageSelectedSeen = selected; return; }   // renamed: drawn again on the next frame
         if(sceneLayerFor != sp->name){ sceneLayerFor = sp->name; sceneLayer = 0; }
         sceneLayer = ofClamp(sceneLayer, 0, (int)sp->layers.size() - 1);
-        crumb(2, sp->name + (isPlaying ? " (playing)" : ""));
     }
     const std::string editName = sp ? sp->name : std::string();   // the Scenes tab may reload the scenes: no `sp` after the tabs
     bool changed = false;
@@ -634,7 +633,6 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
     if(!tabs) popTabLevel();
     if(tabs){
         if(ImGui::BeginTabItem("Scenes")){
-            crumb(1, "Scenes");
             ImGui::BeginChild("##stScenes");
             if(ImGui::BeginTable("##scenesCols", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)){
                 ImGui::TableSetupColumn("pads", ImGuiTableColumnFlags_WidthStretch, 2.2f);
@@ -654,7 +652,6 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
             sp = nullptr;
         }
         if(ImGui::BeginTabItem("Layers")){
-            crumb(1, "Layers");
             ImGui::BeginChild("##stLayers");
             if(!sp) nothing(); else {
                 Scene& s = *sp;
@@ -679,14 +676,12 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
         }
         std::string lookTab = std::string("Look & harmony  (") + (immediate ? "now" : "next images") + ")###stLook";
         if(ImGui::BeginTabItem(lookTab.c_str())){
-            crumb(1, "Look & harmony");
             ImGui::BeginChild("##stLook");
             if(!sp) nothing(); else changed |= drawSceneLook(*sp);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
         if(ImGui::BeginTabItem("Sound")){
-            crumb(1, "Sound");
             ImGui::BeginChild("##stSound");
             if(!sp) nothing(); else {
                 ImGui::TextDisabled("This scene's sound: levels and stereo, movement, kick. Saved with the scene; acts at once while it plays.");
@@ -695,8 +690,7 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if(ImGui::BeginTabItem("Live faders")){
-            crumb(1, "Live faders");
+        if(ImGui::BeginTabItem("Live faders  (every scene)###stFadersTab")){
             ImGui::BeginChild("##stFaders");
             ImGui::TextDisabled("Each fader multiplies a sound setting of whatever scene plays (1 = as the scene says). Right-click: what it drives; double-click: back to 1. Saved with the patch.");
             drawLiveFaders();

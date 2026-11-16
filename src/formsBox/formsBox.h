@@ -328,29 +328,6 @@ public:
         // show large images on a smaller output)
         editor.setImageSize = [this](int w, int h){ imageWidth = w; imageHeight = h; viewW = w; viewH = h; };
         editor.useSetlist = &useSetlistLocal;
-        editor.playerOn = [this](){ return builtInPlayer.get(); };
-        // the view: the final image (every layer, post-processed), else layer 1
-        editor.playTexture = [this]() -> const ofTexture* { return output.get() ? output.get() : scroller.fbo.isAllocated() ? &scroller.fbo.getTexture() : nullptr; };
-        editor.gridInfo = [this](){
-            forms::Editor::GridInfo g;
-            auto& h = engine.schedule->layers[0].header;
-            if(!h) return g;
-            g.valid = true;
-            auto si = engine.scenes.find(h->scene);
-            g.root = si != engine.scenes.end() ? si->second.root : 24;
-            g.notegrid = h->notegrid;
-            g.imageH = imageHeight;
-            auto hv = engine.headerValues(head.actualBar);
-            g.trans = hv.valid ? hv.trans : 0;
-            g.scale = hv.valid ? hv.scale : h->scaleNotes;
-            g.chordRoot = (int)rootOut.get();
-            g.width = viewW;
-            for(auto& sp : scroller.lastSpans) g.spans.push_back({0, sp.x, (float)viewW, sp.bars});
-            for(int i = 0; i < (int)rings.size(); i++) for(auto& d : rings[i].lastDrawn) g.spans.push_back({i + 1, d.x, (float)viewW, d.len / 4});
-            return g;
-        };
-        editor.headerNormalized = [this](){ return viewW > 0 ? head.headerPos / (float)viewW : 0.0f; };
-        editor.setHeaderNormalized = [this](float x){ header = ofClamp(x, 0, 1); };
         editor.drawPlayControls = [this](){ drawPlayControls(); };
         editor.setHardCut = [this](bool b){ hardCut = b; };
         editor.getHardCut = [this](){ return hardCut.get(); };
@@ -364,10 +341,8 @@ public:
                 if(found!=engine.scenes.end())editor.drawLayerEffectPreset(found->second,l);
             }
         };
-        editor.drawLayerLook = [this](int l){ ensureLayerCount(l+1); postCtl.drawLayerFx(ctl, l, true, false); };
         editor.layerFxOn = &postCtl.fxOn;   // "Layer effects on" (the patch's master switch)
         editor.drawKickMeter = [this](float threshold){ soundCtl.drawKickMeter(soundView, threshold); };
-        editor.drawLayerSound = [this](int l){ ensureLayerCount(l+1); soundCtl.drawLayer(ctl, soundView, l); };
         editor.layerMS = [this](int l){ return l < 0 || l >= (int)layerMute.size() ? 0 : (layerMute[l] ? 1 : 0) | (layerSolo[l] ? 2 : 0); };
         editor.toggleLayerMS = [this](int l, int which){ if(l < 0) return; ensureLayerCount(l+1); bool& b = which ? layerSolo[l] : layerMute[l]; b = !b; };
         editor.instMS = [this](const std::string& r){ return (instMute.count(r) ? 1 : 0) | (instSolo.count(r) ? 2 : 0); };
