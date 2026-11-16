@@ -1796,7 +1796,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         put(0, engine.schedule->layers[0].header, scroller.headerStart, scroller.headerLen);
         for(int i = 1; i < nLayers; i++){
             auto& L = engine.schedule->layers[i];
-            for(auto& sl : L.slots) if(sl.img == rings[i - 1].current && sl.start <= scroller.headerBeat && scroller.headerBeat < sl.start + sl.len){
+            for(auto& sl : L.slots) if(sl.img == rings[i - 1].current && sl.start <= scroller.headerBeat && scroller.headerBeat < sl.end()){
                 put(i, sl.img, sl.start, sl.len); break;
             }
         }

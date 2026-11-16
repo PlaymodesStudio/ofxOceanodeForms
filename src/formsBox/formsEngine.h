@@ -55,8 +55,21 @@ struct Image {
     // Phrase (LayerDef::phrase): a request stands for `slices` pages that show the rendered phrase
     // window by window (slice 0..slices-1 of the image's width); repeats repeat the whole phrase
     int slices = 1, slice = 0;
-    double sliceU0() const { return slices > 1 ? (double)slice / slices : 0.0; }
-    double sliceUW() const { return slices > 1 ? 1.0 / slices : 1.0; }
+    // Layers 2 and up: a phrase that is not a whole number of pages lasts exactly its own length
+    // (phraseBars, in bars; 0 = whole pages): the render covers the phrase alone and its last page
+    // is shown only up to the phrase's end (pageBeats), where the next phrase starts
+    double phraseBars = 0;
+    double sliceUW() const { return slices > 1 ? (phraseBars > 0 ? bars / phraseBars : 1.0 / slices) : 1.0; }
+    double sliceU0() const { return slices > 1 ? slice * sliceUW() : 0.0; }
+    double phraseBeats() const { return 4.0 * (phraseBars > 0 ? phraseBars : std::max(1.0 / kBarGrid, bars) * std::max(1, slices)); }
+    // where page k of the request (repeatIndex: 0 .. repeat x slices - 1) starts, in beats from the request's start
+    double pageOffsetBeats(int k) const { const int n = std::max(1, slices); return (k / n) * phraseBeats() + (k % n) * 4.0 * std::max(1.0 / kBarGrid, bars); }
+    // the beats this page plays: its length, or less for the last page of such a phrase
+    double pageBeats() const {
+        const double len = 4.0 * std::max(1.0 / kBarGrid, bars);
+        if(phraseBars <= 0 || slices <= 1 || slice != slices - 1) return len;
+        return std::max(0.0, std::min(len, 4.0 * phraseBars - slice * len));
+    }
     double copiesUntil = -1;           // a scene change: copies that would start here or later are dropped
     double askedAt = -1;               // Engine::now when it was asked for (render time)
     std::string blend = "lighten";
@@ -1060,9 +1073,17 @@ public:
         // "Next image now" with Switch now: the image that replaces the one playing stands for one
         // more page, so after the rest of the current page it plays once in full (switchNow keepPages)
         if(layerIndex == 0 && extraRepeatNext > 0 && !previewItem && sceneOverride.empty()){ img->repeat += extraRepeatNext; extraRepeatNext = 0; }
+        if(layerIndex > 0 && extraRepeatLayer > 0 && !previewItem && sceneOverride.empty()) img->repeat += extraRepeatLayer;   // switchNow: a phrase entered near its end
         // a phrase: one render for `slices` pages (editor renders draw the page alone, as before)
         img->slices = (previewItem || !sceneOverride.empty()) ? 1 : phraseSlices(l);
-        const double span = layerBars(l) * img->slices;   // the bars this render covers
+        double spanBars = layerBars(l) * img->slices;
+        if(img->slices > 1 && layerIndex > 0){
+            // layers 2 and up: exactly the phrase; a last page that is not whole is cut at its end
+            spanBars = layerSpan(l, true);
+            img->slices = std::max(1, (int)std::ceil(spanBars / layerBars(l) - 1e-9));
+            if(spanBars < layerBars(l) * img->slices - 1e-9) img->phraseBars = spanBars;
+        }
+        const double span = spanBars;   // the bars this render covers
         img->bpm = s->bpm;
         img->notegrid = s->notegrid;
         img->palette = s->palette;
@@ -1138,7 +1159,7 @@ public:
         if(img->slices > 1){
             // the phrase is drawn `slices` views wide (at most 16384 px: past that the pages are
             // stretched); pixel sizes follow the view (viewWidth), not the canvas
-            req["size"] = {std::min(16384, width * img->slices), height};
+            req["size"] = {std::min(16384, img->phraseBars > 0 ? (int)std::lround(width * span / layerBars(l)) : width * img->slices), height};
             req["viewWidth"] = width;
             req["pageBars"] = barsJson(layerBars(l));
             req["slices"] = img->slices;
@@ -1213,9 +1234,10 @@ public:
                     if(b < (int)trans.size()) c->trans[j] = trans[b];
                 }
             }
-            if(img->startBar >= 0) c->startBar = img->startBar + k * img->bars;
+            const double off = img->phraseBars > 0 ? img->pageOffsetBeats(k) : k * len;   // (whole pages: as before)
+            if(img->startBar >= 0) c->startBar = img->phraseBars > 0 ? img->startBar + off / 4.0 : img->startBar + k * img->bars;
             if(img->startBeat >= 0){
-                double st = img->startBeat + k * len;
+                double st = img->startBeat + off;
                 if(k > 0 && ((cut >= 0 && st >= cut - 1e-6) || (until >= 0 && st >= until - 1e-6))) break;
                 c->startBeat = st;
                 c->cutBeat = (cut > st + 1e-6 && cut < st + len - 1e-6) ? cut : -1;
@@ -1307,9 +1329,11 @@ public:
         else{ l.bars = barsFrom(side, "bars", l.bars); l.phrase = 0; }
         // drawn with a Bar Multiplier: the scene keeps the length as written (the multiplier acts again when it plays)
         if(double m = side.value("barMult", 1.0), a = side.value("barAdd", 0); m > 0 && (m != 1 || a != 0)){
-            int n = phraseSlices(l);
+            const int n = phraseSlices(l);
+            const bool wholePages = l.phrase >= l.bars * n - 1e-9;   // else: a phrase that ends inside its last page (Engine::layerSpan)
+            const double drawn = l.phrase;
             if(l.bars - a > 0 && (a > 0 || l.bars > 1)) l.bars = quantBars((l.bars - a) / m); else l.bars = quantBars(l.bars / m);   // (a length held at the one-bar floor: the add is not known)
-            if(l.phrase > 0) l.phrase = quantBars(l.bars * n);
+            if(l.phrase > 0) l.phrase = wholePages ? quantBars(l.bars * n) : quantBars(std::max(l.bars, (drawn - a > 0 ? drawn - a : drawn) / m));
         }
         l.z = -1;
         l.cells.clear();
@@ -1410,7 +1434,7 @@ public:
         if(!s) s = currentScene();
         if(!s || s->layers.empty() || renderSeconds <= 0) return 0;
         double perSec = 0;
-        for(auto& l : s->layers) perSec += std::max(1.0, s->bpm) / 60.0 / (4.0 * std::max(1.0 / kBarGrid, layerSpan(l)) * std::max(1, l.repeat));
+        for(auto& l : s->layers) perSec += std::max(1.0, s->bpm) / 60.0 / (4.0 * std::max(1.0 / kBarGrid, layerSpan(l, &l != &s->layers[0])) * std::max(1, l.repeat));
         return perSec * renderSeconds;
     }
     double leadBeats() const {
@@ -1476,7 +1500,7 @@ public:
                 next = earliest;
                 auto it = origin ? scenes.find(origin->scene) : scenes.end();
                 if(it != scenes.end() && i < (int)it->second.layers.size()){
-                    double cycle = std::max(1.0 / kBarGrid, layerSpan(it->second.layers[i]));
+                    double cycle = std::max(1.0 / kBarGrid, layerSpan(it->second.layers[i], true));
                     next = originBar + std::ceil((earliest - originBar) / cycle - 1e-9) * cycle;
                 }
             }
@@ -1499,9 +1523,9 @@ public:
             if(!s) continue;
             // on the layer's own grid (layerGrid): a start inherited from pages of another length, a
             // scene that began inside a bar, or a cut there, waits for its next line
-            { double g = layerGrid(layerSpan(s->layers[i])); next = std::ceil(next / g - 1e-6) * g; }
+            { double g = layerGrid(layerSpan(s->layers[i], true)); next = std::ceil(next / g - 1e-6) * g; }
             double bars = layerBars(s->layers[i]);
-            double span = layerSpan(s->layers[i]) * std::max(1, s->layers[i].repeat);   // the page (or phrase) and its repeats
+            double span = layerSpan(s->layers[i], true) * std::max(1, s->layers[i].repeat);   // the page (or phrase) and its repeats
             // not due yet: its deadline is further than the lead (one image ahead is always kept)
             // (its place enters the view at the rate of the image before it: after a longer one,
             // e.g. a scene change to shorter layers, that is more than its own length ahead)
@@ -1541,6 +1565,7 @@ public:
     // paths; goDebt: GOs to skip for layer 1's repeated pages (as Forms Box's request()).
     std::shared_ptr<Image> lastImage;  // the last image makeRequest asked for
     int extraRepeatNext = 0;           // extra pages the next layer-1 request stands for (once)
+    int extraRepeatLayer = 0;          // switchNow: extra repeats of the phrase the layer request being made stands for
     // keepPages: the switch image plays this many more whole pages after the one it replaces
     // (Next image now on the same scene: 1, so the new image is not gone when the page ends)
     std::vector<std::string> switchNow(double bar, int& goDebt, int ahead = 2, int keepPages = 0){
@@ -1583,17 +1608,34 @@ public:
         for(int i = 1; i < (int)to.layers.size() && i < (int)schedule->layers.size(); i++){
             // it takes the place of the layer's image under the header (LayerRing): its bars from there
             auto& L = schedule->layers[i];
-            double lb = std::ceil(B / 4.0 - 1e-9) - layerSpan(to.layers[i]);
+            double lb = std::ceil(B / 4.0 - 1e-9) - layerSpan(to.layers[i], true);
             for(auto& sl : L.slots) if(sl.start <= B && B < sl.end()){ lb = std::floor(sl.start / 4.0 * kBarGrid + 1e-9) / kBarGrid; break; }
             // a phrase keeps its place in the bar (the page under the header is one of its inner
             // pages, not its first); so does a page whose place is off the layer's own grid
             // (layerGrid): the line at or before the header. LayerRing puts it there.
             {
-                double g = layerGrid(layerSpan(to.layers[i]));
+                double g = layerGrid(layerSpan(to.layers[i], true));
                 double off = lb / g - std::floor(lb / g + 1e-6);
                 if(phraseSlices(to.layers[i]) > 1 || off > 1e-6) lb = std::floor(B / 4.0 / g + 1e-9) * g;
+                // a phrase longer than a bar: its cycle counted from where layer 1's image starts
+                // (`bar`), when that is on the layer's grid, so the layers still end their phrase
+                // together after the switch (the header lands inside the phrase, as it does inside
+                // layer 1's image)
+                if(phraseSlices(to.layers[i]) > 1){
+                    const double span = layerSpan(to.layers[i], true);
+                    const double anchored = bar + std::floor((B / 4.0 - bar) / span + 1e-9) * span;
+                    const double ao = anchored / g - std::floor(anchored / g + 1e-6);
+                    if(span > 1 + 1e-9 && anchored <= B / 4.0 + 1e-9 && ao <= 1e-6){
+                        lb = anchored;
+                        // what is left of the phrase is shorter than the view: the place after it is
+                        // already on screen, where a new image may not appear. The switch image plays
+                        // the phrase once more there (it arrives with it), so the layer keeps its cycle.
+                        if(lb + span * std::max(1, to.layers[i].repeat) - B / 4.0 < layerBars(to.layers[i]) + leadBeats() / 4.0) extraRepeatLayer = 1;
+                    }
+                }
             }
             std::string q = makeRequest(true, "", nullptr, i, lb, &to, -1);
+            extraRepeatLayer = 0;
             if(q.empty()) continue;
             out.push_back(q);
             schedule->layers[i].replaceNext = lastImage;
@@ -1813,7 +1855,19 @@ public:
         // taking bars away stops at one bar (a layer already shorter than that keeps its length)
         return quantBars(barAdd < 0 ? std::max(m + barAdd, std::min(1.0, m)) : m + barAdd);
     }
-    double layerSpan(const LayerDef& l) const { return layerBars(l) * phraseSlices(l); }   // the page, or its whole phrase
+    // The page, or its whole phrase. Layer 1 plays whole pages (the phrase rounded up to them);
+    // layers 2 and up (exact) play exactly the phrase: a last page that is not whole is cut short,
+    // so layers of different page lengths with the same phrase end it together.
+    double layerSpan(const LayerDef& l, bool exact = false) const {
+        const int n = phraseSlices(l);
+        const double whole = layerBars(l) * n;
+        if(!exact || n <= 1 || l.phrase >= l.bars * n - 1e-9) return whole;   // (whole pages: as ever)
+        // the phrase takes the Bar Multiplier and Bar Add as an image's length does, so it still
+        // ends with a layer 1 of the same written length
+        double p = l.phrase * barMult;
+        p = quantBars(barAdd < 0 ? std::max(p + barAdd, std::min(1.0, p)) : p + barAdd);
+        return std::min(whole, std::max(layerBars(l), p));
+    }
     // The lines an extra layer may start on: the coarsest grid its own cycle (the page, or its
     // whole phrase) shares with the bar. A 1-bar phrase of 1/8-bar pages: bar lines; a 0.5-bar page:
     // half bars; 0.75 bars: beats; whole bars: bar lines. Counted from bar 0, so it never depends on

@@ -73,7 +73,8 @@ struct LayerDef {
     float beatOffset = 0;             // beats this layer plays later (+) or earlier (-) than the others; layers 2 and up
     // Phrase (0 = off): with a phrase longer than the page, one render draws the whole phrase and
     // the layer shows it page by page (each page the next window of it), so patterns and notes
-    // run on across short pages. Rounded up to a whole number of pages (phraseSlices).
+    // run on across short pages. Layer 1: rounded up to a whole number of pages (phraseSlices).
+    // Layers 2 and up: exactly the phrase, the last page cut short (Engine::layerSpan exact).
     double phrase = 0;
     int everyN = 1;                   // stored by the Director, not used by its selection
     float globalProb = 100;           // 0..100: whole-image gate

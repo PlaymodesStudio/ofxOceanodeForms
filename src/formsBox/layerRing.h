@@ -85,6 +85,14 @@ public:
         return false;
     }
 
+    // A phrase's last page that ends before its full length (Image::pageBeats): the slot is shown
+    // only up to there (as a cut), or up to a hard cut that comes first
+    static void pageEnd(Schedule::Layer::Slot& sl){
+        if(!sl.img) return;
+        const double pb = sl.img->pageBeats();
+        if(pb < sl.len - 1e-6 && (sl.cut < 0 || sl.cut > sl.start + pb)) sl.cut = sl.start + pb;
+    }
+
     void update(Schedule::Layer& L, double B, float headerPos, int w, int h){
         allocate(w, h);
         // 1. ready images take their place (a real image replaces a repeat placeholder)
@@ -115,6 +123,7 @@ public:
                 img->startBeat = st; img->cutBeat = -1;
                 if(once){ onceId = img->id; onceStart = st; }
                 Schedule::Layer::Slot sl; sl.img = img; sl.start = st; sl.len = len;
+                pageEnd(sl);
                 auto pos = std::find_if(L.slots.begin(), L.slots.end(), [&](const Schedule::Layer::Slot& x){ return x.start > st; });
                 L.slots.insert(pos, sl);
                 continue;
@@ -124,10 +133,10 @@ public:
             // mid-view. It goes to the next free place after what has been shown instead.
             // Switch now: the switch image's next copies follow it (they arrive with it: no pop-in)
             bool follows = !onceId.empty() && img->id == onceId && img->repeatIndex > 0;
-            if(follows){ start = onceStart + img->repeatIndex * len; img->startBeat = start; img->cutBeat = -1; }
+            if(follows){ start = onceStart + (img->phraseBars > 0 ? img->pageOffsetBeats(img->repeatIndex) : img->repeatIndex * len); img->startBeat = start; img->cutBeat = -1; }
             if(follows && onceSwap){
                 // (a phrase swapped in mid-way: see above)
-                if(start + len <= B + 1e-9) continue;   // a page of it that is already past
+                if(start + std::min(len, img->pageBeats()) <= B + 1e-9) continue;   // a page of it that is already past
                 onceSwap = false;
                 for(auto it = L.slots.begin(); it != L.slots.end();){ if(it->end() > start + 1e-6) it = L.slots.erase(it); else ++it; }
             }
@@ -162,6 +171,7 @@ public:
             for(auto& o : L.slots) if(o.start < start - 1e-6 && o.end() > start + 1e-6) o.cut = start;
             Schedule::Layer::Slot sl; sl.img = img; sl.start = start; sl.len = len;
             if(img->cutBeat > start) sl.cut = img->cutBeat;
+            pageEnd(sl);
             auto pos = std::find_if(L.slots.begin(), L.slots.end(), [&](const Schedule::Layer::Slot& x){ return x.start > start; });
             L.slots.insert(pos, sl);
         }
@@ -180,6 +190,7 @@ public:
             Schedule::Layer::Slot r = last;
             r.start = end; r.repeat = true; r.seen = false; r.cut = -1;
             if(hardCutIn){ double c = hardCutIn(end, end + r.len); if(c > end + 1e-6 && c < end + r.len - 1e-6) r.cut = c; }
+            pageEnd(r);
             L.slots.push_back(r);
             L.repeats++;
         }
@@ -200,6 +211,7 @@ public:
                 r.start = end; r.repeat = true; r.seen = false; r.cut = -1;
                 if(n.start < end + r.len - 1e-6) r.cut = n.start;           // up to the next image
                 if(hardCutIn){ double c = hardCutIn(end, end + r.len); if(c > end + 1e-6 && (r.cut < 0 || c < r.cut)) r.cut = c; }
+                pageEnd(r);
                 L.slots.insert(L.slots.begin() + (long)i + 1, r);
                 L.repeats++;
                 filled = true;
@@ -258,6 +270,14 @@ public:
                 if(s.start > B){
                     float x = headerPos + (float)((s.start - B) / s.len) * w;
                     if(x < w) draw.push_back({i, x});
+                    // what follows a page that ends early (a cut, a phrase's short last page) is in
+                    // the view with it: drawn now, not popping in when the header gets there
+                    for(int j = i + 1; j < (int)L.slots.size() && x < w; j++){
+                        if(std::fabs(L.slots[j - 1].end() - L.slots[j].start) > 1e-6) break;
+                        x += vis(L.slots[j - 1]);
+                        if(x >= w) break;
+                        draw.push_back({j, x});
+                    }
                     break;
                 }
             }

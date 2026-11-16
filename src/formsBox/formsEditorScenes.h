@@ -519,13 +519,21 @@ inline bool Editor::drawLayerStack(Scene& s, bool compact){
             double ph = L.phrase;
             if(ImGui::InputDouble("phrase", &ph, 0, 0, ph > 0 ? "%g" : "off")){ L.phrase = ph <= 0 ? 0 : std::min(64.0, quantBars(ph)); changed = true; }
             int n = phraseSlices(L);
+            // layers 2 and up play exactly the phrase (a last page that is not whole is cut short); layer 1 whole pages
+            const double exact = engine->layerSpan(L, i > 0), whole = engine->layerSpan(L);
+            std::string nowText = n <= 1 ? "off (the phrase is not longer than the page)" :
+                exact < whole - 1e-9 ? std::to_string(n) + " pages of " + barsText(L.bars) + " bars, the last one cut short = " + barsText(exact) + " bars" :
+                std::to_string(n) + " pages of " + barsText(L.bars) + " bars = " + barsText(whole) + " bars";
+            if(i == 0 && n > 1 && L.phrase < phraseBars(L) - 1e-9) nowText += " (layer 1 plays whole pages)";
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("Phrase (bars; 0 = off): one render draws the whole phrase and the layer shows it page by page,\n"
                                                          "each page the next part of it, so patterns and long notes run on across short pages\n"
-                                                         "(e.g. bars 0.5, phrase 4: one 4-bar drawing shown in 8 pages). Rounded up to whole pages.\n"
+                                                         "(e.g. bars 0.5, phrase 4: one 4-bar drawing shown in 8 pages).\n"
+                                                         "Layers 2 and up last exactly the phrase: when it is not a whole number of pages the last page is cut short,\n"
+                                                         "so layers of different lengths with the same phrase end it together. Layer 1 rounds up to whole pages.\n"
                                                          "Now: %s. One render every %.1f s at speed 1 (Repeat repeats the whole phrase).\n"
                                                          "Drawn up to 16384 px wide; beyond that the pages are a little softer. Export and Gallery replay show the phrase whole.",
-                                                         n > 1 ? (std::to_string(n) + " pages of " + barsText(L.bars) + " bars = " + barsText(phraseBars(L)) + " bars").c_str() : "off (the phrase is not longer than the page)",
-                                                         engine->layerSpan(L) * L.repeat * 4 * 60.0f / std::max(1.0, s.bpm));
+                                                         nowText.c_str(),
+                                                         exact * L.repeat * 4 * 60.0f / std::max(1.0, s.bpm));
         }
         if(!compact){
             // ---- folded: cover
