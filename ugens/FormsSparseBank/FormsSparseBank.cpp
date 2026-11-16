@@ -29,9 +29,11 @@
 //      staircase to smooth away;
 //    - falling, the envelope is the slower of that line and the Lag (`lag` is the release);
 //    - a partial that comes out of silence does not wait for the line: it reaches its value in
-//      `attack` seconds (inside the block if that is shorter than a block), and its two
-//      oscillators start at phase 0, so the wave starts at a zero crossing: no step however
-//      short the attack, and partials that start together start aligned (a click, not a smear).
+//      `attack` seconds (inside the block if that is shorter than a block; never under 8
+//      samples, so the gain does not jump). The oscillators keep their own phases, as in mode 0:
+//      starting them all at phase 0 on every attack (the first version) locked the partials of a
+//      hit together and the left wave to the right one, the same on every hit, which was heard
+//      as flanging / a comb.
 //  mode 0 is exactly the bank as it was.
 //
 
@@ -250,7 +252,6 @@ static void FormsSparseBank_next(FormsSparseBank* unit, int inNumSamples){
                 fresh[o] = 1;
             }
             idx[m] = o;
-            if(sharp && g0 == 0.f){ unit->c[o] = 1.f; unit->s[o] = 0.f; }   // out of silence: the wave starts at its zero crossing
             C[m] = unit->c[o]; S[m] = unit->s[o]; CW[m] = unit->cw[o]; SW[m] = unit->sw[o];
             A[m] = g0; DA[m] = (g - g0) * slopeK;
             if(sharp){

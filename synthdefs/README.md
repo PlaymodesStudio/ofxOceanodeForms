@@ -29,8 +29,9 @@ Compile with `./compile.sh`.
 (the node's "Sharp attacks" checkbox; 0 = everything above, unchanged). The node then reads every
 column the header crosses during a frame, in 4 groups, and sends each as a timestamped `/c_setn`
 for its own instant; the bank draws a straight line from one arrival to the next over `ramp` s, a
-partial coming out of silence rises in `attack` s with both its oscillators at phase 0 (the wave
-starts at a zero crossing, so even 1 ms has no step, and partials that start together are aligned),
+partial coming out of silence rises in `attack` s (never under 8 samples) with its oscillators at
+their own running phases, as in classic (restarting them at phase 0 on every attack, the first
+version, locked the partials and left to right the same way on every hit: flanging; removed),
 and `lag` only slows the falls. Offline (`test_formsBox_sharp_nrt.scd`): a 2.6 kHz partial reaches
 90% in 1.0 ms (classic 11.2 ms), a 1 s fade is 4 times closer to a straight line, classic mode is
 the same with the old and the new plugin. The offline export (formsGLExportMedia.h) still writes

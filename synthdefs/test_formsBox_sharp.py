@@ -33,8 +33,13 @@ check(abs(sp - cp) < 0.02 * cp, "sharp: the same level as classic once it is the
 so, _ = read_wav(os.path.join(d, "s_soft.wav")); o10, o90, op = rise(so)
 check(14 < o90 < 24, f"sharp with attack 20 ms: 90% at {o90:.2f} ms (a line over the attack)")
 ch, _ = read_wav(os.path.join(d, "s_chord.wav")); i0 = int(0.5 * sr); chp = np.abs(ch[:, 0]).max()
-check(np.abs(ch[:i0 + 1, 0]).max() < 1e-6, f"sharp, 4 partials: silent up to the message, the wave starts at zero ({np.abs(ch[:i0 + 1, 0]).max():.1e})")
-check((ch[i0 + 1:i0 + 6, 0] > 0).all(), "sharp, 4 partials: they start together, all rising from their zero crossing")
+check(np.abs(ch[:i0 + 1, 0]).max() < 1e-6, f"sharp, 4 partials: silent up to the message, the gain starts at zero ({np.abs(ch[:i0 + 1, 0]).max():.1e})")
+# the phases are free (not restarted at the attack): the phase of the held 2637 Hz wave, carried back to the message
+def phase_at_hit(x):
+    f = 440 * 2 ** ((100 - 69) / 12); k = np.arange(int(0.55 * sr), int(0.65 * sr)); w = 2 * np.pi * f * (k - i0) / sr
+    return np.arctan2(np.dot(x[k], np.cos(w)), np.dot(x[k], np.sin(w)))
+pl = phase_at_hit(s[:, 0])   # left only: the right oscillator is detuned in the SynthDef
+check(abs(pl) > 0.05, f"sharp: the oscillator is not restarted at phase 0 by the attack (left {pl:+.2f} rad at the message)")
 step = np.abs(np.diff(ch[:, 0])).max(); held = np.abs(np.diff(ch[int(0.55 * sr):int(0.65 * sr), 0])).max()
 check(step < 1.6 * held + 1e-9, f"sharp: no jump between samples larger than the held wave's own steps (max step {step:.4f}, held {held:.4f})")
 tail_s = np.abs(s[int(0.95 * sr):int(1.1 * sr), 0]).max(); check(tail_s < 1e-4, f"sharp: silent 0.25 s after the release ({tail_s:.2e})")

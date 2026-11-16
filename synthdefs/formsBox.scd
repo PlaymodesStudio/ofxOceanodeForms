@@ -35,7 +35,7 @@ SynthDef(\FormsBank512, {
 	// NaN / range guards in one unit that only runs the partials that sound. Same maths as the
 	// SinOsc graph it replaces (random start phases, gains ramped across the block).
 	// sharp (0 / 1): the bank's "sharp attacks" mode (amplitudes several times per frame, a line
-	// between them over `ramp` s, `attack` s and phase 0 out of silence); 0 = the bank as it was.
+	// between them over `ramp` s, `attack` s out of silence; phases free); 0 = the bank as it was.
 	sig = FormsSparseBank.ar(amps, pitch, gl, gr, duckw, \lag.kr(0.05), \bend.kr(0), \detune.kr(0.0746), duck,
 		\sharp.kr(0), \ramp.kr(0.004), \attack.kr(0.001));
 
