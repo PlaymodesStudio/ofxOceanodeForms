@@ -215,6 +215,8 @@ private:
     }
 
 public:
+    // The node is closing: every synth off now (the app's quit can take a while after this)
+    void silenceAll(){ for(auto& [server, st] : states){ release(server, st, true); st.pendingCreate = false; } }
     void free(ofxSCServer* server) override {
         auto it = states.find(server);
         if(it == states.end()) return;

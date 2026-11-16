@@ -40,6 +40,9 @@ public:
     explicit formsGLBox(std::vector<serverManager*> servers) : formsBox(std::string("Forms GL Box"), std::move(servers)) { describe(); }
 #endif
     ~formsGLBox() override {
+#ifdef FORMS_HAS_SC
+        if(sound) sound->silenceAll();   // the sound stops first: what follows (the pages still to save) can take seconds
+#endif
         glVideoWriter.reset();
         if(exportRender.valid()) exportRender.wait();
         if(exportMedia.valid()) exportMedia.wait();
@@ -52,9 +55,10 @@ public:
         {
             std::lock_guard<std::mutex> lk(am);
             archiveQuit = true;
+            archiveQuitAt = std::chrono::steady_clock::now();
         }
         acv.notify_all();
-        if(archiver.joinable()) archiver.join();   // what is queued is written first
+        if(archiver.joinable()) archiver.join();   // what is queued is written first, for a few seconds at most (runArchive)
     }
 
     void setup() override {
@@ -794,6 +798,7 @@ private:
     std::vector<double> archiveTimes;
     std::thread archiver;
     bool archiveQuit = false;
+    std::chrono::steady_clock::time_point archiveQuitAt;
     std::atomic<bool> archive{true};
     std::atomic<int> drawnHere{0}, errorsHere{0}, lastMs{0}, queued{0};
     int sentOn = 0;
@@ -917,6 +922,12 @@ private:
                 if(archiveJobs.empty()) return;   // quit, and everything written
                 a = std::move(archiveJobs.front());
                 archiveJobs.pop_front();
+                // closing: pages are written for a few seconds more, then only the timeline lines (cheap);
+                // the app must not hang on a long queue (a 16-bit page takes about a second to compress)
+                if(archiveQuit && a.appendPath.empty() && std::chrono::steady_clock::now() - archiveQuitAt > std::chrono::seconds(4)){
+                    ofLogWarning("Forms GL Box") << "closing: page " << a.base << " not saved to the session folder";
+                    continue;
+                }
             }
             double ms = 0; std::string err;
             bool ok = false;
@@ -1010,6 +1021,10 @@ private:
             // (immediate: only a page already archived is rewritten; one still queued is written with
             //  its new pixels when its turn comes, as the archive queue keeps the newest job last)
             std::lock_guard<std::mutex> lk(am);
+            // one job per page: a newer drawing of a page still waiting replaces it (a slider dragged with
+            // Live edits on redraws every page many times; each redraw used to queue its own PNG, so the
+            // queue grew for minutes and the app hung on it when closing)
+            archiveJobs.erase(std::remove_if(archiveJobs.begin(), archiveJobs.end(), [&a](const ArchiveJob& q){ return q.appendPath.empty() && q.png == a.png; }), archiveJobs.end());
             archiveJobs.push_back(std::move(a));
             acv.notify_one();
         }
