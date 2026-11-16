@@ -55,7 +55,7 @@ inline void Editor::sceneFieldMenu(Scene& s, const char* id, const json& value, 
         for(auto& [n, sc] : engine->scenes){ set(sc, value); dirty.insert(n); }
         changed = true;
     }
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Every scene gets this value (each one marked as edited; save them in Compose)");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Every scene gets this value (each one marked as edited; keep them with Save all, in the top bar)");
     if(!engine->setlist.empty() && ImGui::MenuItem("Apply to the setlist's scenes")){
         for(auto& e : engine->setlist){ auto it = engine->scenes.find(e.scene); if(it != engine->scenes.end()){ set(it->second, value); dirty.insert(e.scene); } }
         changed = true;

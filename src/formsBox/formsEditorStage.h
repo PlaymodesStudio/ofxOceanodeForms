@@ -613,7 +613,7 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
     ImGui::SameLine(0, 14 * zz);
     if(isPlaying) ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1), "playing");
     else if(!selected.empty()) ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "not playing");
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip(isPlaying ? (immediate ? "This scene is under the header: edits act on the stage at once (Immediate)" : "This scene is under the header: edits act from the next images (Immediate is off)")
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip(isPlaying ? (immediate ? "This scene is under the header: edits act on the stage at once (Live edits is on)" : "This scene is under the header: edits act from the next images (Live edits is off)")
                                                            : "Another scene is playing: edits here reach the stage when this scene plays");
 
     auto it = engine->scenes.find(selected);

@@ -21,7 +21,7 @@ inline bool Editor::drawLayerEffectPreset(Scene& scene,int layer){
         }
         ImGui::EndCombo();
     }
-    if(ImGui::IsItemHovered())ImGui::SetTooltip("Applied after all this layer's instruments. Saved with this scene.\nEnable Immediate to redraw existing pages when changing it.");
+    if(ImGui::IsItemHovered())ImGui::SetTooltip("Applied after all this layer's instruments. Saved with this scene.\nTurn on Live edits (top bar) to redraw existing pages when changing it.");
     if(!ref.empty()){
         ImGui::SameLine();if(ImGui::SmallButton("Edit effect")){selPreset=ref;showTab="Instruments";}
     }
@@ -439,7 +439,7 @@ inline bool Editor::drawPerfParam(Scene& s, const PerfParam& p, float itemWidth)
         int i = v.is_number() ? (int)std::lround(v.get<float>()) : p.def.get<int>();
         if(p.key==std::string("kickSynth")){
             if(ImGui::Combo(p.label,&i,"Sample\0Synth\0")){v=i;changed=true;}
-            if(ImGui::IsItemHovered())ImGui::SetTooltip("Both sources use the marked kick layer. Enable Kick detect here and Kick on in Sonification.");
+            if(ImGui::IsItemHovered())ImGui::SetTooltip("Both sources use the marked kick layer. Enable Kick detect here and Kick on in Output > Sound engine.");
         }else if(ImGui::SliderInt(p.label, &i, (int)p.min, (int)p.max)){ v = i; changed = true; }
     }else if(p.type == 's'){
         // Folder samples retain their legacy names; a browsed sample belongs to this scene.
@@ -564,7 +564,7 @@ inline void Editor::drawSceneInstrumentEditor(std::string ref){
     }
     if(immediateSwitch){
         ImGui::SameLine();
-        ImGui::Checkbox("Immediate##sceneInstrument",immediateSwitch);
+        ImGui::Checkbox("Live edits##sceneInstrument",immediateSwitch);
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Redraw playing and queued pages after instrument edits, including nested stack instruments. No Save needed to hear the edit.");
     }
     if(own){

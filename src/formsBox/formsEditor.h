@@ -450,9 +450,9 @@ private:
         ImGui::PushStyleColor(ImGuiCol_Button, on ? ImVec4(0.85f, 0.45f, 0.10f, 1) : ImVec4(0.20f, 0.20f, 0.24f, 1));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? ImVec4(0.95f, 0.55f, 0.15f, 1) : ImVec4(0.28f, 0.28f, 0.34f, 1));
         ImGui::PushStyleColor(ImGuiCol_Text, on ? ImVec4(0.05f, 0.05f, 0.05f, 1) : ImVec4(0.85f, 0.85f, 0.85f, 1));
-        if(ImGui::Button(on ? "IMMEDIATE  on" : "Immediate  off")) *immediateSwitch = !on;
+        if(ImGui::Button(on ? "LIVE EDITS  on" : "Live edits  off")) *immediateSwitch = !on;
         ImGui::PopStyleColor(3);
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("On: every edit goes straight into the composition. The pages on screen and waiting are\n"
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Live edits (was Immediate). On: every edit goes straight into the composition. The pages on screen and waiting are\n"
                                                      "drawn again in place: an instrument's parameters, a scene's palette, scale, note grid, bass degree\n"
                                                      "and its layers' instrument cells. Redrawn pages overwrite their saved files.\n"
                                                      "Act at once anyway: BPM, root, opacity, blend, post-processing, sound, mute / solo.\n"
@@ -603,7 +603,7 @@ private:
         if(drawExportTab){ modes.push_back({"Export", false}); which.push_back(2); }
         int idx = 0; for(int i = 0; i < (int)which.size(); i++) if(which[i] == outputMode) idx = i;
         modeButtons(idx, modes, outputMode == 0 ? "the image after the layers: masks, feathers, levels, the header line (saved with the patch)"
-                               : outputMode == 1 ? "the sound of the whole node: partials, FX, EQ, compressor, kick samples, ducking (saved with the patch; a scene's own sound is in Compose)"
+                               : outputMode == 1 ? "the sound of the whole node: partials, FX, EQ, compressor, kick samples, ducking (saved with the patch; a scene's own sound is in Stage > Sound)"
                                : "render the setlist to video and audio");
         outputMode = which.empty() ? 0 : which[std::max(0, std::min(idx, (int)which.size() - 1))];
         if(outputMode == 0 && drawPostTab) drawPostTab(); else if(outputMode == 1 && drawSoundTab) drawSoundTab(); else if(outputMode == 2 && drawExportTab) drawExportTab();

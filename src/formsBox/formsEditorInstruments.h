@@ -444,8 +444,8 @@ inline void Editor::drawInstrumentsTab(){
                                                          "Off: the playback is back where it is.");
         }
         ImGui::SameLine();
-        ImGui::TextDisabled(imm ? "  Immediate is on (top bar): edits go into the pages on stage"
-                                : any ? "  edits are seen and heard at once" : "  off: edits show in the preview below (Immediate: top bar)");
+        ImGui::TextDisabled(imm ? "  Live edits is on (top bar): edits go into the pages on stage"
+                                : any ? "  edits are seen and heard at once" : "  off: edits show in the preview below (Live edits: top bar)");
         ImGui::EndChild();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
@@ -491,7 +491,7 @@ inline void Editor::drawInstrumentsTab(){
         std::string lab = "Add to " + selected + (si != engine->scenes.end() && si->second.layers.size() > 1 ? ", layer " + ofToString(li + 1) : std::string());
         if(ImGui::Button(lab.c_str())) addMethodToScene(ref);
     }
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Add this instrument to the selected layer of the scene selected in the Scenes tab");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Add this instrument to the selected layer of the scene being edited in Stage");
     if(!g && !pr.isStack()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "The renderer doesn't know the generator '%s'.", pr.gen.c_str());
     ImGui::Separator();
 
@@ -800,7 +800,10 @@ inline bool Editor::drawParamTabs(const GenDef& g, json& params){
         }
         return false;
     };
-    if(ImGui::BeginTabBar("##paramTabs", ImGuiTabBarFlags_FittingPolicyScroll)){
+    pushTabLevel(2);
+    bool paramTabs = ImGui::BeginTabBar("##paramTabs", ImGuiTabBarFlags_FittingPolicyScroll);
+    if(!paramTabs) popTabLevel();
+    if(paramTabs){
         for(auto& grp : groups){
             std::string label = grp + (setIn(grp, false) ? " ·" : "") + "###" + grp;
             if(ImGui::BeginTabItem(label.c_str())){
@@ -856,6 +859,7 @@ inline bool Editor::drawParamTabs(const GenDef& g, json& params){
             }
         }
         ImGui::EndTabBar();
+        popTabLevel();
     }
     return changed;
 }

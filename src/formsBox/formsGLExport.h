@@ -60,7 +60,7 @@
         ImGui::InputInt("Width", &exportWidth); exportWidth = ofClamp(exportWidth, 16, 16384);
         ImGui::InputInt("Height", &exportHeight); exportHeight = ofClamp(exportHeight, 16, 16384);
         ImGui::Checkbox("Separate transparent layers", &glExportSeparate);
-        ImGui::Checkbox("Sonification (48 kHz WAV)", &glExportAudio);
+        ImGui::Checkbox("Sound (48 kHz WAV)", &glExportAudio);
         ImGui::Checkbox("Video with audio (FHD fit, 60 fps, high quality)", &glExportVideo);
         if(ImGui::Button("Render and save")){
             auto pick = ofSystemSaveDialog("FormsExport.png", "Save scene export");

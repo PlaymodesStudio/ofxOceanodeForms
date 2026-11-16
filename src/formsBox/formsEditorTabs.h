@@ -216,7 +216,7 @@ inline void Editor::drawSystemTab(){
     if(ImGui::Button("Make thumbnails")){ makeThumbnails(); thumbs.clear(); }
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("%s", thumbnailsTip.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("(the instrument pictures in Scenes and the picker)");
+    ImGui::TextDisabled("(the instrument pictures in the Library and the picker)");
     // what the node publishes (inputs / outputs)
     if(drawNodeTab && ImGui::CollapsingHeader("Node: published settings and outputs")){
         savedWithPatchNote();

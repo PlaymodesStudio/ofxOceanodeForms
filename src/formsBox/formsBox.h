@@ -69,7 +69,8 @@ public:
         addParameter(showWindow.set("Show", false));
         addCustomRegion(faceRegion.set("Preview", [this](){ editor.drawNodeFace(); }), [this](){ editor.drawNodeFace(); });
         addParameter(go.set("GO"));
-        addParameter(autoGo.set("Auto GO", true));
+        // no plain widget: the Preview region draws it as the big coloured button (its pin shows only while connected)
+        addParameter(autoGo.set("Auto GO", true), ofxOceanodeParameterFlags_NoGuiWidget);
         addParameter(useSetlist.set("Setlist", true));
         addParameter(sceneIndex.set("Scene", 0, 0, 255));
         addParameter(speed.set("Speed", 1, -24, 24));
@@ -844,9 +845,9 @@ protected:   // (Forms GL Box derives from Forms Box)
 
     // The lane's panel in the timeline (its "Scenes" tab)
     void drawLanePanel(){
-        ImGui::TextWrapped("A row per Forms Box scene: a block plays that scene. Where the lane has no block, the setlist (or the manual scene) plays.");
-        ImGui::TextWrapped(drivingTransport() ? "Forms Box drives the transport: each image gets the scene of the block at the bar it starts (read ahead)."
-                                              : "Forms Box does not drive the transport: the scene the lane plays now is used for the next images. Turn on Drive Transport (Play tab) to place scenes exactly.");
+        ImGui::TextWrapped("A row per scene: a block plays that scene. Where the lane has no block, the setlist (or the manual scene) plays.");
+        ImGui::TextWrapped(drivingTransport() ? "This node drives the transport: each image gets the scene of the block at the bar it starts (read ahead)."
+                                              : "This node does not drive the transport: the scene the lane plays now is used for the next images. Turn on Drive transport (Stage > Transport) to place scenes exactly.");
         if(!lane.hardCut.empty()){
             std::string cuts; for(auto& s : lane.hardCut) cuts += (cuts.empty() ? "" : ", ") + s;
             ImGui::TextDisabled("Hard cut into: %s", cuts.c_str());
@@ -872,7 +873,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         ImGui::SameLine();
         if(ImGui::Button("New PNG")) newPng.trigger();
         ctl.check(driveTransport, "Drive transport");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The transport (timelines, synced Phasors, box synths) follows Forms Box's beat under the header,\nits tempo and Pause. Off: the transport runs on its own and Forms Box ignores it.");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The transport (timelines, synced Phasors, box synths) follows this node's beat under the header,\nits tempo and Pause. Off: the transport runs on its own and this node ignores it.");
         if(!transportStatus.empty()){ ImGui::SameLine(); ImGui::TextDisabled("%s", transportStatus.c_str()); }
 #ifdef FORMS_HAS_TIMELINE_MENU
         if(ImGui::Button("Scene lane to timeline")){
@@ -1341,7 +1342,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         ImGui::TableSetupColumn("workspace", ImGuiTableColumnFlags_WidthStretch, 3.0f);
         ImGui::TableNextColumn();
         ImGui::TextWrapped("Save the current frame as PNG: the composite matches Output, while separate layer files keep transparency and the layer's opacity.");
-        ImGui::TextDisabled("Export dimensions resize the current live frame. For full detail, set the Play tab's Width / Height to the desired size before capturing.");
+        ImGui::TextDisabled("Export dimensions resize the current live frame. For full detail, set the node's Width / Height (published on the node) to the desired size before capturing.");
         ImGui::Spacing();
         ImGui::Checkbox("Composite as shown", &exportComposite);
         ImGui::Checkbox("Separate layers", &exportLayers);

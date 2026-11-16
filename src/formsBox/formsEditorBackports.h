@@ -285,7 +285,7 @@ inline void Editor::setupAssistant(){
     aiSetup = true;
     aiKey = aiKeyPresent();
     ofxOceanodeAIAssistant::Spec s;
-    s.title = "Forms Box assistant (Requesty)";
+    s.title = "Forms assistant (Requesty)";
     s.subtitle = [this](){ return std::string("Mode: ") + assistV1ModeName((AssistV1Mode)aiMode) + " (choose it in the Assistant tab)"; };
     s.generateHint = "Describe the instrument preset or scene, or the change you want.";
     s.generateButton = "Send";
@@ -338,7 +338,7 @@ inline void Editor::handleAssistAnswer(const std::string& text){
         if(!assistV1IsScene(m)) normalizePresetV1(*engine, j, aiNotes);
         if(m == AssistV1Mode::ModifyPreset){
             auto it = engine->presets.find(selPreset);
-            if(it == engine->presets.end()) bad.push_back("no preset selected (Instruments tab)");
+            if(it == engine->presets.end()) bad.push_back("no instrument selected (Library > Instruments)");
             else {
                 j["name"] = it->second.name;
                 // what the answer leaves out stays as it was
@@ -350,7 +350,7 @@ inline void Editor::handleAssistAnswer(const std::string& text){
             }
         }
         if(m == AssistV1Mode::ModifyScene){
-            if(!engine->scenes.count(selected)) bad.push_back("no scene selected (Scenes tab)");
+            if(!engine->scenes.count(selected)) bad.push_back("no scene selected (Stage)");
             else {
                 j["name"] = selected;
                 const Scene& cur = engine->scenes[selected];
@@ -391,7 +391,7 @@ inline void Editor::startAssistAudition(const json& j){
         if(auditionSwitch){ aiAuditionWas = *auditionSwitch; *auditionSwitch = true; }
         else if(sendPreviews){ auto items = engine->presetItems(p); sendPreviews(previewSceneName(), {{aiTempRef, items}}); }
         aiStatus = auditionSwitch ? "Auditioning (the proposal alone on stage, with the preview scene). Keep or Discard."
-                                  : "Previewing (Instruments tab preview). Keep or Discard.";
+                                  : "Previewing (Library > Instruments preview). Keep or Discard.";
     }else{
         Scene s = j.get<Scene>();
         aiTargetRef = m == AssistV1Mode::ModifyScene ? selected : std::string();
@@ -476,8 +476,8 @@ inline void Editor::drawAssistantTab(){
         ImGui::EndDisabled();
     }
     auto m = (AssistV1Mode)aiMode;
-    if(m == AssistV1Mode::ModifyPreset) ImGui::TextDisabled("Preset: %s (select it in the Instruments tab)", selPreset.empty() ? "-" : selPreset.c_str());
-    if(m == AssistV1Mode::ModifyScene) ImGui::TextDisabled("Scene: %s (select it in the Scenes tab)", selected.empty() ? "-" : selected.c_str());
+    if(m == AssistV1Mode::ModifyPreset) ImGui::TextDisabled("Instrument: %s (select it in Library > Instruments)", selPreset.empty() ? "-" : selPreset.c_str());
+    if(m == AssistV1Mode::ModifyScene) ImGui::TextDisabled("Scene: %s (the one being edited in Stage)", selected.empty() ? "-" : selected.c_str());
     theme::heading("REQUEST");
     ImGui::InputTextMultiline("##aiPrompt", aiPrompt, sizeof(aiPrompt), ImVec2(-1, 90 * zz));
     ImGui::BeginDisabled(aiBusy || aiAuditioning || !aiPrompt[0]);

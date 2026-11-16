@@ -31,7 +31,7 @@ inline void Editor::drawGalleryTab(){
 
     ImGui::BeginChild("##gmain", ImVec2(0, 0));
     if(gallery.selectedSession.empty()){
-        ImGui::TextDisabled("Pick a session on the left: every image Forms Box ever showed is archived there, with its recipe.");
+        ImGui::TextDisabled("Pick a session on the left: every image ever shown is archived there, with its recipe.");
         ImGui::EndChild();
         return;
     }
@@ -135,7 +135,7 @@ inline void Editor::drawGalleryTab(){
                 std::string n = engine->sceneFromImage(r, true);
                 selected = n;
             }
-            if(ImGui::IsItemHovered()) ImGui::SetTooltip("A new scene that always shows exactly this image (same recipe, same seed).\nIt opens in the Scenes tab; add it to the setlist or play it.");
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("A new scene that always shows exactly this image (same recipe, same seed).\nIt opens in Stage; add it to the setlist or play it.");
             ImGui::SameLine();
             if(ImGui::SmallButton("Promote to scene")){
                 std::string n = engine->sceneFromImage(r, false);

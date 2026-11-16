@@ -379,7 +379,7 @@ private:
             if(f == sceneApplied.end()){ sceneApplied[name] = now; continue; }
             if(f->second == now) continue;
             if(!immediateOn){ f->second = now; continue; }
-            if(immediateInFlight > 0){ if(!immediateWaitNoted){ immediateWaitNoted = true; engine.note("immediate: " + name + " edited while a redraw is in flight; drawn again when it lands"); } continue; }
+            if(immediateInFlight > 0){ if(!immediateWaitNoted){ immediateWaitNoted = true; engine.note("live edit: " + name + " edited while a redraw is in flight; drawn again when it lands"); } continue; }
             immediateWaitNoted = false;
             forms::Scene before;
             try { before = f->second.get<forms::Scene>(); } catch(...) { f->second = now; continue; }
@@ -420,7 +420,7 @@ private:
         std::set<std::string> done;
         int n = 0;
         for(auto& im : stagePages()) if(im && done.insert(im->id).second && densityRedraw(im)) n++;
-        if(n) engine.note("immediate: density " + std::to_string((int)std::lround(engine.density * 100)) + ", " + std::to_string(n) + " pages drawn again");
+        if(n) engine.note("live edit: density " + std::to_string((int)std::lround(engine.density * 100)) + ", " + std::to_string(n) + " pages drawn again");
     }
 
     // ---- audition
@@ -577,7 +577,7 @@ private:
             submitImmediate(req);
             n++;
         }
-        if(n) engine.note("immediate: " + std::to_string(n) + " pages with " + ref + " drawn again");
+        if(n) engine.note("live edit: " + std::to_string(n) + " pages with " + ref + " drawn again");
     }
     // a scene's pages on stage after an edit: its look (palette, scale, note grid) and, per page, its
     // layer's instruments (patchSelection: only what the cell edit changes)
@@ -643,7 +643,7 @@ private:
             submitImmediate(req);
             n++;
         }
-        if(n) engine.note("immediate: " + std::to_string(n) + " pages of " + name + " drawn again");
+        if(n) engine.note("live edit: " + std::to_string(n) + " pages of " + name + " drawn again");
     }
     void immediateDelivered(Done& d){
         immediateInFlight = std::max(0, immediateInFlight - 1);
@@ -669,7 +669,7 @@ private:
                 scroller.reloadPng(png);
                 for(auto& rg : rings) rg.reloadPng(png);
             }
-        }else if(!d.error.empty()) engine.note("immediate " + d.id + ": " + d.error);
+        }else if(!d.error.empty()) engine.note("live edit " + d.id + ": " + d.error);
         if(immediateInFlight == 0){
             if(filterDirty){ filterDirty = false; redrawForFilter(); }
         }
@@ -805,7 +805,7 @@ private:
                       "moves the header; the actual* outputs are the values of the image under the header; it "
                       "post-processes and sonifies. Show opens the window. Data: bin/data/Forms (inspector: Renderer). "
                       "Follows a Global Pitch node when the patch has one: Scale (with its root and Shift) replaces the scene's scale "
-                      "for the next pages (at once with Immediate mode), Transpose bends the sound (Mod 12, Low Scale, Negative and Detune are not followed).";
+                      "for the next pages (at once with Live edits on), Transpose bends the sound (Mod 12, Low Scale, Negative and Detune are not followed).";
     }
     static std::string portedList(){
         std::string s;
