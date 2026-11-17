@@ -218,12 +218,11 @@ struct PostControls {
         ImGui::TextDisabled("Left of the line: effects on each layer before the sound reads it (heard and seen). Right: the final image only.\n"
                             "Right-click a control to set its value, publish it to the node or add it to a timeline.");
         if(!post.ok && post.tried) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "The shader did not compile: Output is the plain composite.");
-        if(!ImGui::BeginTable("##post", 5, ImGuiTableFlags_SizingStretchSame)) return;
+        if(!ImGui::BeginTable("##post", 4, ImGuiTableFlags_SizingStretchSame)) return;
         ImGui::TableSetupColumn("pre", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("divider", ImGuiTableColumnFlags_WidthFixed, 34 * z);
         ImGui::TableSetupColumn("image", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("levels", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("line", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         // ---- before the sound
         ImGui::TableNextColumn();
         ImGui::PushItemWidth(-110 * z);
@@ -246,7 +245,7 @@ struct PostControls {
         }
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Copies layer %d's blur, trail, echo and Perlin settings to the other layers", L + 1);
         ImGui::Spacing();
-        ImGui::TextDisabled("Value and Header opacity\n(right) scale the sound too.");
+        ImGui::TextDisabled("Value (right) and the header's\nopacity scale the sound too.");
         ImGui::PopItemWidth();
         // ---- the line: where the sound reads the image
         ImGui::TableNextColumn();
@@ -278,18 +277,10 @@ struct PostControls {
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Post-processing of the final image (Output)");
         ImGui::PushItemWidth(-110 * z);
         ImGui::SeparatorText("Image");
-        reg.check(stretch, "Stretch left of the header");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Everything left of the header shows the header column (PixelStretch)");
-        ImGui::BeginDisabled(!stretch);
-        reg.combo(stretchBlend, {"Replace", "Add", "Lighten", "Screen", "Multiply", "Darken"}, "Stretch blend");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blend the stretched header column with the scrolling image beneath it.\nReplace preserves the original pixel-stretch appearance. Visual only: does not change the sound.");
-        ImGui::EndDisabled();
         reg.slider(hue, "%.3f");
         reg.slider(sat, "%.2f");
         reg.slider(val, "%.2f");
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Also scales the sound (the brightness the partials read)");
-        reg.check(useOpacity, "Header opacity");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The header's beat-repeat fade and strobe gate darken the image");
         float bg[3] = {bgR, bgG, bgB};
         if(ImGui::ColorEdit3("Background", bg)){ bgR = bg[0]; bgG = bg[1]; bgB = bg[2]; }
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Shows where no layer draws (Output only: not heard). Black: as before.\nTo publish it: R / G / B below, right-click.");
@@ -338,11 +329,13 @@ struct PostControls {
             prev = q;
         }
         ImGui::Dummy(ImVec2(w, h));
+        ImGui::TextDisabled("The header's line, the stretch left of it and\nits opacity: Stage > Header.");
         ImGui::PopItemWidth();
+        ImGui::EndTable();
+    }
 
-        ImGui::TableNextColumn();
-        ImGui::PushItemWidth(-110 * z);
-        ImGui::SeparatorText("Header line");
+    // ---- the header's look (Stage > Header, "every scene"): the line...
+    void drawHeaderLine(ControlRegistry& reg, const Post& post){
         reg.check(line, "Draw the line");
         reg.slider(lineWidth, "%.1f px", "Thickness");
         reg.slider(lineSoft, "%.1f px", "Softness H");
@@ -357,9 +350,19 @@ struct PostControls {
         static const std::vector<std::string> curves = {"Exponential", "Linear glide", "Smooth (spring)"};
         reg.combo(lineCurve, curves, "Ease curve");
         reg.slider(lineOffset, "%.0f px", "Offset");
-        ImGui::Text("line at %.0f px", post.lineX);
-        ImGui::PopItemWidth();
-        ImGui::EndTable();
+        ImGui::TextDisabled("line at %.0f px", post.lineX);
+        if(!enabled) ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), "Post-processing is off (Output):\nnone of this shows.");
+    }
+    // ...and what the header does to the image: the stretch left of it, its opacity
+    void drawHeaderImage(ControlRegistry& reg){
+        reg.check(stretch, "Stretch left of the header");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Everything left of the header shows the header column (PixelStretch)");
+        ImGui::BeginDisabled(!stretch);
+        reg.combo(stretchBlend, {"Replace", "Add", "Lighten", "Screen", "Multiply", "Darken"}, "Stretch blend");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Blend the stretched header column with the scrolling image beneath it.\nReplace preserves the original pixel-stretch appearance. Visual only: does not change the sound.");
+        ImGui::EndDisabled();
+        reg.check(useOpacity, "Repeat and gate darken the image");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The header's opacity (beat-repeat pulse, strobe gate, tremolo) darkens the picture.\nOff: they are only heard.");
     }
 };
 

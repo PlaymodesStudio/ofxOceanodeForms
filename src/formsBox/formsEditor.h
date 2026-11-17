@@ -21,6 +21,7 @@
 #include "formsTheme.h"
 #include "formsUndo.h"
 #include "formsPerform.h"
+#include "formsClock.h"
 #include "formsHarmonyText.h"
 #include "formsAssistantV1.h"
 #include "ofxOceanodeAIAssistant.h"
@@ -144,6 +145,9 @@ public:
     std::function<void(int, int)> setImageSize;
     // the transport panel (drawn by the node)
     std::function<void()> drawPlayControls;
+    // Stage > Header: the node's header parameters, the header line, the stretch / opacity switches (drawn by the node)
+    std::function<void()> drawHeaderNode, drawHeaderLine, drawHeaderImage;
+    bool drawHeaderTab(Scene* sp);   // everything about the header: this scene's movement | every scene's place and look
     bool* useSetlist = nullptr;
     std::function<void(const std::string&)> playScene;   // set by the node: setlist off, this scene next
     std::function<void(const std::string&)> sendRequest; // set by the node: sends a request path to a renderer
@@ -549,15 +553,7 @@ private:
             ImGui::SetNextItemWidth(260 * zz);
             if(ImGui::SliderFloat("Header", &hv, headerParam->getMin(), headerParam->getMax(), "%.3f")) *headerParam = ofClamp(hv, headerParam->getMin(), headerParam->getMax());
             if(ImGui::IsItemHovered()) ImGui::SetTooltip("Where the header (the line that plays) is across the view: 0 = left edge, 1 = right edge.\n"
-                                                         "Ctrl-click to type a value. Saved with the patch; also \"Header\" on the node.");
-        }
-        if(smoothParam){
-            ImGui::SameLine(0, 14 * zz);
-            float sv = smoothParam->get();
-            ImGui::SetNextItemWidth(150 * zz);
-            if(ImGui::SliderFloat("Smooth", &sv, smoothParam->getMin(), smoothParam->getMax(), "%.4f", ImGuiSliderFlags_Logarithmic)) *smoothParam = ofClamp(sv, smoothParam->getMin(), smoothParam->getMax());
-            if(ImGui::IsItemHovered()) ImGui::SetTooltip("How slowly the header glides to a new position (0 = at once; close to 1 = very slowly).\n"
-                                                         "Saved with the patch; also \"Smooth\" on the node.");
+                                                         "Ctrl-click to type a value. Saved with the patch; everything else about the header: Stage > Header.");
         }
         if(resetLayers){
             ImGui::SameLine(0, 18 * zz);

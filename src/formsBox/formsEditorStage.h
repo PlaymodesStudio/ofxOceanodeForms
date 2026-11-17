@@ -98,18 +98,129 @@ inline bool Editor::drawKickSettings(Scene& s){
     return changed;
 }
 
+// Stage > Header: everything about the header in one place. Top: what this scene makes the header
+// do (saved with the scene, every setting in view: none hidden at its default). Bottom: where the
+// header is, how it looks and what it does to the image, for every scene (saved with the patch).
+inline bool Editor::drawHeaderTab(Scene* sp){
+    bool changed = false;
+    float zz = z();
+    const float w = -(128 * zz);
+    const ImVec4 head(0.8f, 0.6f, 1.0f, 1);
+    auto title = [&](const char* t, const char* note){ ImGui::TextColored(head, "%s", t); if(note){ ImGui::SameLine(); ImGui::TextDisabled("%s", note); } ImGui::Separator(); };
+    auto tip = [](const char* t){ if(ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); };
+
+    // ---------------------------------------------------------------- this scene
+    if(!sp) ImGui::TextDisabled("No scene yet: New, in the Scenes tab, or import the 1920 scenes in System.");
+    else {
+        Scene& s = *sp;
+        json full = completePerformance(s.performance);
+        if(full != s.performance) s.performance = full;
+        auto row = [&](const char* key, const char* help){
+            if(const PerfParam* p = PerformState::param(key)){ changed |= drawPerfParam(s, *p, w); if(help) tip(help); }
+        };
+        ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.5f, 1), "THIS SCENE: %s", s.name.c_str());
+        ImGui::SameLine(); ImGui::TextDisabled("what the header does by itself. Saved with the scene; acts at once while it plays. Chances: 0 = never, 1 = always.");
+        if(ImGui::BeginTable("##hdrScene", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV)){
+            // ---- LFO
+            ImGui::TableNextColumn(); title("LFO", "a swing around its place");
+            row("headerLfoDepth", "How far the header swings, as a part of the view's width (0 = no LFO; 1 = from edge to edge).\nIt swings around the header's place and stops at the view's edges.");
+            {
+                json& v = s.performance["headerLfoShape"];
+                int shape = v.is_number() ? ofClamp((int)std::lround(v.get<float>()), 0, kHeaderLfoShapes - 1) : 0;
+                ImGui::SetNextItemWidth(w);
+                if(ImGui::BeginCombo("Shape", headerLfoShapeName(shape))){
+                    for(int i = 0; i < kHeaderLfoShapes; i++){
+                        if(i == 5) ImGui::Separator();
+                        if(ImGui::Selectable(headerLfoShapeName(i), i == shape)){ v = i; changed = true; }
+                    }
+                    ImGui::EndCombo();
+                }
+                tip("Sine, triangle, ramps and square: the classic shapes.\nRandom steps: a new place every cycle. Noise: a smooth wander, about one swing per cycle.");
+                // the period as a note value (a beat = a quarter note)
+                static const struct { const char* name; float beats; } notes[] = {
+                    {"1/16", 0.25f}, {"1/8", 0.5f}, {"1/8 dotted", 0.75f}, {"1/4", 1}, {"1/4 dotted", 1.5f}, {"1/2", 2}, {"1/2 dotted", 3},
+                    {"1 bar", 4}, {"2 bars", 8}, {"4 bars", 16}, {"8 bars", 32}, {"16 bars", 64}};
+                json& pv = s.performance["headerLfoBeats"];
+                float beats = pv.is_number() ? pv.get<float>() : 4;
+                char freeName[32]; snprintf(freeName, sizeof(freeName), "%.3g beats", beats);
+                const char* shown = freeName;
+                for(auto& n : notes) if(std::fabs(n.beats - beats) < 0.002f) shown = n.name;
+                ImGui::SetNextItemWidth(w);
+                if(ImGui::BeginCombo("Period", shown)){
+                    for(auto& n : notes) if(ImGui::Selectable(n.name, shown == n.name)){ pv = n.beats; changed = true; }
+                    ImGui::EndCombo();
+                }
+                tip("One whole swing lasts this long, on the beat of the music (whatever the frame rate or Speed).\nFor another length: the row below, in beats.");
+                row("headerLfoBeats", "The period in beats (4 = one bar). Ctrl-click to type a value.");
+                row("headerLfoPhase", "Shifts the swing in time, in cycles (0.5 = half a cycle: it goes the other way first)");
+                // the shape, two cycles
+                float pts[64];
+                std::function<float(float, float)> noNoise = [](float x, float){ return 0.5f + 0.25f * std::sin(x * 5.1f) + 0.2f * std::sin(x * 13.7f + 1); };
+                float ph0 = s.performance["headerLfoPhase"].is_number() ? s.performance["headerLfoPhase"].get<float>() : 0;
+                for(int i = 0; i < 64; i++) pts[i] = headerLfoValue(shape, i / 32.0 + ph0, noNoise);
+                ImGui::SetNextItemWidth(w);
+                ImGui::PlotLines("##lfoShape", pts, 64, 0, nullptr, -1.1f, 1.1f, ImVec2(0, 34 * zz));
+            }
+            // ---- jumps
+            ImGui::TableNextColumn(); title("RANDOM JUMPS", "to anywhere in the view");
+            row("HeaderModChance", "Every few beats the header may jump to a random place across the view and stay there until the next draw.\nThis is how likely each draw is to send it away (0: it stays where Header says).");
+            row("headerMaxDiv", "The longest time between two draws, in beats (each draw waits a random time from 1 beat to this)");
+            ImGui::TextDisabled("The glide between places: Smooth, below.");
+            ImGui::Spacing();
+            title("STROBE GATE", "opacity");
+            row("gateChance", "In the second half of every 2 bars the image may strobe (on a quarter of the time, dark the rest).\nThis is how likely each 2-bar span is to strobe.");
+            row("gateMults", "Flashes per beat, one picked at random each time (comma-separated; 1 = one flash a beat, 4 = sixteenth notes, 0.25 = one a bar)");
+            // ---- repeat
+            ImGui::TableNextColumn(); title("BEAT REPEAT", "the header steps back");
+            row("repeatChance", "The beat repeat: the header steps back again and again, so a slice of the image is heard and seen several times.\nThis is how likely a repeat is to start, drawn twice per image (once in each half).");
+            row("repeatBarStart", "Where in each half of the image a repeat may start, and from there it lasts to the end of that half.\n0.75 = the last quarter (the last bar of 4); 0.5 = the last half; 0 = the whole half.");
+            row("repeatMults", "The slice's length in eighth notes, one picked at random each half image (comma-separated).\n1 = an eighth, 2 = a quarter (a beat), 0.5 = a sixteenth, 1.5 = a dotted eighth, 0.66 = an eighth triplet.");
+            row("repeatNum", "How many steps back before it returns to where it was (4: the slice, then 1, 2 and 3 slices earlier, and again)");
+            row("repeatPW", "The part of each slice that is lit and heard; the rest is dark and silent (1 = no gap, 0.75 = a short breath)");
+            // ---- tremolo
+            ImGui::TableNextColumn(); title("TREMOLO", "opacity");
+            row("tremoloChance", "Every 4 bars the opacity may start to wobble (it fades in and out over about a bar).\nThis is how likely each 4-bar span is to wobble. Needs \"Tremolo on\", below.");
+            row("tremoloMaxSpeed", "The fastest wobble, in wobbles per bar (the rate wanders between 1 and this)");
+            row("tremoloFloor", "How dark the wobble's troughs get: 0 = down to black, 1 = no wobble at all");
+            ImGui::EndTable();
+        }
+    }
+
+    // ---------------------------------------------------------------- every scene
+    ImGui::Spacing(); ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.5f, 1), "EVERY SCENE");
+    ImGui::SameLine(); savedWithPatchNote();
+    ImGui::SameLine(); ImGui::TextDisabled("right-click a control: exact value, publish to the node, timeline");
+    if(ImGui::BeginTable("##hdrPatch", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV)){
+        ImGui::TableNextColumn(); title("PLACE", nullptr);
+        ImGui::PushItemWidth(-(100 * zz));
+        if(drawHeaderNode) drawHeaderNode();
+        ImGui::PopItemWidth();
+        ImGui::TableNextColumn(); title("THE LINE", "how the header looks");
+        ImGui::PushItemWidth(-(100 * zz));
+        if(drawHeaderLine) drawHeaderLine();
+        ImGui::PopItemWidth();
+        ImGui::TableNextColumn(); title("THE IMAGE AT THE HEADER", nullptr);
+        ImGui::PushItemWidth(-(100 * zz));
+        if(drawHeaderImage) drawHeaderImage();
+        ImGui::PopItemWidth();
+        ImGui::EndTable();
+    }
+    return changed;
+}
+
 // The scene's sound settings in three folds (Compose): levels & stereo, movement, kick
 inline bool Editor::drawSceneSound(Scene& s, bool columns){
     bool changed = false;
     static const std::vector<std::string> levels{"SpectrumGain", "sideChain", "reverbAmt", "Compressor", "scaleQuant", "LRDryWet", "LRTh", "LRHardness", "LRNoiseAmt"}, levelsMore{"LRStepBars", "LRprobSteps[]", "LRSmotthMs"};
-    static const std::vector<std::string> move{"phasorSpeedMod", "phasorModChance", "PhasorMinSpeed", "PhasorMaxSpeed", "gateChance", "tremoloChance", "HeaderModChance", "repeatChance"},
-                                          moveMore{"gateMults", "tremoloMaxSpeed", "tremoloFloor", "headerMaxDiv", "repeatMults", "repeatNum", "repeatPW", "repeatBarStart"};
+    // the header's own settings (jumps, repeat, gate, tremolo, LFO) are in Stage > Header
+    static const std::vector<std::string> move{"phasorSpeedMod", "phasorModChance", "PhasorMinSpeed", "PhasorMaxSpeed"}, moveMore{};
     if(columns){   // three columns with everything in view
         if(ImGui::BeginTable("##sceneSound", 3, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_BordersInnerV)){
             auto all = [](std::vector<std::string> a, const std::vector<std::string>& b){ a.insert(a.end(), b.begin(), b.end()); return a; };
             ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1), "LEVELS & STEREO"); ImGui::Separator();
             changed |= drawPerformanceSparse(s, all(levels, levelsMore), "levels");
-            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1), "MOVEMENT"); ImGui::SameLine(); ImGui::TextDisabled("speed, gate, tremolo, header, repeat"); ImGui::Separator();
+            ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1), "SCROLL SPEED"); ImGui::SameLine(); ImGui::TextDisabled("repeat, gate, jumps: Header tab"); ImGui::Separator();
             changed |= drawPerformanceSparse(s, all(move, moveMore), "move");
             ImGui::TableNextColumn(); ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1), "KICK"); ImGui::Separator();
             changed |= drawKickSettings(s);
@@ -120,7 +231,7 @@ inline bool Editor::drawSceneSound(Scene& s, bool columns){
     ImGui::SetNextItemOpen(true, ImGuiCond_Once);
     if(ImGui::CollapsingHeader("Levels & stereo"))
         changed |= drawPerformanceCard(s, levels, levelsMore);
-    if(ImGui::CollapsingHeader("Movement (speed, gate, tremolo, header, repeat)"))
+    if(ImGui::CollapsingHeader("Scroll speed"))
         changed |= drawPerformanceCard(s, move, moveMore);
     if(ImGui::CollapsingHeader("Kick")) changed |= drawKickSettings(s);
     return changed;
@@ -365,7 +476,7 @@ inline void Editor::drawStageTab(){
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
         if(ImGui::CollapsingHeader("Every scene (bars, density, image size)")) drawEveryScene();
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-        if(ImGui::CollapsingHeader("Transport, header, scroller")){ if(drawPlayControls) drawPlayControls(); }
+        if(ImGui::CollapsingHeader("Transport, scroller")){ if(drawPlayControls) drawPlayControls(); }
         ImGui::EndChild();
         ImGui::SameLine(0, gap);
     }
@@ -720,9 +831,15 @@ inline void Editor::drawSceneWorkspace(const std::string& playing){
         if(ImGui::BeginTabItem("Sound")){
             ImGui::BeginChild("##stSound");
             if(!sp) nothing(); else {
-                ImGui::TextDisabled("This scene's sound: levels and stereo, movement, kick. Saved with the scene; acts at once while it plays.");
+                ImGui::TextDisabled("This scene's sound: levels and stereo, scroll speed, kick. Saved with the scene; acts at once while it plays.");
                 changed |= drawSceneSound(*sp, true);
             }
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if(ImGui::BeginTabItem("Header")){
+            ImGui::BeginChild("##stHeader");
+            changed |= drawHeaderTab(sp);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }

@@ -13,6 +13,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <random>
 #include <vector>
@@ -188,6 +189,38 @@ private:
 
 // ================================================================ Header
 
+// The header LFO's value, -1..1, at `cycles` (whole part = which cycle, fraction = where in it).
+// Shapes: 0 sine, 1 triangle, 2 ramp up, 3 ramp down, 4 square, 5 random steps (a new level every
+// cycle), 6 noise (a smooth wander, about one swing per cycle). Random steps are a hash of the
+// cycle number: the same at the same musical place, and no draw from the header's random stream.
+enum { kHeaderLfoShapes = 7 };
+inline const char* headerLfoShapeName(int shape){
+    static const char* n[kHeaderLfoShapes] = {"Sine", "Triangle", "Ramp up", "Ramp down", "Square", "Random steps", "Noise"};
+    return n[shape < 0 ? 0 : shape >= kHeaderLfoShapes ? kHeaderLfoShapes - 1 : shape];
+}
+inline float headerLfoValue(int shape, double cycles, const std::function<float(float, float)>& noise2){
+    double whole = std::floor(cycles);
+    float ph = (float)(cycles - whole);
+    switch(shape){
+        default:
+        case 0: return std::sin(6.2831853f * ph);
+        case 1: return ph < 0.25f ? 4 * ph : ph < 0.75f ? 2 - 4 * ph : 4 * ph - 4;
+        case 2: return 2 * ph - 1;
+        case 3: return 1 - 2 * ph;
+        case 4: return ph < 0.5f ? 1.0f : -1.0f;
+        case 5: {
+            uint32_t h = (uint32_t)(int64_t)whole * 2654435761u;
+            h ^= h >> 15; h *= 2246822519u; h ^= h >> 13; h *= 3266489917u; h ^= h >> 16;
+            return (h & 0xffffff) / (float)0x7fffff - 1.0f;
+        }
+        case 6: {
+            // wrapped, so that the float keeps its precision late in a long session
+            float n = noise2 ? noise2((float)std::fmod(cycles, 4096.0), 7) : 0.5f;
+            return clampf((n - 0.5f) * 3.0f, -1, 1);
+        }
+    }
+}
+
 class Header {
 public:
     std::function<double(float phase,float headerPos)> beatAt;
@@ -200,6 +233,12 @@ public:
     float headerPlus = 0;       // "Header+" slider 0..1
     float smooth = 0.0001f;     // "Smooth" knob (Smoother_1)
     bool autoHeader = false;
+    // The image stands still (Pause, or Speed 0). With runWhenStill the timed effects (beat repeat,
+    // strobe gate, the LFO; and the layers' animated masks, through freeBeats) go on at the tempo:
+    // their beat is the image's plus the beats spent standing still. When the image moves again
+    // that extra is rounded to whole 2-bar spans, so everything is back on the image's own beat.
+    bool still = false, runWhenStill = true;
+    double freeBeats = 0;       // output: beats to add to the image's beat for timed effects
     bool tremoloOn = false;     // the scenes' tremolo on the opacity (off: Opacity = beat-repeat fade x strobe gate)
     float headerMin = 3.0f / 7, headerMax = 4.0f / 7;   // fractions of the width (MultiSlider grid)
     json perf = json::object();
@@ -210,6 +249,7 @@ public:
     float headerNorm = 0, phLock = 0, phOff = 0, opacity = 1;
     int actualBar = 0;
     float repeatPx = 0;
+    float lfoPx = 0;            // the scene's header LFO: px added to the header this frame (after the view's edges)
     float repeatOpacity = 1, gate = 1, tremolo = 1;
 
     std::function<float(float, float)> noise2 = [](float x, float){ return 0.5f + 0.5f * std::sin(x * 6.2831853f); };
@@ -246,10 +286,12 @@ public:
         float sweep=minPx+(maxPx-minPx)*ph10;
         float baseHeader=std::fmod(hs+(autoHeader?sweep:0.f),W);
         float beats=(float)std::max(1.0/16,bars)*4.f;
-        auto beatOf=[&](float x){return beatAt?beatAt(phase,x):(double)(phase+x/W)*beats;};
+        if(still && runWhenStill){ freeBeats += dt * bpm / 60.0; wasStill = true; }
+        else if(wasStill){ wasStill = false; freeBeats = runWhenStill ? std::round(freeBeats / 8.0) * 8.0 : 0.0; }
+        auto beatOf=[&](float x){return (beatAt?beatAt(phase,x):(double)(phase+x/W)*beats)+freeBeats;};
         double baseBeat=beatOf(baseHeader);
         // --- beat repeat: advance from the musical beat, never an independent BPM timer
-        float ph9 = fracf(2 * fracf(phase + hs / W));
+        float ph9 = freeBeats == 0 ? fracf(2 * fracf(phase + hs / W)) : (float)(2 * (phase + hs / W + freeBeats / beats) - std::floor(2 * (phase + hs / W + freeBeats / beats)));
         if(firstFrame || ph9<lastPh9){
             auto mults=perfV(perf,"repeatMults",{0.5f,1,0.66f,1.5f,2,0.25f});
             beatLen=std::max(.0001f,mults[std::min((size_t)(uni()*mults.size()),mults.size()-1)]*.5f);
@@ -278,6 +320,19 @@ public:
         int available=stepPx>0?(int)std::floor(baseHeader/stepPx):0;
         if(repeatOn && k>available)repeatPx=(repeatCount%std::max(1,std::min(numReps,available+1)))*stepPx;
         headerPos = baseHeader-repeatPx;
+        // --- the scene's header LFO: a swing around the header, on the musical beat (the same at
+        // the same place in the music, whatever the frame rate or Speed). Added last: the repeat
+        // and the gate keep their timing, measured without it. Depth 0: nothing changes.
+        lfoPx = 0;
+        float lfoDepth = clampf(perfF(perf, "headerLfoDepth", 0), 0, 1);
+        if(lfoDepth > 0){
+            double period = std::max(1.0 / 64, (double)perfF(perf, "headerLfoBeats", 4));
+            double cycles = beatOf(0) / period + perfF(perf, "headerLfoPhase", 0);
+            float v = headerLfoValue((int)std::lround(perfF(perf, "headerLfoShape", 0)), cycles, noise2);
+            float want = clampf(headerPos + v * lfoDepth * 0.5f * W, 0, std::max(0.0f, W - 1));
+            lfoPx = want - headerPos;
+            headerPos = want;
+        }
         headerPx = (int)headerPos;
         headerNorm = clampf(headerPos / W, 0, 1);
         phOff = headerPos / W;
@@ -285,7 +340,7 @@ public:
         actualBar = std::min(std::max(1, (int)std::ceil(bars - 1e-9)) - 1, (int)(phLock * std::max(1.0 / 16, bars)));
 
         // --- strobe gate: in the second half of every 2-bar span, with gateChance
-        double heardBeat=beatOf(headerPos);
+        double heardBeat=beatOf(headerPos-lfoPx);
         double window=std::floor(heardBeat/8.0);
         float g=(float)(heardBeat/8.0-window);
         bool win = g >= 0.5f;
@@ -335,7 +390,7 @@ public:
 private:
     float headerPosOut = 0, hs = 0, lastWidth = 0;
     float jumpPhase = 0, jumpDiv = 1, jumpTarget = 0, jumpChance = 0, jumpSw = 0;
-    bool lastAfterStart = false, repeatOn = false;
+    bool lastAfterStart = false, repeatOn = false, wasStill = false;
     float lastPh9 = 0, beatLen = 0.5f, repeatPhase = 0;
     int repeatCount = 0;
     double repeatStartBeat=0,lastGateWindow=0;

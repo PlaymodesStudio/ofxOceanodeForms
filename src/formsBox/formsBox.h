@@ -116,6 +116,7 @@ public:
         density.set("Density", 0, -100, 100);   // bends every instrument's chance: -100 nothing plays, 0 as written, +100 every instrument that is on
         sessionLimit.set("Session Limit", false);   // off: images never stop by themselves (a show turns it on)
         autoHeader.set("Auto Header", false);
+        runWhenStill.set("Effects While Paused", true);
         tremoloOn.set("Tremolo", false);
         hardCut.set("Hard Cut", false);   // manual scene changes: cut every layer at the change
         headerMin.set("Header Min", 3.0f / 7, 0, 1);
@@ -123,7 +124,7 @@ public:
         viewW.set("Width", 1920, 1, 16384);
         viewH.set("Height", 1080, 1, 16384);
         ctl.reg(resetSetlist); ctl.reg(resetLayers); ctl.reg(analogMode); ctl.reg(bpmAdd); ctl.reg(maxMinutes); ctl.reg(sessionLimit); ctl.reg(barMult); ctl.reg(barAdd); ctl.reg(density);
-        ctl.reg(autoHeader); ctl.reg(tremoloOn); ctl.reg(hardCut); ctl.reg(headerMin); ctl.reg(headerMax);
+        ctl.reg(autoHeader); ctl.reg(runWhenStill); ctl.reg(tremoloOn); ctl.reg(hardCut); ctl.reg(headerMin); ctl.reg(headerMax);
         ctl.reg(viewW); ctl.reg(viewH);
         // the transport follows Forms Box's beat (off: the transport runs on its own)
         driveTransport.set("Drive Transport", false);
@@ -320,6 +321,9 @@ public:
         editor.setImageSize = [this](int w, int h){ imageWidth = w; imageHeight = h; viewW = w; viewH = h; };
         editor.useSetlist = &useSetlistLocal;
         editor.drawPlayControls = [this](){ drawPlayControls(); };
+        editor.drawHeaderNode = [this](){ drawHeaderControls(); };
+        editor.drawHeaderLine = [this](){ postCtl.drawHeaderLine(ctl, post); };
+        editor.drawHeaderImage = [this](){ postCtl.drawHeaderImage(ctl); };
         editor.setHardCut = [this](bool b){ hardCut = b; };
         editor.getHardCut = [this](){ return hardCut.get(); };
         editor.drawPostTab = [this](){ postCtl.draw(ctl, post); };
@@ -548,6 +552,8 @@ protected:   // (Forms GL Box derives from Forms Box)
         head.headerPlus = headerPlus;
         head.smooth = smooth;
         head.autoHeader = autoHeader;
+        head.still = pause != 0 || std::fabs(clock.speedOut) < 1e-5f;
+        head.runWhenStill = runWhenStill;
         head.tremoloOn = tremoloOn;
         head.headerMin = headerMin;
         head.headerMax = headerMax;
@@ -704,7 +710,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         fx.maskBlur=postCtl.maskBlur[l];fx.maskContrast=postCtl.maskContrast[l];fx.maskThreshold=postCtl.maskThreshold[l];fx.maskInvert=postCtl.maskInvert[l];fx.maskSeed=postCtl.maskSeed[l];
         fx.maskSpeed=postCtl.maskAnimate[l]?postCtl.maskSpeed[l].get():0;
         fx.maskBeat=scroller.headerBeat;fx.maskHeaderX=head.headerPos;fx.maskPixelsPerBeat=viewW/std::max(1.0,lenBeats);
-        fx.maskPhase=(scroller.headerBeat+head.repeatPx/std::max(1.f,(float)viewW)*scroller.headerLen)*fx.maskSpeed;
+        fx.maskPhase=(scroller.headerBeat+head.freeBeats+(head.repeatPx-head.lfoPx)/std::max(1.f,(float)viewW)*scroller.headerLen)*fx.maskSpeed;
 
         return fx;
     }
@@ -858,7 +864,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         }
         // the beat under the header without the beat repeat, read across page edges (a repeat can
         // reach back into the previous page when pages are short)
-        feed.step(scroller.beatAt(clock.phase, head.headerPos + head.repeatPx, viewW), scroller.headerLen, 0, viewW, clock.bpm, pause != 0, ofGetLastFrameTime());
+        feed.step(scroller.beatAt(clock.phase, head.headerPos + head.repeatPx - head.lfoPx, viewW), scroller.headerLen, 0, viewW, clock.bpm, pause != 0, ofGetLastFrameTime());
         ofxOceanodeTransport::ExternalClockUpdate u;
         u.beat = feed.beat;
         u.steadyTimeUs = ofxOceanodeTransport::steadyNowUs();
@@ -893,7 +899,7 @@ protected:   // (Forms GL Box derives from Forms Box)
     void drawPlayControls(){
         float z = ofxOceanodeShared::getZoomLevel();
         forms::savedWithPatchNote();
-        // two columns: the transport | the header and, under it, the scroller
+        // two columns: the transport | the scroller (the header: Stage > Header)
         if(!ImGui::BeginTable("##play", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchSame)) return;
         ImGui::TableNextColumn();
         ImGui::SeparatorText("Transport");
@@ -933,23 +939,6 @@ protected:   // (Forms GL Box derives from Forms Box)
         ImGui::PopItemWidth();
 
         ImGui::TableNextColumn();
-        ImGui::SeparatorText("Header");
-        ImGui::PushItemWidth(-90 * z);
-        forms::paramSlider("Header", header, "%.3f"); ctl.nodeMenu(header.getEscapedName());
-        forms::paramSlider("Header+", headerPlus, "%.3f"); ctl.nodeMenu(headerPlus.getEscapedName());
-        forms::paramSlider("Smooth", smooth, "%.4f"); ctl.nodeMenu(smooth.getEscapedName());
-        ctl.check(tremoloOn, "Tremolo");
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The scenes' opacity tremolo (a wobble of the image's opacity). Off: the opacity only follows\nthe beat-repeat fade and the strobe gate.");
-        ctl.check(autoHeader, "Auto Header");
-        if(autoHeader){
-            ctl.slider(headerMin, "%.3f", "Header Min");
-            ctl.slider(headerMax, "%.3f", "Header Max");
-        }
-        forms::meter("phLock", phLock, 0, 1, "%.3f");
-        forms::meter("Opacity", opacity, 0, 1, "%.2f");
-        ImGui::Text("bar %d   header at %.0f px", actualBarOut.get(), headerPosOut.get());
-        ImGui::PopItemWidth();
-
         ImGui::SeparatorText("Scroller");
         ImGui::Text("%d x %d", viewW.get(), viewH.get());
         std::string f = inHeader.get();
@@ -961,6 +950,29 @@ protected:   // (Forms GL Box derives from Forms Box)
     }
 
     forms::Transport clock;
+    // Stage > Header, "every scene": where the header is and how it moves by itself (the node's
+    // parameters; right-click: publish to the node / timeline)
+    void drawHeaderControls(){
+        forms::paramSlider("Header", header, "%.3f"); ctl.nodeMenu(header.getEscapedName());
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Where the header (the line that plays) is across the view: 0 = left edge, 1 = right edge.\nAlso in the top bar.");
+        forms::paramSlider("Header+", headerPlus, "%.3f"); ctl.nodeMenu(headerPlus.getEscapedName());
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Pushes the header from its place towards the right edge (0: where Header says, 1: the right edge)");
+        forms::paramSlider("Smooth", smooth, "%.4f"); ctl.nodeMenu(smooth.getEscapedName());
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("How slowly the header glides to a new position (0 = at once; close to 1 = very slowly)");
+        ctl.check(autoHeader, "Auto sweep");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The header travels with the image from Sweep from to Sweep to, then jumps back (Auto Header)");
+        ImGui::BeginDisabled(!autoHeader);
+        ctl.slider(headerMin, "%.3f", "Sweep from");
+        ctl.slider(headerMax, "%.3f", "Sweep to");
+        ImGui::EndDisabled();
+        ctl.check(runWhenStill, "Effects go on while paused");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("With the image standing still (Pause, or Speed 0) the timed effects keep going at the tempo:\nbeat repeat, strobe gate, the header LFO, the layers' animated masks.\n(Header jumps and tremolo always do.) When the image moves again they are back on its beat.\nOff: they stop with the image.");
+        ctl.check(tremoloOn, "Tremolo on");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Lets the scenes' tremolo (a wobble of the opacity) act. Off: the opacity only follows\nthe beat-repeat pulse and the strobe gate.");
+        forms::meter("Opacity", opacity, 0, 1, "%.2f");
+        ImGui::TextDisabled("bar %d   header at %.0f px%s", actualBarOut.get() + 1, headerPosOut.get(), head.lfoPx != 0 ? "   (LFO)" : head.repeatPx != 0 ? "   (repeat)" : "");
+    }
+
     forms::Header head;
     forms::ScrollerCore scroller;
     std::deque<forms::LayerRing> rings = std::deque<forms::LayerRing>(3); // one per extra layer
@@ -1860,7 +1872,7 @@ protected:   // (Forms GL Box derives from Forms Box)
     ofParameter<string> rendererFolder, pitchclassFolder;
     ofParameter<int> prime, maxPending, imageWidth, imageHeight;
     // built-in player
-    ofParameter<bool> analogMode, sequence, autoPng, autoHeader, autoGo, sessionLimit;
+    ofParameter<bool> analogMode, sequence, autoPng, autoHeader, runWhenStill, autoGo, sessionLimit;
     ofParameter<bool> tremoloOn;              // the scenes' opacity tremolo (off by default)
     ofParameter<int> pause, viewW, viewH, actualBarOut;
     ofParameter<float> speed, bpmAdd, maxMinutes, barMult, density, seqFade, header, headerPlus, smooth, headerMin, headerMax;

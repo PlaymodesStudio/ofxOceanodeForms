@@ -77,6 +77,11 @@ inline const std::vector<PerfParam>& perfParams(){
         {"tremoloFloor", "Tremolo floor", "Tremolo", 'f', 0, 1, 0.3134, 0, false},
         {"HeaderModChance", "Header jump chance", "Header", 'f', 0, 1, 0, 0, false},
         {"headerMaxDiv", "Header jump max beats", "Header", 'f', 1, 16, 8, 0, false},
+        // the header LFO: a swing of the header around its place, on the beat (depth 0 = off)
+        {"headerLfoDepth", "LFO depth", "Header LFO", 'f', 0, 1, 0, 0, false},
+        {"headerLfoShape", "LFO shape", "Header LFO", 'i', 0, 6, 0, 0, false},
+        {"headerLfoBeats", "LFO period (beats)", "Header LFO", 'f', 0.125f, 64, 4, 0, false},
+        {"headerLfoPhase", "LFO phase", "Header LFO", 'f', 0, 1, 0, 0, false},
         {"repeatChance", "Repeat chance", "Repeat", 'f', 0, 1, 0, 0, false},
         {"repeatMults", "Repeat lengths", "Repeat", 'v', 0, 16, J{0.5, 1, 0.66, 1.5, 2, 0.25}, 0, false},
         {"repeatNum", "Repeat count", "Repeat", 'v', 1, 16, J{4}, 0, false},
