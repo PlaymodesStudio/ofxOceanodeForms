@@ -27,6 +27,13 @@ struct PostControls {
     int FX_LAYERS = 4; // initial settings for legacy patches; grows with the scene
     ofParameter<bool> fxOn;
     std::deque<ofParameter<float>> hBlur = std::deque<ofParameter<float>>(4), vBlur = std::deque<ofParameter<float>>(4), trailBeats = std::deque<ofParameter<float>>(4), trailLevel = std::deque<ofParameter<float>>(4);
+    std::deque<ofParameter<float>> echoBeats = std::deque<ofParameter<float>>(4), echoFeedback = std::deque<ofParameter<float>>(4), echoMix = std::deque<ofParameter<float>>(4), echoLow = std::deque<ofParameter<float>>(4), echoHigh = std::deque<ofParameter<float>>(4);
+    void setupEchoLayer(ControlRegistry& reg, int l){
+        std::string n = "L" + ofToString(l + 1) + " Echo";
+        echoBeats[l].set(n, 0, 0, 8); echoFeedback[l].set(n + " Feedback", 0.5f, 0, 0.95f); echoMix[l].set(n + " Mix", 0.5f, 0, 1);
+        echoLow[l].set(n + " Lowpass", 1, 0, 1); echoHigh[l].set(n + " Highpass", 0, 0, 1);
+        for(auto* p : {&echoBeats[l], &echoFeedback[l], &echoMix[l], &echoLow[l], &echoHigh[l]}) reg.reg(*p);
+    }
     std::deque<ofParameter<float>> maskAmount=std::deque<ofParameter<float>>(4), maskWidth=std::deque<ofParameter<float>>(4), maskHeight=std::deque<ofParameter<float>>(4), maskContrast=std::deque<ofParameter<float>>(4), maskThreshold=std::deque<ofParameter<float>>(4), maskSpeed=std::deque<ofParameter<float>>(4), maskBlur=std::deque<ofParameter<float>>(4);
     std::deque<ofParameter<bool>> maskInvert=std::deque<ofParameter<bool>>(4), maskAnimate=std::deque<ofParameter<bool>>(4);
     std::deque<ofParameter<int>> maskSeed=std::deque<ofParameter<int>>(4);
@@ -86,6 +93,7 @@ struct PostControls {
             trailBeats[l].set(n + "Trail", 0, 0, 16);
             trailLevel[l].set(n + "Trail Level", 0.8f, 0, 1);
             for(auto* p : {&hBlur[l], &vBlur[l], &trailBeats[l], &trailLevel[l]}) reg.reg(*p);
+            setupEchoLayer(reg, l);
             setupMaskLayer(reg,l);
         }
         for(auto* p : {&enabled, &stretch, &useOpacity, &line, &paper, &featherExport}) reg.reg(*p);
@@ -99,11 +107,13 @@ struct PostControls {
         int old=FX_LAYERS; if(count<=(size_t)old) return;
         maskAmount.resize(count);maskWidth.resize(count);maskHeight.resize(count);maskContrast.resize(count);maskThreshold.resize(count);maskSpeed.resize(count);maskBlur.resize(count);maskSeed.resize(count);maskInvert.resize(count);maskAnimate.resize(count);
         hBlur.resize(count); vBlur.resize(count); trailBeats.resize(count); trailLevel.resize(count); FX_LAYERS=(int)count;
+        echoBeats.resize(count); echoFeedback.resize(count); echoMix.resize(count); echoLow.resize(count); echoHigh.resize(count);
         for(int l=old;l<FX_LAYERS;++l){
             std::string n="L"+ofToString(l+1)+" ";
             hBlur[l].set(n+"H Blur",0,0,60); vBlur[l].set(n+"V Blur",0,0,60);
             trailBeats[l].set(n+"Trail",0,0,16); trailLevel[l].set(n+"Trail Level",.8f,0,1);
             for(auto* p:{&hBlur[l],&vBlur[l],&trailBeats[l],&trailLevel[l]}) reg.reg(*p);
+            setupEchoLayer(reg, l);
             setupMaskLayer(reg,l);
         }
     }
@@ -123,6 +133,7 @@ struct PostControls {
     LayerFxValues fxValues(int l) const {
         LayerFxValues v;
         v.hBlur = hBlur[l]; v.vBlur = vBlur[l]; v.trail = trailBeats[l]; v.trailLevel = trailLevel[l];
+        v.echo = echoBeats[l]; v.echoFeedback = echoFeedback[l]; v.echoMix = echoMix[l]; v.echoLow = echoLow[l]; v.echoHigh = echoHigh[l];
         v.maskAmount = maskAmount[l]; v.maskWidth = maskWidth[l]; v.maskHeight = maskHeight[l]; v.maskContrast = maskContrast[l];
         v.maskThreshold = maskThreshold[l]; v.maskBlur = maskBlur[l]; v.maskSpeed = maskSpeed[l];
         v.maskSeed = maskSeed[l]; v.maskInvert = maskInvert[l]; v.maskAnimate = maskAnimate[l];
@@ -131,13 +142,14 @@ struct PostControls {
     void setFxValues(int l, const LayerFxValues& v){
         auto setf = [](ofParameter<float>& p, float x){ if(p.get() != x) p = x; };
         setf(hBlur[l], v.hBlur); setf(vBlur[l], v.vBlur); setf(trailBeats[l], v.trail); setf(trailLevel[l], v.trailLevel);
+        setf(echoBeats[l], v.echo); setf(echoFeedback[l], v.echoFeedback); setf(echoMix[l], v.echoMix); setf(echoLow[l], v.echoLow); setf(echoHigh[l], v.echoHigh);
         setf(maskAmount[l], v.maskAmount); setf(maskWidth[l], v.maskWidth); setf(maskHeight[l], v.maskHeight); setf(maskContrast[l], v.maskContrast);
         setf(maskThreshold[l], v.maskThreshold); setf(maskBlur[l], v.maskBlur); setf(maskSpeed[l], v.maskSpeed);
         if(maskSeed[l].get() != v.maskSeed) maskSeed[l] = v.maskSeed;
         if(maskInvert[l].get() != v.maskInvert) maskInvert[l] = v.maskInvert;
         if(maskAnimate[l].get() != v.maskAnimate) maskAnimate[l] = v.maskAnimate;
     }
-    bool anyFx(int l) const { return fxOn && (hBlur[l] > 0.05f || vBlur[l] > 0.05f || trailBeats[l] > 0.01f || maskAmount[l] > 0); }
+    bool anyFx(int l) const { return fxOn && (hBlur[l] > 0.05f || vBlur[l] > 0.05f || trailBeats[l] > 0.01f || (echoBeats[l] > 0.01f && echoMix[l] > 0) || maskAmount[l] > 0); }
 
     void apply(Post& p) const {
         p.enabled = enabled; p.stretch = stretch; p.stretchBlend = stretchBlend; p.useOpacity = useOpacity;
@@ -165,9 +177,21 @@ struct PostControls {
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("A tail behind what moves (to the right of it), fading like a reverb: its length in beats\n(whatever the layer's speed). At the header it sounds like a reverb.");
         reg.slider(trailLevel[L], "%.2f", "Trail level");
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("How bright the tail starts (1: as bright as what leaves it)");
+        ImGui::SeparatorText("Echo");
+        { float b = echoBeats[L]; if(echoNoteCombo("Echo time", b)) echoBeats[L] = b; }
+        reg.slider(echoBeats[L], "%.3f beats", "Echo beats");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The same time, free (in beats): for times between the note values, the node or a timeline. 0: off.");
+        reg.slider(echoFeedback[L], "%.2f", "Echo feedback");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Each repeat's level over the one before. 0: one repeat.");
+        reg.slider(echoMix[L], "%.2f", "Echo mix");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("The first repeat's level (1: as bright as the original). 0: no echo.");
+        reg.slider(echoLow[L], "%.2f", "Echo low-pass");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Fades the repeats' high pitches (the top of the picture) with a soft slope; each repeat is\nfiltered once more, so they get darker as they go. 1: open.");
+        reg.slider(echoHigh[L], "%.2f", "Echo high-pass");
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Fades the repeats' low pitches (the bottom of the picture) with a soft slope; each repeat is\nfiltered once more, so they get thinner as they go. 0: open.");
         ImGui::SeparatorText("Perlin mask");
         reg.slider(maskAmount[L],"%.2f","Mask amount");
-        if(ImGui::IsItemHovered())ImGui::SetTooltip("Masks this whole layer, including its blur and trail, before compositing and sonification. 0: off.");
+        if(ImGui::IsItemHovered())ImGui::SetTooltip("Masks this whole layer, including its blur, trail and echo, before compositing and sonification. 0: off.");
         reg.slider(maskWidth[L],"%.3f beats","Mask width");
         reg.slider(maskHeight[L],"%.3f","Mask height");
         if(ImGui::IsItemHovered())ImGui::SetTooltip("Noise cell height as a fraction of the layer height; independent of resolution.");
@@ -218,9 +242,9 @@ struct PostControls {
         int L = ofClamp(fxLayer, 0, FX_LAYERS - 1);
         drawLayerFx(reg, L, false);
         if(ImGui::SmallButton("Same for every layer")){
-            for(int l = 0; l < FX_LAYERS; l++) if(l != L){ hBlur[l] = hBlur[L].get(); vBlur[l] = vBlur[L].get(); trailBeats[l] = trailBeats[L].get(); trailLevel[l] = trailLevel[L].get(); maskAmount[l]=maskAmount[L].get();maskWidth[l]=maskWidth[L].get();maskHeight[l]=maskHeight[L].get();maskContrast[l]=maskContrast[L].get();maskThreshold[l]=maskThreshold[L].get();maskBlur[l]=maskBlur[L].get();maskSpeed[l]=maskSpeed[L].get();maskSeed[l]=maskSeed[L].get();maskInvert[l]=maskInvert[L].get();maskAnimate[l]=maskAnimate[L].get(); }
+            for(int l = 0; l < FX_LAYERS; l++) if(l != L){ hBlur[l] = hBlur[L].get(); vBlur[l] = vBlur[L].get(); trailBeats[l] = trailBeats[L].get(); trailLevel[l] = trailLevel[L].get(); echoBeats[l] = echoBeats[L].get(); echoFeedback[l] = echoFeedback[L].get(); echoMix[l] = echoMix[L].get(); echoLow[l] = echoLow[L].get(); echoHigh[l] = echoHigh[L].get(); maskAmount[l]=maskAmount[L].get();maskWidth[l]=maskWidth[L].get();maskHeight[l]=maskHeight[L].get();maskContrast[l]=maskContrast[L].get();maskThreshold[l]=maskThreshold[L].get();maskBlur[l]=maskBlur[L].get();maskSpeed[l]=maskSpeed[L].get();maskSeed[l]=maskSeed[L].get();maskInvert[l]=maskInvert[L].get();maskAnimate[l]=maskAnimate[L].get(); }
         }
-        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Copies layer %d's blur, trail and Perlin settings to the other layers", L + 1);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Copies layer %d's blur, trail, echo and Perlin settings to the other layers", L + 1);
         ImGui::Spacing();
         ImGui::TextDisabled("Value and Header opacity\n(right) scale the sound too.");
         ImGui::PopItemWidth();

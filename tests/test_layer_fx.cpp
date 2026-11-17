@@ -71,6 +71,7 @@ int main(int, char** argv){
     GLuint blur = program(vert, shaderFrom(hdr, "layerFxBlurFrag"));
     GLuint trail = program(vert, shaderFrom(hdr, "layerFxTrailFrag"));
     GLuint mix = program(vert, shaderFrom(hdr, "layerFxMixFrag"));
+    GLuint echo = program(vert, shaderFrom(hdr, "layerFxEchoFrag"));
     GLuint mask = program(vert, shaderFrom(hdr, "layerFxMaskFrag"));
     GLuint maskApply = program(vert, shaderFrom(hdr,"layerFxMaskApplyFrag"));
     if(fails){ printf("shader failures\n"); return 1; }
@@ -139,6 +140,56 @@ int main(int, char** argv){
         printf("Trail (60 px, level 0.8): at +1 %d (want %.0f), +30 %d (want %.0f), +60 %d (want %.1f); worst vs CPU %.2f levels; lit left of the dot %d, on other rows %d\n",
                o[(80 * W + 101) * 4], 0.8 * 255 * perPx, o[(80 * W + 130) * 4], 0.8 * 255 * std::pow(perPx, 30), o[(80 * W + 160) * 4], 0.8 * 255 * std::pow(perPx, 60), worst, left, otherRows);
         if(worst > 1.5 || left || otherRows){ fails++; printf("  FAIL: trail\n"); }
+    }
+    // ---- Echo: dots at x = 20 on several rows, a fractional delay (33.4 px), feedback 0.6, mix 0.7.
+    // Every repeat on round(k * delay) (no drift), at mix * feedback^(k-1) * filter^k; nothing
+    // elsewhere; alpha alike. Then the filters: open = no change by row; low-pass / high-pass fade
+    // smoothly (no step between neighbouring rows) and more on every repeat.
+    {
+        auto src = img([](int x, int y, int){ return (x == 20 && y % 10 == 5) ? 255 : 0; });
+        Target s = target(W, H, src.data()), d = target(W, H);
+        const float D = 33.4f, FB = 0.6f, MIX = 0.7f;
+        auto render = [&](float low, float high){
+            run(echo, d, W, H, [&]{ bindTex(echo, "tex", s.t, 0); glUniform1f(glGetUniformLocation(echo, "height"), H); glUniform1f(glGetUniformLocation(echo, "delayPx"), D);
+                glUniform1f(glGetUniformLocation(echo, "feedback"), FB); glUniform1f(glGetUniformLocation(echo, "level"), MIX); glUniform2f(glGetUniformLocation(echo, "filt"), low, high); });
+            return readBack(d, W, H);
+        };
+        auto sm = [](double a, double b, double x){ double t = std::min(1.0, std::max(0.0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+        auto gain = [&](int y, double low, double high){ double v = 1.0 - (y + 0.5) / H, w = 0.35, lo = -w + (1 + w) * low, hi = (1 + w) * high; return (1 - sm(lo, lo + w, v)) * sm(hi - w, hi, v); };
+        auto check = [&](const char* name, double low, double high, double tol){
+            auto o = render((float)low, (float)high);
+            double worst = 0; int stray = 0, alpha = 0;
+            for(int y = 0; y < H; y++) for(int x = 0; x < W; x++){
+                int v = o[(y * W + x) * 4]; double ref = 0;
+                if(y % 10 == 5){
+                    if(x == 20) ref = 255;
+                    double g = gain(y, low, high), a = MIX * g;
+                    for(int k = 1; k <= 128; k++){ int xx = 20 + (int)std::floor(k * D + 0.5); if(xx == x) ref = std::max(ref, 255 * a); a *= FB * g; }
+                }
+                worst = std::max(worst, std::fabs(v - ref));
+                if(ref == 0 && v) stray++;
+                if(v != o[(y * W + x) * 4 + 3]) alpha++;
+            }
+            printf("Echo %s: worst vs CPU %.2f levels, lit where nothing should be %d, alpha differs %d\n", name, worst, stray, alpha);
+            if(worst > tol || stray || alpha){ fails++; printf("  FAIL: echo %s\n", name); }
+            return o;
+        };
+        auto open = check("open (33.4 px, feedback 0.6, mix 0.7)", 1, 0, 1.5);
+        printf("  repeats 1, 2, 3, 6 at x = 53, 87, 120, 220: %d %d %d %d (want %.0f %.0f %.0f %.0f)\n", open[(95 * W + 53) * 4], open[(95 * W + 87) * 4], open[(95 * W + 120) * 4], open[(95 * W + 220) * 4],
+               255 * MIX, 255 * MIX * FB, 255 * MIX * FB * FB, 255 * MIX * std::pow(FB, 5));
+        auto lp = check("low-pass 0.5", 0.5, 0, 1.5);
+        auto hp = check("high-pass 0.5", 1, 0.5, 1.5);
+        // smooth: the first repeat's level from row to row (10 rows apart) never jumps; the low-pass keeps the
+        // bottom (large y) and silences the top, the high-pass the other way
+        int jumpL = 0, jumpH = 0;
+        for(int y = 15; y < H; y += 10){ jumpL = std::max(jumpL, std::abs((int)lp[(y * W + 53) * 4] - (int)lp[((y - 10) * W + 53) * 4])); jumpH = std::max(jumpH, std::abs((int)hp[(y * W + 53) * 4] - (int)hp[((y - 10) * W + 53) * 4])); }
+        printf("  low-pass 0.5, first repeat: top row %d, bottom row %d, largest step between rows %d of 178; high-pass 0.5: top %d, bottom %d, largest step %d\n",
+               lp[(5 * W + 53) * 4], lp[(195 * W + 53) * 4], jumpL, hp[(5 * W + 53) * 4], hp[(195 * W + 53) * 4], jumpH);
+        if(lp[(5 * W + 53) * 4] != 0 || lp[(195 * W + 53) * 4] < 177 || hp[(195 * W + 53) * 4] != 0 || hp[(5 * W + 53) * 4] < 177 || jumpL > 45 || jumpH > 45){ fails++; printf("  FAIL: echo filters\n"); }
+        // closed filters: no echo at all, the original untouched
+        auto shut = render(0, 0); int lit = 0; for(int y = 0; y < H; y++) for(int x = 0; x < W; x++) if(x != 20 && shut[(y * W + x) * 4]) lit++;
+        printf("  low-pass 0: pixels lit besides the original %d, original %d\n", lit, shut[(95 * W + 20) * 4]);
+        if(lit || shut[(95 * W + 20) * 4] != 255){ fails++; printf("  FAIL: echo closed\n"); }
     }
     // Whole-layer mask: premultiplied colour/alpha, bypass, inversion, evolution,
     // threshold, and attachment to musical time while the image scrolls.

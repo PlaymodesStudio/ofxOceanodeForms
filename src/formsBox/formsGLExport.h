@@ -160,6 +160,7 @@
                     auto& ld = scene->second.layers[i]; auto fx = layerFxSettings(i, 4.0 * im->bars);
                     forms::json perlin={{"amount",fx.maskAmount},{"width",fx.maskWidth},{"height",fx.maskHeight},{"contrast",fx.maskContrast},{"threshold",fx.maskThreshold},{"blur",fx.maskBlur/std::max(1.f,(float)viewH)},{"invert",fx.maskInvert},{"seed",fx.maskSeed},{"speed",fx.maskSpeed}};
                     j["layers"].push_back({{"recipe", req}, {"index", i}, {"root", scene->second.root}, {"gain", ld.gain}, {"blend", ld.blend}, {"cover", ld.cover}, {"perlin",perlin},
+                        {"echo", {{"beats", postCtl.fxOn ? postCtl.echoBeats[i].get() : 0.f}, {"feedback", fx.echoFeedback}, {"mix", fx.echoMix}, {"low", fx.echoLow}, {"high", fx.echoHigh}}},
                         {"fx", {fx.hBlur / std::max(1.f, (float)viewW), fx.vBlur / std::max(1.f, (float)viewH), postCtl.fxOn ? postCtl.trailBeats[i].get() : 0.f, fx.trailLevel}}});
                 }
             }
@@ -324,6 +325,8 @@
             tex.draw(-phase*w,0,w,h); tex.draw((1-phase)*w,0,w,h); ofPopStyle(); glExportLayerFrame.end();
             auto f=meta.at("fx").get<std::vector<float>>(); forms::LayerFxSettings fx;
             fx.hBlur=f[0]*w; fx.vBlur=f[1]*h; fx.trailPx=f[2]*w/(4.f*meta.at("recipe").value("bars",8.0)); fx.trailLevel=f[3];
+            auto echo=meta.value("echo",forms::json::object());   // absent in recipes saved before the echo: none
+            fx.echoPx=echo.value("beats",0.f)*w/(4.f*meta.at("recipe").value("bars",8.0)); fx.echoFeedback=echo.value("feedback",.5f); fx.echoMix=echo.value("mix",.5f); fx.echoLow=echo.value("low",1.f); fx.echoHigh=echo.value("high",0.f);
             auto perlin=meta.value("perlin",forms::json::object());
             fx.maskAmount=perlin.value("amount",0.f);fx.maskWidth=perlin.value("width",4.f);fx.maskHeight=perlin.value("height",.25f);
             fx.maskContrast=perlin.value("contrast",1.f);fx.maskThreshold=perlin.value("threshold",0.f);fx.maskBlur=perlin.value("blur",0.f)*h;fx.maskInvert=perlin.value("invert",false);fx.maskSeed=perlin.value("seed",1);

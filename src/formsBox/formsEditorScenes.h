@@ -374,7 +374,7 @@ inline bool Editor::drawLayerStack(Scene& s, bool compact){
             }
             // ---- folded: the layer's effects before the sound (blur, trail, Perlin mask): this scene's,
             // saved with it (the Post-processing tab shows the ones of the scene on stage)
-            if(ImGui::CollapsingHeader(LayerFxValues::from(L.fx, i).any() ? "Effects (blur, trail, mask)  (on)###fx" : "Effects (blur, trail, mask)###fx")){
+            if(ImGui::CollapsingHeader(LayerFxValues::from(L.fx, i).any() ? "Effects (blur, trail, echo, mask)  (on)###fx" : "Effects (blur, trail, echo, mask)###fx")){
                 ImGui::TextDisabled("This scene's layer %d: saved with the scene.", i + 1);
                 ImGui::PushItemWidth(-(110 * zz));
                 changed |= drawLayerFxScene(L, i);
@@ -636,9 +636,21 @@ inline bool Editor::drawLayerFxScene(LayerDef& L, int layer){
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("A tail behind what moves (to the right of it), fading like a reverb: its length in beats\n(whatever the layer's speed). At the header it sounds like a reverb.");
     ImGui::SliderFloat("Trail level", &v.trailLevel, 0, 1, "%.2f");
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("How bright the tail starts (1: as bright as what leaves it)");
+    ImGui::SeparatorText("Echo");
+    echoNoteCombo("Echo time", v.echo);
+    ImGui::SliderFloat("Echo beats", &v.echo, 0, 8, "%.3f beats");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The same time, free (in beats): for times between the note values. 0: off.");
+    ImGui::SliderFloat("Echo feedback", &v.echoFeedback, 0, 0.95f, "%.2f");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Each repeat's level over the one before. 0: one repeat.");
+    ImGui::SliderFloat("Echo mix", &v.echoMix, 0, 1, "%.2f");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The first repeat's level (1: as bright as the original). 0: no echo.");
+    ImGui::SliderFloat("Echo low-pass", &v.echoLow, 0, 1, "%.2f");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Fades the repeats' high pitches (the top of the picture) with a soft slope; each repeat is\nfiltered once more, so they get darker as they go. 1: open.");
+    ImGui::SliderFloat("Echo high-pass", &v.echoHigh, 0, 1, "%.2f");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Fades the repeats' low pitches (the bottom of the picture) with a soft slope; each repeat is\nfiltered once more, so they get thinner as they go. 0: open.");
     ImGui::SeparatorText("Perlin mask");
     ImGui::SliderFloat("Mask amount", &v.maskAmount, 0, 1, "%.2f");
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Masks this whole layer, including its blur and trail, before compositing and sonification. 0: off.");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Masks this whole layer, including its blur, trail and echo, before compositing and sonification. 0: off.");
     ImGui::SliderFloat("Mask width", &v.maskWidth, 0.125f, 32, "%.3f beats");
     ImGui::SliderFloat("Mask height", &v.maskHeight, 0.01f, 2, "%.3f");
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Noise cell height as a fraction of the layer height; independent of resolution.");

@@ -698,6 +698,8 @@ protected:   // (Forms GL Box derives from Forms Box)
         if(!postCtl.anyFx(l)) return fx;
         fx.hBlur = postCtl.hBlur[l]; fx.vBlur = postCtl.vBlur[l]; fx.trailLevel = postCtl.trailLevel[l];
         fx.trailPx = postCtl.trailBeats[l] * viewW / std::max(1.0, lenBeats);
+        fx.echoPx = postCtl.echoBeats[l] * viewW / std::max(1.0, lenBeats);
+        fx.echoFeedback = postCtl.echoFeedback[l]; fx.echoMix = postCtl.echoMix[l]; fx.echoLow = postCtl.echoLow[l]; fx.echoHigh = postCtl.echoHigh[l];
         fx.maskAmount=postCtl.maskAmount[l];fx.maskWidth=postCtl.maskWidth[l];fx.maskHeight=postCtl.maskHeight[l];
         fx.maskBlur=postCtl.maskBlur[l];fx.maskContrast=postCtl.maskContrast[l];fx.maskThreshold=postCtl.maskThreshold[l];fx.maskInvert=postCtl.maskInvert[l];fx.maskSeed=postCtl.maskSeed[l];
         fx.maskSpeed=postCtl.maskAnimate[l]?postCtl.maskSpeed[l].get():0;
@@ -1576,6 +1578,7 @@ protected:   // (Forms GL Box derives from Forms Box)
                 auto fx=layerFxSettings(layer,layerLen);
                 fx.hBlur *= (float)(layerLen*ppb/std::max(1,(int)viewW));
                 fx.trailPx=postCtl.trailBeats[layer]*(float)ppb;
+                fx.echoPx=postCtl.fxOn?postCtl.echoBeats[layer]*(float)ppb:0.f;
                 fx.maskBeat=b0;fx.maskHeaderX=0;fx.maskPixelsPerBeat=ppb;
                 if(fx.any()) exportFx.process(lf,fx);
             }
@@ -1624,6 +1627,7 @@ protected:   // (Forms GL Box derives from Forms Box)
         forms::LayerFxSettings fx = layerFxSettings(layer, 4.0 * bars);
         fx.hBlur *= (float)W / std::max(1, (int)viewW); fx.vBlur *= k; fx.maskBlur *= k;
         fx.trailPx = postCtl.trailBeats[layer] * W / (4.0f * (float)bars);
+        fx.echoPx = postCtl.fxOn ? postCtl.echoBeats[layer] * W / (4.0f * (float)bars) : 0.f;
         fx.maskBeat=0;fx.maskHeaderX=0;fx.maskPixelsPerBeat=W/(4.f*(float)bars);
         if(fx.any()) exportFx.process(lf, fx);
         ofFbo comp; comp.allocate(st);

@@ -10,8 +10,14 @@
 //             trail to its right, fading exponentially (like a reverb's decay): a pixel shows the
 //             brightest of what passed through it, times decay^distance. Length in px (Forms Box
 //             gives it in beats, per layer); level: how bright the tail starts.
-//  Nothing is read from outside the image: blurs repeat the edge pixel, the trail starts at the
-//  left edge. The buffers hold premultiplied colour and alpha: every channel is treated alike.
+//    Echo     repeats behind what moves, one every `echoPx` (Forms Box gives the time in beats,
+//             per layer, so the repeats fall on the beat grid): repeat k is the image k delays
+//             to the left, at mix * feedback^(k-1), each one on whole pixels from k itself (no
+//             drift). Low-pass / high-pass: a smooth vertical fade of the repeats (the top rows
+//             are the high pitches), applied once more on every repeat, as a filter in a delay's
+//             feedback loop. One pass.
+//  Nothing is read from outside the image: blurs repeat the edge pixel, the trail and the echo
+//  start at the left edge. The buffers hold premultiplied colour and alpha: every channel is treated alike.
 //  The trail is exact and cheap: log2(length) passes of "max(self, decay^s * neighbour at -s)"
 //  for s = 1, 2, 4, ... give max over every distance k of decay^k * pixel(x - k).
 //
@@ -28,11 +34,16 @@ struct LayerFxSettings {
     float hBlur = 0, vBlur = 0;     // sigma, px
     float trailPx = 0;              // px until the tail is down to 1/1000
     float trailLevel = 0.8f;        // 0..1
+    float echoPx = 0;               // px between repeats (0: off)
+    float echoFeedback = 0.5f;      // each repeat's level over the one before, 0..0.95
+    float echoMix = 0.5f;           // the first repeat's level, 0..1
+    float echoLow = 1, echoHigh = 0; // low-pass (1: open) and high-pass (0: open), 0..1 of the height
+    bool echoOn() const { return echoPx >= 1 && echoMix > 0; }
     float maskAmount=0, maskWidth=4, maskHeight=.25f, maskContrast=1, maskThreshold=0, maskBlur=0, maskSpeed=0;
     int maskSeed=1; bool maskInvert=false;
     // Musical coordinates: anchor beat at headerX, pixels per beat of this layer.
     float maskBeat=0, maskHeaderX=0, maskPixelsPerBeat=1, maskPhase=0;
-    bool any() const { return hBlur > 0.05f || vBlur > 0.05f || trailPx >= 1 || maskAmount > 0; }
+    bool any() const { return hBlur > 0.05f || vBlur > 0.05f || trailPx >= 1 || echoOn() || maskAmount > 0; }
 };
 
 // The shaders (also read by tests/test_layer_fx.cpp)
@@ -104,6 +115,37 @@ void main(){
     ivec2 p = ivec2(gl_FragCoord.xy);
     vec4 o = texelFetch(orig, p, 0);
     out_color = max(o, level * texelFetch(tex, p, 0));
+}
+)"; }
+
+// The echo: the original, with its repeats to the right. Repeat k reads the pixel round(k * delay)
+// to the left, at level * feedback^(k-1) * filter^k. The filter is a smooth fade over a third of
+// the height (row 0 is the top: the highest pitch); fully open at low = 1, high = 0.
+inline const char* layerFxEchoFrag(){ return R"(
+#version 410
+uniform sampler2D tex;
+uniform float height;
+uniform float delayPx;
+uniform float feedback;
+uniform float level;
+uniform vec2 filt;     // low-pass, high-pass (0..1 of the height, from the bottom)
+out vec4 out_color;
+void main(){
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    vec4 o = texelFetch(tex, p, 0);
+    const float w = 0.35;
+    float v = 1.0 - gl_FragCoord.y / height;      // 0 at the bottom, 1 at the top
+    float lo = mix(-w, 1.0, filt.x), hi = mix(0.0, 1.0 + w, filt.y);
+    float g = (1.0 - smoothstep(lo, lo + w, v)) * smoothstep(hi - w, hi, v);
+    float a = level * g;
+    vec4 e = vec4(0.0);
+    for(int k = 1; k <= 128; k++){
+        int x = p.x - int(floor(float(k) * delayPx + 0.5));
+        if(x < 0 || a < 0.0002) break;
+        e = max(e, a * texelFetch(tex, ivec2(x, p.y), 0));
+        a *= feedback * g;
+    }
+    out_color = max(o, e);
 }
 )"; }
 
@@ -215,6 +257,13 @@ public:
             pass(mix, *dst, [&]{ mix.setUniformTexture("tex", src->getTexture(), 0); mix.setUniformTexture("orig", orig->getTexture(), 1); mix.setUniform1f("level", ofClamp(s.trailLevel, 0, 1)); });
             cur = dst;
         }
+        if(s.echoOn()){
+            ofFbo* dst = other(cur);
+            pass(echo, *dst, [&]{ echo.setUniformTexture("tex", cur->getTexture(), 0); echo.setUniform1f("height", h); echo.setUniform1f("delayPx", s.echoPx);
+                echo.setUniform1f("feedback", ofClamp(s.echoFeedback, 0, 0.95f)); echo.setUniform1f("level", ofClamp(s.echoMix, 0, 1));
+                echo.setUniform2f("filt", ofClamp(s.echoLow, 0, 1), ofClamp(s.echoHigh, 0, 1)); });
+            cur = dst;
+        }
         if(s.maskAmount > 0){
             ofFbo* dst=other(cur);
             bool soften=s.maskBlur>.05f;
@@ -243,7 +292,7 @@ public:
     }
 
 private:
-    ofShader blur, trail, mix, plain, noiseMask, maskApply;
+    ofShader blur, trail, mix, echo, plain, noiseMask, maskApply;
     ofFbo a, b, c, maskA, maskB;
     void alloc(ofFbo& x, int w, int h){
         if(x.isAllocated() && (int)x.getWidth() == w && (int)x.getHeight() == h && x.getTexture().getTextureData().glInternalFormat == internalFormat) return;
@@ -274,7 +323,7 @@ uniform sampler2D tex;
 out vec4 out_color;
 void main(){ out_color = texelFetch(tex, ivec2(gl_FragCoord.xy), 0); }
 )";
-        ok = make(blur, layerFxBlurFrag()) && make(trail, layerFxTrailFrag()) && make(mix, layerFxMixFrag()) && make(plain, plainFrag) && make(noiseMask,layerFxMaskFrag()) && make(maskApply,layerFxMaskApplyFrag());
+        ok = make(blur, layerFxBlurFrag()) && make(trail, layerFxTrailFrag()) && make(mix, layerFxMixFrag()) && make(echo, layerFxEchoFrag()) && make(plain, plainFrag) && make(noiseMask,layerFxMaskFrag()) && make(maskApply,layerFxMaskApplyFrag());
         if(!ok) ofLogError("Forms Box") << "layer effects shaders failed";
     }
 };

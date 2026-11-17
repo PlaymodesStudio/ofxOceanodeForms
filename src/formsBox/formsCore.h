@@ -88,27 +88,32 @@ struct LayerDef {
     // A frozen layer (Gallery "Freeze"): always this exact image: {"seed", "items" (resolved),
     // "roots", "trans", "from"}. Nothing is chosen or drawn at random for it.
     json fixed;
-    // The layer's effects before the sound (blur, trail, Perlin mask): only the values that are not
+    // The layer's effects before the sound (blur, trail, echo, Perlin mask): only the values that are not
     // the defaults (LayerFxValues); empty: none. They switch with the scene.
     json fx;
 };
 // A layer's effects as numbers (the scene's "fx" object <-> the node's controls)
 struct LayerFxValues {
     float hBlur = 0, vBlur = 0, trail = 0, trailLevel = 0.8f;
+    // echo: time between repeats in beats (0: off), feedback, mix, low-pass (1: open), high-pass (0: open)
+    float echo = 0, echoFeedback = 0.5f, echoMix = 0.5f, echoLow = 1, echoHigh = 0;
     float maskAmount = 0, maskWidth = 4, maskHeight = 0.25f, maskContrast = 1, maskThreshold = 0, maskBlur = 0, maskSpeed = 0.25f;
     int maskSeed = 1; bool maskInvert = false, maskAnimate = false;
     bool operator==(const LayerFxValues& o) const {
-        return hBlur == o.hBlur && vBlur == o.vBlur && trail == o.trail && trailLevel == o.trailLevel && maskAmount == o.maskAmount
+        return hBlur == o.hBlur && vBlur == o.vBlur && trail == o.trail && trailLevel == o.trailLevel && echo == o.echo && echoFeedback == o.echoFeedback
+            && echoMix == o.echoMix && echoLow == o.echoLow && echoHigh == o.echoHigh && maskAmount == o.maskAmount
             && maskWidth == o.maskWidth && maskHeight == o.maskHeight && maskContrast == o.maskContrast && maskThreshold == o.maskThreshold
             && maskBlur == o.maskBlur && maskSpeed == o.maskSpeed && maskSeed == o.maskSeed && maskInvert == o.maskInvert && maskAnimate == o.maskAnimate;
     }
-    bool any() const { return hBlur > 0.05f || vBlur > 0.05f || trail > 0.01f || maskAmount > 0; }
+    bool echoOn() const { return echo > 0.01f && echoMix > 0; }
+    bool any() const { return hBlur > 0.05f || vBlur > 0.05f || trail > 0.01f || echoOn() || maskAmount > 0; }
     // layer: its index (the mask seed's default is layer + 1, as the controls)
     static LayerFxValues from(const json& j, int layer){
         LayerFxValues v; v.maskSeed = layer + 1;
         if(!j.is_object()) return v;
         auto f = [&](const char* k, float& x, float lo, float hi){ auto it = j.find(k); if(it != j.end() && it->is_number()) x = std::clamp(it->get<float>(), lo, hi); };
         f("hBlur", v.hBlur, 0, 60); f("vBlur", v.vBlur, 0, 60); f("trail", v.trail, 0, 16); f("trailLevel", v.trailLevel, 0, 1);
+        f("echo", v.echo, 0, 8); f("echoFeedback", v.echoFeedback, 0, 0.95f); f("echoMix", v.echoMix, 0, 1); f("echoLow", v.echoLow, 0, 1); f("echoHigh", v.echoHigh, 0, 1);
         f("maskAmount", v.maskAmount, 0, 1); f("maskWidth", v.maskWidth, 0.125f, 32); f("maskHeight", v.maskHeight, 0.01f, 2);
         f("maskContrast", v.maskContrast, 0.1f, 8); f("maskThreshold", v.maskThreshold, 0, 1); f("maskBlur", v.maskBlur, 0, 60); f("maskSpeed", v.maskSpeed, 0, 4);
         if(j.contains("maskSeed") && j["maskSeed"].is_number()) v.maskSeed = std::clamp(j["maskSeed"].get<int>(), 0, 65535);
@@ -120,6 +125,7 @@ struct LayerFxValues {
         json j = json::object();
         auto f = [&](const char* k, float x, float dx){ if(x != dx) j[k] = x; };
         f("hBlur", hBlur, d.hBlur); f("vBlur", vBlur, d.vBlur); f("trail", trail, d.trail); f("trailLevel", trailLevel, d.trailLevel);
+        f("echo", echo, d.echo); f("echoFeedback", echoFeedback, d.echoFeedback); f("echoMix", echoMix, d.echoMix); f("echoLow", echoLow, d.echoLow); f("echoHigh", echoHigh, d.echoHigh);
         f("maskAmount", maskAmount, d.maskAmount); f("maskWidth", maskWidth, d.maskWidth); f("maskHeight", maskHeight, d.maskHeight);
         f("maskContrast", maskContrast, d.maskContrast); f("maskThreshold", maskThreshold, d.maskThreshold); f("maskBlur", maskBlur, d.maskBlur); f("maskSpeed", maskSpeed, d.maskSpeed);
         if(maskSeed != d.maskSeed) j["maskSeed"] = maskSeed;
